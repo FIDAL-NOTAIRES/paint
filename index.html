@@ -225,7 +225,6 @@
     <span id="zoomlbl" style="display:none;font-size:13px;min-width:42px;text-align:center">100%</span>
     <button class="hbtn" id="zoomin" title="Zoomer" style="display:none">+</button>
     <button class="hbtn" id="genbtn" title="Générer un extrait depuis des références" style="display:none">🗺 Références</button>
-    <button class="hbtn" id="openbtn">📄 Ouvrir un plan</button>
     <button class="hbtn" id="pngbtn" disabled>⬇ PNG</button>
     <button class="hbtn primary" id="pdfbtn" disabled>⬇ PDF</button>
   </div>
@@ -516,7 +515,6 @@ document.getElementById("brushsize").oninput=e=>{S.brush=+e.target.value;documen
 document.getElementById("fontsize").oninput=e=>{S.fontSize=+e.target.value;document.getElementById("fsval").textContent=e.target.value+" px";};
 
 /* ---------- Chargement PDF ---------- */
-document.getElementById("openbtn").onclick=()=>document.getElementById("fileinput").click();
 
 /* ---------- Autocomplétion commune (geo.api.gouv.fr, vérif temps réel) ---------- */
 let selectedCommune=null, acTimer=null;
@@ -725,6 +723,7 @@ async function loadPDFData(buf){
     S.pageCount = S.pdf.numPages; S.page=1;
     S.notes=[]; anno.innerHTML=""; S.legendLabels={};
     await renderPage();
+    fitToScreen();
     drop.classList.add("hide");
     document.getElementById("pagenav").style.display = S.pageCount>1?"flex":"none";
     ["genbtn","rotate","zoomout","zoomlbl","zoomin"].forEach(id=>document.getElementById(id).style.display="inline-flex");
@@ -772,6 +771,16 @@ function applyZoom(){
 }
 document.getElementById("zoomin").onclick=()=>{S.zoom=Math.min(4,S.zoom+.2);applyZoom();};
 document.getElementById("zoomout").onclick=()=>{S.zoom=Math.max(.3,S.zoom-.2);applyZoom();};
+
+/* ---------- Ajustement automatique à la fenêtre (au chargement) ---------- */
+function fitToScreen(){
+  const pad=48;
+  const availW=stage.clientWidth-pad, availH=stage.clientHeight-pad;
+  if(availW<=0||availH<=0||!S.W||!S.H) return;
+  const z=Math.min(availW/S.W, availH/S.H, 1); // ajuste sans dépasser 100%
+  S.zoom=Math.max(.3, Math.min(4, z));
+  applyZoom();
+}
 
 /* ---------- Rotation 90° (conserve couleurs + annotations) ---------- */
 function rotateCanvas90(src,cw){
