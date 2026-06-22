@@ -673,7 +673,8 @@ let recog=null, recActive=false;
 
 /* ---------- Génération de l'extrait officiel ---------- */
 function setGenStatus(t,cls){ const e=document.getElementById("genstatus"); e.textContent=t; e.className="gen-status"+(cls?" "+cls:""); }
-async function generateExtrait(){
+async function generateExtrait(e){
+  if(e&&e.stopPropagation) e.stopPropagation();
   const v=id=>document.getElementById(id).value.trim();
   if(!selectedCommune){ setGenStatus("Choisissez une commune dans la liste de suggestions.","err"); return; }
   let prefixe=v("g_prefixe")||"000", section=v("g_section").toUpperCase(), parcelle=v("g_parcelle");
@@ -711,7 +712,12 @@ document.getElementById("fileinput").onchange=e=>{ if(e.target.files[0]) loadPDF
 drop.addEventListener("drop",e=>{const f=[...e.dataTransfer.files].find(x=>x.type==="application/pdf"); if(f) loadPDF(f);});
 stage.addEventListener("dragover",e=>e.preventDefault());
 stage.addEventListener("drop",e=>{e.preventDefault();const f=[...e.dataTransfer.files].find(x=>x.type==="application/pdf"); if(f) loadPDF(f);});
-document.querySelector(".dropcard").addEventListener("click",()=>document.getElementById("fileinput").click());
+document.querySelector(".dropcard").addEventListener("click",(e)=>{
+  // n'ouvrir le sélecteur de PDF que sur un clic dans le vide de la carte,
+  // jamais sur le formulaire de génération ou ses boutons (évite l'ouverture parasite)
+  if(e.target.closest("#genform, #genrun, .gen-btn, .gen-sep, .gen-status, .privacy, .ac-list")) return;
+  document.getElementById("fileinput").click();
+});
 
 async function loadPDF(file){
   loadPDFData(await file.arrayBuffer());
