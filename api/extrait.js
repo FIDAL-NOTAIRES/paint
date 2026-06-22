@@ -43,7 +43,7 @@ async function nomCommune(code) {
   return r.body.nom;
 }
 
-async function fetchExtrait(params) {
+async function fetchExtrait(params, debug) {
   for (const p of ['commune', 'prefixe', 'section', 'parcelle']) {
     if (!params[p]) { const e = new Error(`Paramètre '${p}' obligatoire`); e.statusCode = 400; throw e; }
   }
@@ -52,7 +52,11 @@ async function fetchExtrait(params) {
   const orientation = params.orientation === 'paysage' ? 'Paysage' : 'Portrait';
   const taille = params.taille === 'A3' ? 'A3' : 'A4';
 
-  const ville = deburr(await nomCommune(commune)).toUpperCase();
+  const nomBrut = await nomCommune(commune);
+  // Le SCPC attend le libellé sans accent, en majuscules. On garde le tiret tel quel ;
+  // on tentera une variante "sans tiret" si la 1re recherche ne donne rien.
+  const villePrincipale = deburr(nomBrut).toUpperCase();
+  const codeDep = codeDepartement(commune).padStart(3, '0');
 
   const agent = request.agent(); // conserve les cookies de session entre les appels
 
@@ -65,23 +69,46 @@ async function fetchExtrait(params) {
   // 2) Affichage du formulaire de recherche
   await agent.get(`${SCPC}/afficherRechercherPlanCad.do?CSRF_TOKEN=${csrf}&`);
 
-  // 3) Recherche par référence cadastrale
-  const search = await agent
-    .post(`${SCPC}/rechercherParReferenceCadastrale.do?CSRF_TOKEN=${csrf}`)
-    .type('form')
-    .send({
-      ville,
-      codeDepartement: codeDepartement(commune).padStart(3, '0'),
-      rechercheType: 1,
-      prefixeParcelle: prefixe,
-      sectionLibelle: section,
-      numeroParcelle: parcelle,
-      prefixeFeuille: prefixe,
-      CSRF_TOKEN: csrf
-    });
+  // 3) Recherche par référence cadastrale — on essaie plusieurs variantes du nom
+  const variantes = [villePrincipale];
+  if (villePrincipale.includes('-')) variantes.push(villePrincipale.replace(/-/g, ' '));
+  if (villePrincipale.includes("'")) variantes.push(villePrincipale.replace(/'/g, ' '));
 
-  const feuille = search.text.match(/f=([A-Z\d]{12})/);
-  const parc = search.text.match(/p=([A-Z\d]{14})/);
+  let search, feuille, parc, villeUtilisee;
+  for (const ville of variantes) {
+    search = await agent
+      .post(`${SCPC}/rechercherParReferenceCadastrale.do?CSRF_TOKEN=${csrf}`)
+      .type('form')
+      .send({
+        ville,
+        codeDepartement: codeDep,
+        rechercheType: 1,
+        prefixeParcelle: prefixe,
+        sectionLibelle: section,
+        numeroParcelle: parcelle,
+        prefixeFeuille: prefixe,
+        CSRF_TOKEN: csrf
+      });
+    feuille = search.text.match(/f=([A-Z\d]{12})/);
+    parc = search.text.match(/p=([A-Z\d]{14})/);
+    villeUtilisee = ville;
+    if (feuille && parc) break;
+  }
+
+  // Mode diagnostic : renvoie ce que le site a répondu, sans générer de PDF.
+  if (debug) {
+    return {
+      __debug: true,
+      commune, codeDep, nomBrut, variantesTestees: variantes, villeUtilisee,
+      csrfTrouve: true,
+      searchStatus: search && search.status,
+      searchLen: search && search.text ? search.text.length : 0,
+      feuille: feuille ? feuille[1] : null,
+      parcelle: parc ? parc[1] : null,
+      extrait: search && search.text ? search.text.slice(0, 4000) : null
+    };
+  }
+
   if (!feuille || !parc) { const e = new Error('Parcelle introuvable pour ces références'); e.statusCode = 404; throw e; }
 
   // 4) Affichage de la carte → centre de la parcelle
@@ -120,8 +147,15 @@ async function fetchExtrait(params) {
 }
 
 module.exports = async (req, res) => {
+  const q = req.query || {};
   try {
-    const buf = await fetchExtrait(req.query || {});
+    if (q.debug) {
+      const d = await fetchExtrait(q, true);
+      res.setHeader('Cache-Control', 'no-store');
+      res.status(200).json(d);
+      return;
+    }
+    const buf = await fetchExtrait(q);
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Cache-Control', 'no-store');
     res.status(200).send(buf);
