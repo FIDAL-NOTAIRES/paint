@@ -112,7 +112,7 @@
   .status.err{background:#fdeaea;color:#a52f2f;border:1px solid #f0c9c9}
 
   /* Zone plan */
-  .stage{flex:1;position:relative;overflow:auto;background:
+  .stage{flex:1;position:relative;overflow:auto;scrollbar-gutter:stable;background:
     repeating-conic-gradient(#e7ebef 0% 25%, #f3f5f7 0% 50%) 50%/22px 22px;}
   .scroller{min-width:100%;min-height:100%;display:flex;align-items:flex-start;justify-content:center;padding:24px}
   #cwrap{position:relative;transform-origin:top center;box-shadow:0 6px 30px rgba(9,21,37,.22);background:#fff;line-height:0}
@@ -134,7 +134,7 @@
   #drop.hide{display:none}
   .dropcard{
     border:2.5px dashed var(--line);border-radius:18px;padding:48px 60px;background:#fff;
-    transition:.15s;max-width:520px;
+    transition:border-color .15s, background .15s;width:520px;max-width:calc(100vw - 60px);
   }
   #drop.over .dropcard{border-color:var(--teal-deep);background:#eafafb}
   .dropcard h2{margin:0 0 6px;color:var(--ink);font-weight:600}
@@ -160,11 +160,15 @@
   .gen-status.err{color:#a52f2f}
   .gen-status.ok{color:#1f7a45}
   .ac-wrap{position:relative;width:100%}
-  .ac-list{position:absolute;left:0;right:0;top:100%;z-index:6;background:#fff;border:1px solid var(--line);border-top:none;border-radius:0 0 8px 8px;max-height:190px;overflow:auto;box-shadow:0 10px 22px rgba(9,21,37,.16);display:none}
+  .ac-list{position:absolute;left:0;right:0;top:100%;z-index:6;background:#fff;border:1px solid var(--line);border-top:none;border-radius:0 0 10px 10px;max-height:240px;overflow:auto;box-shadow:0 12px 26px rgba(9,21,37,.18);display:none}
   .ac-list.show{display:block}
-  .ac-item{padding:7px 9px;font-size:12px;cursor:pointer;color:var(--ink);display:flex;justify-content:space-between;gap:10px;align-items:center}
-  .ac-item:hover{background:#eafafb}
+  .ac-head{padding:6px 11px;font-size:10.5px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:var(--grey);background:#f4f7f9;border-bottom:1px solid var(--line);position:sticky;top:0}
+  .ac-item{padding:10px 11px;font-size:12.5px;cursor:pointer;color:var(--ink);display:flex;justify-content:space-between;gap:10px;align-items:center;border-top:1px solid var(--line)}
+  .ac-item:first-child{border-top:none}
+  .ac-item:hover{background:#eafafb;box-shadow:inset 3px 0 0 var(--teal-deep)}
   .ac-item small{color:var(--grey);white-space:nowrap}
+  .ac-item .lbl{display:flex;align-items:center;gap:8px;min-width:0;flex:1}
+  .ac-item .pin{flex-shrink:0;width:15px;height:15px;color:var(--teal-deep);opacity:.85}
   .ac-ok{color:#1f7a45;font-size:11px;margin-top:3px;font-weight:600}
   .ac-bad{color:#a52f2f;font-size:11px;margin-top:3px}
   .gen-or{grid-column:1/-1;font-size:11px;color:var(--grey);margin:3px 0 0;border-top:1px solid var(--line);padding-top:9px}
@@ -174,8 +178,25 @@
   .mic-btn.rec{background:#fde2e2;color:#c0392b;animation:micpulse 1s infinite}
   .mic-btn svg{width:16px;height:16px}
   @keyframes micpulse{0%,100%{opacity:1}50%{opacity:.5}}
-  #g_adr_nom{padding-right:38px}
+  #g_adr_nom{padding-right:9px}
+  .dictee-or{display:flex;align-items:center;gap:10px;margin:11px 0 9px;color:var(--grey);font-size:11px}
+  .dictee-or::before,.dictee-or::after{content:"";flex:1;height:1px;background:var(--line)}
+  .dictee-btn{width:100%;display:flex;align-items:center;justify-content:center;gap:8px;background:#eef4f5;color:var(--teal-deep);border:1.5px solid var(--teal-deep);border-radius:9px;padding:10px;font-size:13.5px;font-weight:600;cursor:pointer;font-family:inherit;transition:background .15s,color .15s}
+  .dictee-btn:hover{background:#dff1f2}
+  .dictee-btn svg{width:17px;height:17px}
+  .dictee-btn.rec{background:#fde2e2;color:#c0392b;border-color:#e8a9a9;animation:micpulse 1s infinite}
   .privacy{font-size:11.5px;color:var(--grey);margin-top:18px;display:flex;align-items:center;gap:6px;justify-content:center}
+
+  /* 3 méthodes de chargement */
+  .methods{display:flex;flex-direction:column;gap:13px;text-align:left;margin-top:14px}
+  .method{border:1.5px solid var(--line);border-radius:12px;padding:12px 14px 14px;background:#fff}
+  .method-head{display:flex;align-items:center;gap:9px;font-size:13.5px;font-weight:700;color:var(--ink);margin-bottom:11px}
+  .method-head .num{display:flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:var(--teal-deep);color:#fff;font-size:12px;font-weight:700;flex-shrink:0}
+  .method .gen-btn{margin-top:12px}
+  .method-hint{font-size:11px;color:var(--grey);margin-top:9px;line-height:1.45}
+  .dropzone{border:2px dashed var(--line);border-radius:10px;padding:20px 14px;text-align:center;color:var(--grey);font-size:13px;cursor:pointer;transition:border-color .15s, background .15s}
+  .dropzone:hover{border-color:var(--teal-deep);background:#f2fbfb;color:var(--ink)}
+  #drop.over .dropzone{border-color:var(--teal-deep);background:#eafafb}
 
   .hint-bar{
     position:absolute;left:50%;bottom:14px;transform:translateX(-50%);
@@ -336,51 +357,70 @@
           <path d="M39 8 L52 40 L39 70 L26 40 Z" fill="#6DD5DC"/>
           <circle cx="39" cy="44" r="4" fill="#E3CC7A"/>
         </svg>
-        <h2>Déposez votre extrait de plan cadastral</h2>
-        <p>Glissez un fichier <strong>PDF</strong> ici, ou cliquez pour le sélectionner.</p>
-        <p style="font-size:13px">Cliquez ensuite dans une parcelle pour la coloriser.</p>
-        <div class="privacy">🔒 Traitement 100&nbsp;% local — aucun fichier n'est envoyé sur un serveur.</div>
+        <h2>Charger un plan cadastral</h2>
+        <p style="font-size:13px;margin:2px 0 0">Trois façons d'obtenir un plan — puis cliquez dans une parcelle pour la coloriser.</p>
 
-        <div class="gen-sep"><span>ou générer l'extrait officiel</span></div>
-        <div class="gen-grid" id="genform" onclick="event.stopPropagation()">
-          <label style="grid-column:1/-1">Commune
-            <div class="ac-wrap" id="g_commune_wrap">
-              <input id="g_commune_nom" placeholder="Tapez le nom (ex. Saint-Omer)" autocomplete="off">
-              <div class="ac-list" id="g_commune_list"></div>
+        <div class="methods" id="genform" onclick="event.stopPropagation()">
+
+          <div class="method">
+            <div class="method-head"><span class="num">1</span> Par adresse</div>
+            <div class="gen-grid">
+              <label style="grid-column:1/-1">Commune
+                <div class="ac-wrap" id="g_commune_wrap">
+                  <input id="g_commune_nom" placeholder="Tapez le nom (ex. Saint-Omer)" autocomplete="off">
+                  <div class="ac-list" id="g_commune_list"></div>
+                </div>
+                <div id="g_commune_mark"></div>
+              </label>
+              <label style="grid-column:1/-1">Adresse
+                <div class="ac-wrap" id="g_adr_wrap">
+                  <input id="g_adr_nom" placeholder="Choisissez la commune, ou dictez ci-dessous" autocomplete="off" disabled>
+                  <div class="ac-list" id="g_adr_list"></div>
+                </div>
+                <div id="g_addr_mark" style="font-size:11px;margin-top:2px"></div>
+              </label>
             </div>
-            <div id="g_commune_mark"></div>
-          </label>
-          <label style="grid-column:1/-1">Adresse
-            <div class="ac-wrap" id="g_adr_wrap">
-              <input id="g_adr_nom" placeholder="Choisissez d'abord la commune" autocomplete="off" disabled>
-              <button type="button" class="mic-btn" id="g_adr_mic" title="Dicter l'adresse" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
-              <div class="ac-list" id="g_adr_list"></div>
+            <div class="dictee-or"><span>ou</span></div>
+            <button type="button" class="dictee-btn" id="dicteebtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg><span class="lbl">Dicter la ville et l'adresse</span></button>
+            <button class="gen-btn" id="genrun_adr">🗺 Générer depuis l'adresse</button>
+          </div>
+
+          <div class="method">
+            <div class="method-head"><span class="num">2</span> Par références cadastrales</div>
+            <div class="gen-grid">
+              <label>Préfixe<input id="g_prefixe" value="000" maxlength="3"></label>
+              <label>Section<input id="g_section" placeholder="AV" maxlength="2"></label>
+              <label>Parcelle<input id="g_parcelle" placeholder="1" maxlength="4"></label>
+              <label>Échelle
+                <select id="g_echelle">
+                  <option>200</option><option>500</option><option>650</option>
+                  <option selected>1000</option><option>1250</option><option>1500</option>
+                  <option>2000</option><option>2500</option><option>4000</option><option>5000</option>
+                </select>
+              </label>
+              <label style="grid-column:span 2">Format
+                <select id="g_format">
+                  <option value="A4|portrait" selected>A4 portrait</option>
+                  <option value="A4|paysage">A4 paysage</option>
+                  <option value="A3|portrait">A3 portrait</option>
+                  <option value="A3|paysage">A3 paysage</option>
+                </select>
+              </label>
             </div>
-            <div id="g_addr_mark" style="font-size:11px;margin-top:2px"></div>
-          </label>
-          <div class="gen-or">ou directement par références cadastrales :</div>
-          <label>Préfixe<input id="g_prefixe" value="000" maxlength="3"></label>
-          <label>Section<input id="g_section" placeholder="AV" maxlength="2"></label>
-          <label>Parcelle<input id="g_parcelle" placeholder="1" maxlength="4"></label>
-          <label>Échelle
-            <select id="g_echelle">
-              <option>200</option><option>500</option><option>650</option>
-              <option selected>1000</option><option>1250</option><option>1500</option>
-              <option>2000</option><option>2500</option><option>4000</option><option>5000</option>
-            </select>
-          </label>
-          <label>Format
-            <select id="g_format">
-              <option value="A4|portrait" selected>A4 portrait</option>
-              <option value="A4|paysage">A4 paysage</option>
-              <option value="A3|portrait">A3 portrait</option>
-              <option value="A3|paysage">A3 paysage</option>
-            </select>
-          </label>
+            <div class="method-hint">Utilise la commune saisie en ①. L'échelle et le format s'appliquent aussi à la génération par adresse.</div>
+            <button class="gen-btn" id="genrun_ref">🗺 Générer depuis les références</button>
+          </div>
+
+          <div class="gen-status" id="genstatus"></div>
+
+          <div class="method">
+            <div class="method-head"><span class="num">3</span> Par glissé de plan</div>
+            <div class="dropzone" id="dropzone">Glissez un <strong>PDF</strong> ici, ou cliquez pour choisir un fichier.</div>
+            <div class="method-hint">🔒 Traitement 100&nbsp;% local — aucun fichier n'est envoyé sur un serveur.</div>
+          </div>
+
         </div>
-        <button class="gen-btn" id="genrun" onclick="event.stopPropagation()">🗺 Générer le plan</button>
-        <div class="gen-status" id="genstatus"></div>
-        <p class="privacy" style="margin-top:10px">L'extrait officiel est récupéré via une fonction serveur de l'application (cadastre.gouv.fr).</p>
+        <p class="privacy" style="margin-top:12px">Les méthodes ① et ② récupèrent l'extrait officiel via une fonction serveur (cadastre.gouv.fr).</p>
       </div>
     </div>
 
@@ -567,8 +607,8 @@ const adrNom=()=>document.getElementById("g_adr_nom");
 const adrList=()=>document.getElementById("g_adr_list");
 function adrListClear(){ adrList().innerHTML=""; adrList().classList.remove("show"); }
 function addrMark(state,txt){ const m=document.getElementById("g_addr_mark"); m.textContent=txt||""; m.className = state==="ok"?"ac-ok":(state==="bad"?"ac-bad":""); }
-function enableAddr(){ const i=adrNom(); i.disabled=false; i.placeholder="N° et voie (ex. 65 Rue de Paris)"; const mb=document.getElementById("g_adr_mic"); if(mb) mb.disabled=false; }
-function disableAddr(){ const i=adrNom(); i.disabled=true; i.value=""; i.placeholder="Choisissez d'abord la commune"; resolvedRefs=null; addrMark("",""); adrListClear(); const mb=document.getElementById("g_adr_mic"); if(mb){ mb.disabled=true; mb.classList.remove("rec"); } if(typeof recog!=="undefined" && recog && recActive){ try{recog.stop();}catch(e){} } }
+function enableAddr(){ const i=adrNom(); i.disabled=false; i.placeholder="N° et voie (ex. 65 Rue de Paris)"; }
+function disableAddr(){ const i=adrNom(); i.disabled=true; i.value=""; i.placeholder="Choisissez la commune, ou dictez ci-dessous"; resolvedRefs=null; addrMark("",""); adrListClear(); if(typeof recog!=="undefined" && recog && recActive){ try{recog.stop();}catch(e){} } }
 
 function centroid(geom){
   try{
@@ -607,10 +647,13 @@ async function adrSearch(q){
 function adrRender(list){
   const el=adrList(); el.innerHTML="";
   if(!list||!list.length){ adrListClear(); addrMark("bad","Aucune adresse trouvée"); return; }
+  const head=document.createElement("div"); head.className="ac-head";
+  head.textContent=list.length+" adresse"+(list.length>1?"s":"")+" trouvée"+(list.length>1?"s":"")+" — choisissez :";
+  el.appendChild(head);
   list.forEach(f=>{
     const p=f.properties||{};
     const it=document.createElement("div"); it.className="ac-item";
-    it.innerHTML="<span>"+p.label+"</span>";
+    it.innerHTML='<span class="lbl"><svg class="pin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s7-6.3 7-11a7 7 0 1 0-14 0c0 4.7 7 11 7 11z"/><circle cx="12" cy="10" r="2.4"/></svg><span>'+p.label+'</span></span>';
     it.onclick=async()=>{
       adrNom().value=p.label; adrListClear(); resolvedRefs=null;
       const coords=f.geometry&&f.geometry.coordinates;
@@ -645,49 +688,67 @@ document.getElementById("g_adr_nom").addEventListener("keydown",e=>{
 });
 document.addEventListener("click",e=>{ if(!e.target.closest("#g_adr_wrap")) adrListClear(); });
 
-/* ---------- Dictée vocale de l'adresse (Web Speech API, fr-FR) ---------- */
+/* ---------- Dictée « ville + adresse » en une fois (Web Speech API, fr-FR) ---------- */
 let recog=null, recActive=false;
+async function resolveDictation(q){
+  q=(q||"").trim();
+  if(!q){ addrMark("bad","Rien entendu — réessayez."); return; }
+  addrMark("","Localisation de « "+q+" »…");
+  try{
+    const r=await fetch("https://api-adresse.data.gouv.fr/search/?q="+encodeURIComponent(q)+"&limit=1");
+    if(!r.ok) throw new Error("géocodage indisponible");
+    const j=await r.json();
+    const f=j.features&&j.features[0];
+    if(!f) throw new Error("adresse introuvable");
+    const p=f.properties||{};
+    selectedCommune={code:p.citycode,nom:p.city};
+    cNom().value=p.city||""; acMark("ok","✓ "+(p.city||"")+(p.citycode?" — INSEE "+p.citycode:""));
+    enableAddr();
+    adrNom().value=p.label||q;
+    const coords=f.geometry&&f.geometry.coordinates;
+    if(!coords) throw new Error("adresse sans coordonnées");
+    const refs=await parcelleAtPoint(coords[0],coords[1]);
+    if(!refs.section||!refs.parcelle) throw new Error("parcelle non identifiée");
+    resolvedRefs=refs;
+    addrMark("ok","✓ Parcelle "+(refs.section||"").toUpperCase()+" "+refs.parcelle+" (préfixe "+refs.prefixe+")");
+  }catch(err){ resolvedRefs=null; addrMark("bad","✗ "+err.message); }
+}
 (function initRecog(){
   const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-  const mic=document.getElementById("g_adr_mic");
-  if(!SR){ if(mic) mic.style.display="none"; return; } // navigateur sans dictée
+  const btn=document.getElementById("dicteebtn");
+  if(!SR){ if(btn) btn.style.display="none"; return; } // navigateur sans dictée
+  const lbl=btn.querySelector(".lbl");
+  const reset=()=>{ if(lbl) lbl.textContent="Dicter la ville et l'adresse"; };
   recog=new SR();
   recog.lang="fr-FR"; recog.interimResults=true; recog.maxAlternatives=1; recog.continuous=false;
-  recog.onresult=e=>{
-    let t=""; for(let i=0;i<e.results.length;i++) t+=e.results[i][0].transcript;
-    adrNom().value=t;
-  };
-  recog.onend=()=>{ recActive=false; mic.classList.remove("rec"); mic.title="Dicter l'adresse"; adrOnInput(); };
-  recog.onerror=ev=>{
-    recActive=false; mic.classList.remove("rec");
-    addrMark("bad","Dictée : "+(ev.error==="not-allowed"?"accès micro refusé":(ev.error==="no-speech"?"rien entendu":ev.error)));
-  };
-  mic.onclick=()=>{
-    if(!selectedCommune || mic.disabled) return;
+  recog.onresult=e=>{ let t=""; for(let i=0;i<e.results.length;i++) t+=e.results[i][0].transcript; adrNom().value=t; };
+  recog.onend=()=>{ recActive=false; btn.classList.remove("rec"); reset(); resolveDictation(adrNom().value); };
+  recog.onerror=ev=>{ recActive=false; btn.classList.remove("rec"); reset(); addrMark("bad","Dictée : "+(ev.error==="not-allowed"?"accès micro refusé":(ev.error==="no-speech"?"rien entendu":ev.error))); };
+  btn.onclick=()=>{
     if(recActive){ try{recog.stop();}catch(e){} return; }
-    adrNom().value=""; resolvedRefs=null; addrMark("","🎤 Dictez l'adresse…");
-    try{ recog.start(); recActive=true; mic.classList.add("rec"); mic.title="Arrêter la dictée"; }
+    selectedCommune=null; resolvedRefs=null; cNom().value=""; acMark("",""); enableAddr(); adrNom().value=""; addrMark("","🎤 Dictez la ville et l'adresse, puis patientez…");
+    try{ recog.start(); recActive=true; btn.classList.add("rec"); if(lbl) lbl.textContent="● Écoute… (cliquez pour arrêter)"; }
     catch(e){ recActive=false; }
   };
 })();
 
 /* ---------- Génération de l'extrait officiel ---------- */
 function setGenStatus(t,cls){ const e=document.getElementById("genstatus"); e.textContent=t; e.className="gen-status"+(cls?" "+cls:""); }
-async function generateExtrait(e){
-  if(e&&e.stopPropagation) e.stopPropagation();
+async function generateExtrait(mode){
   const v=id=>document.getElementById(id).value.trim();
-  if(!selectedCommune){ setGenStatus("Choisissez une commune dans la liste de suggestions.","err"); return; }
+  if(!selectedCommune){ setGenStatus("Indiquez d'abord une commune (section ①).","err"); return; }
   let prefixe=v("g_prefixe")||"000", section=v("g_section").toUpperCase(), parcelle=v("g_parcelle");
   const [taille,orientation]=document.getElementById("g_format").value.split("|");
   const echelle=document.getElementById("g_echelle").value;
-  const btn=document.getElementById("genrun"); btn.disabled=true;
+  if(mode==="adresse"){
+    if(!resolvedRefs){ setGenStatus("Choisissez une adresse dans la liste (section ①).","err"); return; }
+    prefixe=resolvedRefs.prefixe||prefixe; section=(resolvedRefs.section||"").toUpperCase(); parcelle=resolvedRefs.parcelle;
+  }else{ // références
+    if(!section||!parcelle){ setGenStatus("Renseignez une section et une parcelle (section ②).","err"); return; }
+  }
+  const b1=document.getElementById("genrun_adr"), b2=document.getElementById("genrun_ref");
+  b1.disabled=true; b2.disabled=true;
   try{
-    // Mode adresse : parcelle déjà résolue lors du choix de l'adresse
-    if(resolvedRefs){
-      prefixe=resolvedRefs.prefixe||prefixe; section=(resolvedRefs.section||"").toUpperCase(); parcelle=resolvedRefs.parcelle;
-    } else if(!section||!parcelle){
-      setGenStatus("Choisissez une adresse, ou renseignez une section + une parcelle.","err"); btn.disabled=false; return;
-    }
     setGenStatus("Récupération de l'extrait officiel… (quelques secondes)","");
     const qs=new URLSearchParams({commune:selectedCommune.code,prefixe,section,parcelle,echelle,taille,orientation}).toString();
     const r=await fetch("/api/extrait?"+qs);
@@ -702,9 +763,10 @@ async function generateExtrait(e){
     await loadPDFData(buf);
   }catch(err){
     setGenStatus("Échec : "+err.message+".","err");
-  }finally{ btn.disabled=false; }
+  }finally{ b1.disabled=false; b2.disabled=false; }
 }
-document.getElementById("genrun").onclick=generateExtrait;
+document.getElementById("genrun_adr").onclick=()=>generateExtrait("adresse");
+document.getElementById("genrun_ref").onclick=()=>generateExtrait("ref");
 document.getElementById("genbtn").onclick=()=>{ drop.classList.remove("hide"); };
 document.getElementById("fileinput").onchange=e=>{ if(e.target.files[0]) loadPDF(e.target.files[0]); };
 ["dragenter","dragover"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add("over");}));
@@ -712,12 +774,8 @@ document.getElementById("fileinput").onchange=e=>{ if(e.target.files[0]) loadPDF
 drop.addEventListener("drop",e=>{const f=[...e.dataTransfer.files].find(x=>x.type==="application/pdf"); if(f) loadPDF(f);});
 stage.addEventListener("dragover",e=>e.preventDefault());
 stage.addEventListener("drop",e=>{e.preventDefault();const f=[...e.dataTransfer.files].find(x=>x.type==="application/pdf"); if(f) loadPDF(f);});
-document.querySelector(".dropcard").addEventListener("click",(e)=>{
-  // n'ouvrir le sélecteur de PDF que sur un clic dans le vide de la carte,
-  // jamais sur le formulaire de génération ou ses boutons (évite l'ouverture parasite)
-  if(e.target.closest("#genform, #genrun, .gen-btn, .gen-sep, .gen-status, .privacy, .ac-list")) return;
-  document.getElementById("fileinput").click();
-});
+// l'ouverture du sélecteur de PDF n'est déclenchée QUE par la zone de glissé (section ③)
+document.getElementById("dropzone").addEventListener("click",()=>document.getElementById("fileinput").click());
 
 async function loadPDF(file){
   loadPDFData(await file.arrayBuffer());
