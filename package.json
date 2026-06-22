@@ -1,0 +1,9 @@
+{
+  "name": "paint",
+  "version": "1.0.0",
+  "private": true,
+  "description": "PAINT — colorisation de plans cadastraux + génération de l'extrait officiel",
+  "dependencies": {
+    "superagent": "^8.1.2"
+  }
+}

@@ -1,0 +1,999 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PAINT · Vos plans en couleurs — FIDAL Notaires</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<style>
+  :root{
+    --navy-1:#16314f; --navy-2:#091525;
+    --teal:#6DD5DC; --teal-deep:#4E98A0;
+    --gold:#E3CC7A;
+    --ink:#0F2238; --grey:#657D96; --line:#d8dee6;
+    --panel:#fbfcfd; --bg:#eef1f4;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{
+    font-family:"Segoe UI",system-ui,sans-serif;
+    color:var(--ink); background:var(--bg);
+    display:flex; flex-direction:column; overflow:hidden;
+  }
+
+  /* ---------- Bandeau ---------- */
+  header{
+    background:linear-gradient(135deg,var(--navy-1),var(--navy-2));
+    color:#fff; padding:10px 18px; display:flex; align-items:center;
+    gap:18px; flex-wrap:wrap; box-shadow:0 2px 8px rgba(9,21,37,.25); z-index:20;
+  }
+  .brand{display:flex;align-items:center;gap:12px;font-weight:600;letter-spacing:.5px}
+  .brand .nib{width:30px;height:30px}
+  .brand small{display:block;font-weight:400;font-size:11px;color:var(--teal);letter-spacing:1px}
+  .hbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-left:auto}
+  .hbtn{
+    background:rgba(255,255,255,.08);color:#fff;border:1px solid rgba(255,255,255,.18);
+    padding:7px 13px;border-radius:8px;font-size:13px;cursor:pointer;display:flex;
+    align-items:center;gap:6px;transition:.15s;font-family:inherit;
+  }
+  .hbtn:hover{background:rgba(109,213,220,.22);border-color:var(--teal)}
+  .hbtn.primary{background:var(--teal-deep);border-color:var(--teal)}
+  .hbtn.primary:hover{background:var(--teal)}
+  .hbtn:disabled{opacity:.4;cursor:not-allowed}
+  .pagenav{display:flex;align-items:center;gap:6px;font-size:13px}
+  .pagenav span{min-width:74px;text-align:center}
+
+  /* ---------- Corps ---------- */
+  main{flex:1;display:flex;min-height:0}
+
+  /* Barre d'outils gauche */
+  aside{
+    width:248px; background:var(--panel); border-right:1px solid var(--line);
+    padding:14px; overflow-y:auto; flex-shrink:0;
+  }
+  .grp{margin-bottom:18px}
+  .grp h3{
+    font-size:11px;text-transform:uppercase;letter-spacing:1.2px;color:var(--grey);
+    margin:0 0 9px;font-weight:700;
+  }
+  .tools{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+  .tool{
+    background:#fff;border:1.5px solid var(--line);border-radius:9px;padding:9px 6px;
+    cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:5px;
+    font-size:11px;color:var(--ink);transition:.12s;font-family:inherit;
+  }
+  .tool svg{width:22px;height:22px}
+  .tool:hover{border-color:var(--teal-deep)}
+  .tool.active{border-color:var(--teal-deep);background:#eafafb;box-shadow:inset 0 0 0 1.5px var(--teal-deep)}
+
+  .swatches{display:grid;grid-template-columns:repeat(6,1fr);gap:6px}
+  .sw{
+    aspect-ratio:1;border-radius:7px;cursor:pointer;border:2px solid #fff;
+    box-shadow:0 0 0 1px var(--line);transition:.12s;
+  }
+  .sw:hover{transform:scale(1.08)}
+  .sw.active{box-shadow:0 0 0 2px var(--ink);transform:scale(1.08)}
+  .colorrow{display:flex;align-items:center;gap:10px;margin-top:10px}
+  .colorrow input[type=color]{width:38px;height:34px;border:none;border-radius:7px;background:none;cursor:pointer;padding:0}
+  .colorrow label{font-size:12px;color:var(--grey)}
+
+  .slider{margin-top:6px}
+  .slider label{display:flex;justify-content:space-between;font-size:12px;color:var(--grey);margin-bottom:3px}
+  .slider input[type=range]{width:100%;accent-color:var(--teal-deep)}
+
+  .legend-item{display:flex;align-items:center;gap:8px;margin-bottom:7px}
+  .legend-item .dot{width:18px;height:18px;border-radius:5px;flex-shrink:0;box-shadow:0 0 0 1px var(--line)}
+  .legend-item input{
+    flex:1;border:1px solid var(--line);border-radius:6px;padding:5px 7px;font-size:12px;
+    font-family:inherit;color:var(--ink);min-width:0;
+  }
+  .legend-item input:focus{outline:none;border-color:var(--teal-deep)}
+  .legend-hint{font-size:11px;color:var(--grey);line-height:1.4}
+
+  .numrow{display:flex;gap:6px;margin-bottom:8px}
+  .numrow input{
+    flex:1;min-width:0;border:1.5px solid var(--line);border-radius:8px;padding:8px 9px;
+    font-size:13px;font-family:inherit;color:var(--ink);
+  }
+  .numrow input:focus{outline:none;border-color:var(--teal-deep)}
+  .findbtn{
+    width:100%;background:var(--teal-deep);color:#fff;border:none;border-radius:8px;
+    padding:9px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:.15s;
+    display:flex;align-items:center;justify-content:center;gap:7px;
+  }
+  .findbtn:hover{background:var(--teal)}
+  .findbtn svg{width:17px;height:17px}
+  .status{margin-top:9px;font-size:12px;line-height:1.45;padding:8px 10px;border-radius:8px;display:none}
+  .status.show{display:block}
+  .status.ok{background:#eafaf0;color:#1f7a45;border:1px solid #bfe6cf}
+  .status.warn{background:#fff6e6;color:#9a6a14;border:1px solid #f0dcae}
+  .status.err{background:#fdeaea;color:#a52f2f;border:1px solid #f0c9c9}
+
+  /* Zone plan */
+  .stage{flex:1;position:relative;overflow:auto;background:
+    repeating-conic-gradient(#e7ebef 0% 25%, #f3f5f7 0% 50%) 50%/22px 22px;}
+  .scroller{min-width:100%;min-height:100%;display:flex;align-items:flex-start;justify-content:center;padding:24px}
+  #cwrap{position:relative;transform-origin:top center;box-shadow:0 6px 30px rgba(9,21,37,.22);background:#fff;line-height:0}
+  #base,#overlay{display:block;position:absolute;top:0;left:0}
+  #base{position:relative}
+  #overlay{cursor:crosshair}
+  #anno{position:absolute;top:0;left:0;right:0;bottom:0;pointer-events:none}
+  .note{
+    position:absolute;pointer-events:auto;font-family:"Segoe UI",sans-serif;font-weight:600;
+    white-space:nowrap;cursor:move;padding:1px 3px;user-select:none;transform:translate(-50%,-50%);
+  }
+  .note.sel{outline:2px dashed var(--teal-deep);outline-offset:2px}
+
+  /* Accueil (drop zone) */
+  #drop{
+    position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    flex-direction:column;gap:16px;color:var(--grey);text-align:center;padding:30px;
+  }
+  #drop.hide{display:none}
+  .dropcard{
+    border:2.5px dashed var(--line);border-radius:18px;padding:48px 60px;background:#fff;
+    transition:.15s;max-width:520px;
+  }
+  #drop.over .dropcard{border-color:var(--teal-deep);background:#eafafb}
+  .dropcard h2{margin:0 0 6px;color:var(--ink);font-weight:600}
+  .dropcard p{margin:4px 0;font-size:14px}
+  .dropcard .pen{width:54px;height:54px;margin-bottom:8px}
+
+  .gen-sep{display:flex;align-items:center;gap:10px;margin:20px 0 14px;color:var(--grey);font-size:12px}
+  .gen-sep::before,.gen-sep::after{content:"";flex:1;height:1px;background:var(--line)}
+  .gen-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;text-align:left}
+  .gen-grid label{display:flex;flex-direction:column;gap:3px;font-size:11px;color:var(--grey);font-weight:600}
+  .gen-grid input,.gen-grid select{
+    border:1.5px solid var(--line);border-radius:7px;padding:7px 8px;font-size:13px;
+    font-family:inherit;color:var(--ink);background:#fff;width:100%;
+  }
+  .gen-grid input:focus,.gen-grid select:focus{outline:none;border-color:var(--teal-deep)}
+  .gen-btn{
+    margin-top:14px;width:100%;background:var(--teal-deep);color:#fff;border:none;border-radius:9px;
+    padding:11px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;transition:.15s;
+  }
+  .gen-btn:hover{background:var(--teal)}
+  .gen-btn:disabled{opacity:.55;cursor:wait}
+  .gen-status{margin-top:10px;font-size:12.5px;line-height:1.45;min-height:1px}
+  .gen-status.err{color:#a52f2f}
+  .gen-status.ok{color:#1f7a45}
+  .privacy{font-size:11.5px;color:var(--grey);margin-top:18px;display:flex;align-items:center;gap:6px;justify-content:center}
+
+  .hint-bar{
+    position:absolute;left:50%;bottom:14px;transform:translateX(-50%);
+    background:rgba(15,34,56,.9);color:#fff;font-size:12.5px;padding:7px 14px;border-radius:20px;
+    pointer-events:none;opacity:0;transition:.25s;z-index:5;
+  }
+  .hint-bar.show{opacity:1}
+  .spin{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:rgba(255,255,255,.7);z-index:9;flex-direction:column;gap:12px;color:var(--ink)}
+  .spin.show{display:flex}
+  .spin .ring{width:34px;height:34px;border:3px solid var(--line);border-top-color:var(--teal-deep);border-radius:50%;animation:sp 1s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  input[type=file]{display:none}
+
+  /* Pointeurs personnalisés pinceau / gomme */
+  #toolring{
+    position:fixed;pointer-events:none;border-radius:50%;transform:translate(-50%,-50%);
+    display:none;z-index:60;box-sizing:border-box;
+  }
+  #toolring.brush{border:2px solid var(--teal-deep);background:rgba(109,213,220,.20)}
+  #toolring.erase{border:2px dashed var(--navy-1);background:rgba(255,255,255,.30)}
+  #toolring .badge{
+    position:absolute;left:100%;top:-22px;margin-left:2px;width:22px;height:22px;
+    filter:drop-shadow(0 1px 2px rgba(9,21,37,.45));
+  }
+  #toolring .badge svg{width:22px;height:22px}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <svg class="nib" viewBox="0 0 78 78" fill="none">
+      <path d="M39 8 L52 40 L39 70 L26 40 Z" fill="#6DD5DC"/>
+      <path d="M39 40 L39 70" stroke="#16314f" stroke-width="2.6"/>
+      <circle cx="39" cy="44" r="4" fill="#E3CC7A"/>
+    </svg>
+    <div>PAINT <small>Vos plans en couleurs</small></div>
+  </div>
+  <div class="hbar">
+    <div class="pagenav" id="pagenav" style="display:none">
+      <button class="hbtn" id="prev">‹</button>
+      <span id="pagelbl">— / —</span>
+      <button class="hbtn" id="next">›</button>
+    </div>
+    <button class="hbtn" id="rotate" title="Pivoter 90° (sens horaire)" style="display:none">↻</button>
+    <button class="hbtn" id="zoomout" title="Dézoomer" style="display:none">−</button>
+    <span id="zoomlbl" style="display:none;font-size:13px;min-width:42px;text-align:center">100%</span>
+    <button class="hbtn" id="zoomin" title="Zoomer" style="display:none">+</button>
+    <button class="hbtn" id="genbtn" title="Générer un extrait depuis des références" style="display:none">🗺 Références</button>
+    <button class="hbtn" id="openbtn">📄 Ouvrir un plan</button>
+    <button class="hbtn" id="pngbtn" disabled>⬇ PNG</button>
+    <button class="hbtn primary" id="pdfbtn" disabled>⬇ PDF</button>
+  </div>
+</header>
+
+<main>
+  <aside>
+    <div class="grp">
+      <h3>Outils</h3>
+      <div class="tools" id="toolbox">
+        <button class="tool active" data-tool="fill">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 12 12 5l7 7-7 7z"/><path d="M19 13c1.2 1.4 2 2.5 2 3.5a2 2 0 0 1-4 0c0-1 .8-2.1 2-3.5z" fill="currentColor" stroke="none"/></svg>
+          Remplir
+        </button>
+        <button class="tool" data-tool="brush">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20s2-1 4-3 4-5 4-5"/><path d="M14 4l6 6-7 4-3-3z"/></svg>
+          Pinceau
+        </button>
+        <button class="tool" data-tool="erase">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 16 14 6l5 5-7 7H8z"/><path d="M6 20h12"/></svg>
+          Gomme
+        </button>
+        <button class="tool" data-tool="text">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 6h14M12 6v13M9 19h6"/></svg>
+          Texte
+        </button>
+      </div>
+    </div>
+
+    <div class="grp">
+      <h3>Couleur</h3>
+      <div class="swatches" id="swatches"></div>
+      <div class="colorrow">
+        <input type="color" id="picker" value="#FF982D">
+        <label for="picker">Personnalisée</label>
+      </div>
+    </div>
+
+    <div class="grp">
+      <h3>Parcelles par numéro</h3>
+      <div class="numrow">
+        <input id="numinput" type="text" placeholder="Ex. 123, 124, 45" autocomplete="off">
+      </div>
+      <button class="findbtn" id="findbtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        Trouver et coloriser
+      </button>
+      <div class="status" id="status"></div>
+      <p class="legend-hint" style="margin-top:8px">Séparez les numéros par une virgule. La couleur sélectionnée ci-dessus est appliquée. Le 1<sup>er</sup> appel charge l'OCR (quelques secondes).</p>
+    </div>
+
+    <div class="grp">
+      <div class="slider">
+        <label>Opacité <span id="opaval">45%</span></label>
+        <input type="range" id="opacity" min="10" max="100" value="45">
+      </div>
+      <div class="slider">
+        <label>Sensibilité des bords <span id="thrval">42</span></label>
+        <input type="range" id="threshold" min="20" max="160" value="100">
+      </div>
+      <div class="slider" id="sizewrap">
+        <label>Taille pinceau / gomme <span id="szval">14 px</span></label>
+        <input type="range" id="brushsize" min="3" max="60" value="14">
+      </div>
+      <div class="slider" id="fontwrap">
+        <label>Taille du texte <span id="fsval">18 px</span></label>
+        <input type="range" id="fontsize" min="10" max="60" value="18">
+      </div>
+    </div>
+
+    <div class="grp">
+      <h3>Actions</h3>
+      <div class="tools">
+        <button class="tool" id="undo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 7 4 12l5 5"/><path d="M4 12h11a5 5 0 0 1 0 10h-1"/></svg>Annuler</button>
+        <button class="tool" id="redo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 7l5 5-5 5"/><path d="M20 12H9a5 5 0 0 0 0 10h1"/></svg>Rétablir</button>
+        <button class="tool" id="clear" style="grid-column:span 2;color:#b23b3b;border-color:#f0d4d4"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 7h14M9 7V5h6v2M8 7l1 13h6l1-13"/></svg>Tout effacer</button>
+      </div>
+    </div>
+
+    <div class="grp">
+      <h3>Légende</h3>
+      <div id="legend"></div>
+      <p class="legend-hint">Nommez une teinte (ex. « Vendeur », « Acquéreur »). Cochez « Inclure » à l'export pour ajouter l'encart de légende sur le plan.</p>
+      <label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink);margin-top:8px;cursor:pointer">
+        <input type="checkbox" id="inclegend" style="accent-color:var(--teal-deep)"> Inclure la légende à l'export
+      </label>
+      <select id="legendpos" style="width:100%;margin-top:9px;border:1.5px solid var(--line);border-radius:8px;padding:7px 8px;font-size:12px;font-family:inherit;color:var(--ink);background:#fff">
+        <option value="auto">Sous « cadastre.gouv.fr » (auto)</option>
+        <option value="tl">Coin haut gauche</option>
+        <option value="tr">Coin haut droit</option>
+        <option value="bl">Coin bas gauche</option>
+        <option value="br">Coin bas droit</option>
+      </select>
+    </div>
+  </aside>
+
+  <div class="stage" id="stage">
+    <div class="scroller">
+      <div id="cwrap">
+        <canvas id="base"></canvas>
+        <canvas id="overlay"></canvas>
+        <div id="anno"></div>
+      </div>
+    </div>
+
+    <div id="drop">
+      <div class="dropcard">
+        <svg class="pen" viewBox="0 0 78 78" fill="none">
+          <path d="M39 8 L52 40 L39 70 L26 40 Z" fill="#6DD5DC"/>
+          <circle cx="39" cy="44" r="4" fill="#E3CC7A"/>
+        </svg>
+        <h2>Déposez votre extrait de plan cadastral</h2>
+        <p>Glissez un fichier <strong>PDF</strong> ici, ou cliquez pour le sélectionner.</p>
+        <p style="font-size:13px">Cliquez ensuite dans une parcelle pour la coloriser.</p>
+        <div class="privacy">🔒 Traitement 100&nbsp;% local — aucun fichier n'est envoyé sur un serveur.</div>
+
+        <div class="gen-sep"><span>ou générer l'extrait officiel</span></div>
+        <div class="gen-grid" id="genform" onclick="event.stopPropagation()">
+          <label>Commune (INSEE)<input id="g_commune" placeholder="62765" maxlength="5"></label>
+          <label>Préfixe<input id="g_prefixe" value="000" maxlength="3"></label>
+          <label>Section<input id="g_section" placeholder="AV" maxlength="2"></label>
+          <label>Parcelle<input id="g_parcelle" placeholder="1" maxlength="4"></label>
+          <label>Échelle
+            <select id="g_echelle">
+              <option>200</option><option>500</option><option>650</option>
+              <option selected>1000</option><option>1250</option><option>1500</option>
+              <option>2000</option><option>2500</option><option>4000</option><option>5000</option>
+            </select>
+          </label>
+          <label>Format
+            <select id="g_format">
+              <option value="A4|portrait" selected>A4 portrait</option>
+              <option value="A4|paysage">A4 paysage</option>
+              <option value="A3|portrait">A3 portrait</option>
+              <option value="A3|paysage">A3 paysage</option>
+            </select>
+          </label>
+        </div>
+        <button class="gen-btn" id="genrun" onclick="event.stopPropagation()">🗺 Générer le plan</button>
+        <div class="gen-status" id="genstatus"></div>
+        <p class="privacy" style="margin-top:10px">L'extrait officiel est récupéré via une fonction serveur de l'application (cadastre.gouv.fr).</p>
+      </div>
+    </div>
+
+    <div class="hint-bar" id="hintbar"></div>
+    <div class="spin" id="spin"><div class="ring"></div><span id="spinmsg">Lecture du plan…</span></div>
+  </div>
+</main>
+
+<input type="file" id="fileinput" accept="application/pdf">
+<div id="toolring"><div class="badge"></div></div>
+
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+/* ---------- État ---------- */
+const PALETTE = ["#FF982D","#33838B","#6DD5DC","#657D96",
+                 "#d35f5f","#5fb37a","#7a6fd3","#cf6fb0","#0F2238","#9aa7b3",
+                 "#2F6FB0","#9C6B3F"];
+const S = {
+  pdf:null, page:1, pageCount:1, ocrCache:null, anchorCache:null,
+  tool:"fill", color:"#FF982D", opacity:.45, threshold:100, brush:14, fontSize:18,
+  zoom:1, rotation:0, drawing:false, lastPt:null,
+  undoStack:[], redoStack:[],
+  notes:[], selNote:null, dragNote:null, dragOff:null,
+  legendLabels:{}, // hex -> texte
+  W:0, H:0
+};
+
+/* ---------- Éléments ---------- */
+const base = document.getElementById("base"), baseCtx = base.getContext("2d",{willReadFrequently:true});
+const overlay = document.getElementById("overlay"), oCtx = overlay.getContext("2d",{willReadFrequently:true});
+const anno = document.getElementById("anno");
+const cwrap = document.getElementById("cwrap");
+const stage = document.getElementById("stage");
+const drop = document.getElementById("drop");
+const hintbar = document.getElementById("hintbar");
+const spin = document.getElementById("spin");
+
+/* ---------- Palette & légende UI ---------- */
+const swatchEl = document.getElementById("swatches");
+PALETTE.forEach((c,i)=>{
+  const d = document.createElement("div");
+  d.className = "sw"+(i===0?" active":""); d.style.background=c; d.dataset.color=c;
+  d.title = c;
+  d.onclick = ()=>setColor(c,d);
+  swatchEl.appendChild(d);
+});
+function setColor(c,el){
+  S.color=c;
+  document.querySelectorAll(".sw").forEach(s=>s.classList.toggle("active",s===el));
+  document.getElementById("picker").value = /^#/.test(c)?c:S.color;
+}
+document.getElementById("picker").oninput = e=>{
+  S.color=e.target.value;
+  document.querySelectorAll(".sw").forEach(s=>s.classList.remove("active"));
+};
+
+function rebuildLegend(){
+  // teintes réellement utilisées dans l'overlay + palette nommée
+  const used = usedColors();
+  const lg = document.getElementById("legend");
+  lg.innerHTML="";
+  if(used.length===0){
+    lg.innerHTML='<p class="legend-hint" style="margin:0">Aucune teinte posée pour l’instant.</p>';
+    return;
+  }
+  used.forEach(hex=>{
+    const row=document.createElement("div"); row.className="legend-item";
+    const dot=document.createElement("div"); dot.className="dot"; dot.style.background=hex;
+    const inp=document.createElement("input");
+    inp.placeholder="Désignation…"; inp.value=S.legendLabels[hex]||"";
+    inp.oninput=()=>S.legendLabels[hex]=inp.value;
+    row.append(dot,inp); lg.appendChild(row);
+  });
+}
+function usedColors(){
+  if(!S.W) return [];
+  const d = oCtx.getImageData(0,0,S.W,S.H).data;
+  const set = new Set();
+  for(let i=0;i<d.length;i+=4){
+    if(d[i+3]>0){ set.add(rgbToHex(d[i],d[i+1],d[i+2])); }
+  }
+  return [...set];
+}
+
+/* ---------- Outils ---------- */
+document.querySelectorAll("#toolbox .tool").forEach(t=>{
+  t.onclick=()=>{
+    S.tool=t.dataset.tool;
+    document.querySelectorAll("#toolbox .tool").forEach(x=>x.classList.remove("active"));
+    t.classList.add("active");
+    setToolCursor();
+    document.getElementById("sizewrap").style.display = (S.tool==="brush"||S.tool==="erase")?"block":"none";
+    document.getElementById("fontwrap").style.display = S.tool==="text"?"block":"none";
+    showHint(S.tool==="fill"?"Cliquez dans une parcelle pour la remplir.":
+             S.tool==="brush"?"Maintenez et glissez pour peindre.":
+             S.tool==="erase"?"Glissez pour effacer la couleur.":
+             "Cliquez pour placer une annotation.");
+  };
+});
+/* ---------- Pointeurs thématiques (pinceau / gomme / texte) ---------- */
+const ring=document.getElementById("toolring");
+const ringBadge=ring.querySelector(".badge");
+const G_BRUSH=`<svg viewBox='0 0 24 24' fill='none' stroke='#4E98A0' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'><path d='M4 20s2-1 4-3 4-5 4-5'/><path d='M14 4l6 6-7 4-3-3z'/></svg>`;
+const G_ERASE=`<svg viewBox='0 0 24 24' fill='none' stroke='#16314f' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'><path d='M4 16 14 6l5 5-7 7H8z'/><path d='M6 20h12'/></svg>`;
+const TEXT_SVG=`<svg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'><path d='M2,4H16L26,14L16,24H2Z' fill='#ffffff' stroke='#16314f' stroke-width='2' stroke-linejoin='round'/><circle cx='7' cy='9' r='1.7' fill='#4E98A0'/><path d='M5,13H13M9,13V19' stroke='#16314f' stroke-width='2' fill='none' stroke-linecap='round'/></svg>`;
+const TEXT_CURSOR=`url("data:image/svg+xml,${encodeURIComponent(TEXT_SVG)}") 25 14, text`;
+
+function setToolCursor(){
+  if(S.tool==="text"){ overlay.style.cursor=TEXT_CURSOR; ring.style.display="none"; }
+  else if(S.tool==="fill"){ overlay.style.cursor="crosshair"; ring.style.display="none"; }
+  else { // pinceau / gomme : curseur natif masqué, anneau dimensionné
+    overlay.style.cursor="none";
+    ring.className=S.tool;
+    ringBadge.innerHTML = S.tool==="brush" ? G_BRUSH : G_ERASE;
+  }
+}
+function moveRing(e){
+  if(S.tool!=="brush" && S.tool!=="erase") return;
+  const r=overlay.getBoundingClientRect();
+  const d=Math.max(8, S.brush*(r.width/S.W));   // taille réelle à l'écran (suit le zoom)
+  ring.style.width=d+"px"; ring.style.height=d+"px";
+  ring.style.left=e.clientX+"px"; ring.style.top=e.clientY+"px";
+  ring.style.display="block";
+}
+overlay.addEventListener("mouseenter",e=>moveRing(e));
+overlay.addEventListener("mouseleave",()=>{ring.style.display="none";});
+
+document.getElementById("opacity").oninput=e=>{S.opacity=e.target.value/100;document.getElementById("opaval").textContent=e.target.value+"%";};
+document.getElementById("threshold").oninput=e=>{S.threshold=+e.target.value;document.getElementById("thrval").textContent=e.target.value;};
+document.getElementById("brushsize").oninput=e=>{S.brush=+e.target.value;document.getElementById("szval").textContent=e.target.value+" px";};
+document.getElementById("fontsize").oninput=e=>{S.fontSize=+e.target.value;document.getElementById("fsval").textContent=e.target.value+" px";};
+
+/* ---------- Chargement PDF ---------- */
+document.getElementById("openbtn").onclick=()=>document.getElementById("fileinput").click();
+
+/* ---------- Génération de l'extrait officiel depuis les références ---------- */
+function setGenStatus(t,cls){ const e=document.getElementById("genstatus"); e.textContent=t; e.className="gen-status"+(cls?" "+cls:""); }
+async function generateExtrait(){
+  const v=id=>document.getElementById(id).value.trim();
+  const commune=v("g_commune"), prefixe=v("g_prefixe")||"000",
+        section=v("g_section").toUpperCase(), parcelle=v("g_parcelle");
+  if(!commune||!section||!parcelle){ setGenStatus("Renseignez au moins la commune (INSEE), la section et la parcelle.","err"); return; }
+  const [taille,orientation]=document.getElementById("g_format").value.split("|");
+  const echelle=document.getElementById("g_echelle").value;
+  const qs=new URLSearchParams({commune,prefixe,section,parcelle,echelle,taille,orientation}).toString();
+  const btn=document.getElementById("genrun"); btn.disabled=true;
+  setGenStatus("Récupération de l'extrait officiel… (quelques secondes)","");
+  try{
+    const r=await fetch("/api/extrait?"+qs);
+    if(!r.ok){
+      let msg="Erreur "+r.status;
+      try{ const j=await r.json(); if(j&&j.message) msg=j.message; }catch(e){}
+      throw new Error(msg);
+    }
+    const buf=await r.arrayBuffer();
+    if(buf.byteLength<1000) throw new Error("réponse vide");
+    setGenStatus("","");
+    await loadPDFData(buf);
+  }catch(err){
+    setGenStatus("Échec : "+err.message+". Vérifiez les références cadastrales (et que la fonction serveur /api/extrait est bien déployée).","err");
+  }finally{ btn.disabled=false; }
+}
+document.getElementById("genrun").onclick=generateExtrait;
+document.getElementById("genbtn").onclick=()=>{ drop.classList.remove("hide"); };
+document.getElementById("fileinput").onchange=e=>{ if(e.target.files[0]) loadPDF(e.target.files[0]); };
+["dragenter","dragover"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add("over");}));
+["dragleave","drop"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove("over");}));
+drop.addEventListener("drop",e=>{const f=[...e.dataTransfer.files].find(x=>x.type==="application/pdf"); if(f) loadPDF(f);});
+stage.addEventListener("dragover",e=>e.preventDefault());
+stage.addEventListener("drop",e=>{e.preventDefault();const f=[...e.dataTransfer.files].find(x=>x.type==="application/pdf"); if(f) loadPDF(f);});
+document.querySelector(".dropcard").addEventListener("click",()=>document.getElementById("fileinput").click());
+
+async function loadPDF(file){
+  loadPDFData(await file.arrayBuffer());
+}
+async function loadPDFData(buf){
+  spin.classList.add("show"); spinmsg.textContent="Lecture du plan…";
+  try{
+    S.pdf = await pdfjsLib.getDocument({data:buf}).promise;
+    S.pageCount = S.pdf.numPages; S.page=1;
+    S.notes=[]; anno.innerHTML=""; S.legendLabels={};
+    await renderPage();
+    drop.classList.add("hide");
+    document.getElementById("pagenav").style.display = S.pageCount>1?"flex":"none";
+    ["genbtn","rotate","zoomout","zoomlbl","zoomin"].forEach(id=>document.getElementById(id).style.display="inline-flex");
+    document.getElementById("pngbtn").disabled=false;
+    document.getElementById("pdfbtn").disabled=false;
+    showHint("Cliquez dans une parcelle pour la remplir.");
+  }catch(err){
+    alert("Impossible de lire ce PDF. Vérifiez qu'il s'agit bien d'un extrait de plan cadastral au format PDF.\n\n"+err.message);
+  }finally{ spin.classList.remove("show"); }
+}
+
+async function renderBase(){
+  const page = await S.pdf.getPage(S.page);
+  // résolution interne haute pour une colorisation nette
+  const target = 1700;
+  const vp1 = page.getViewport({scale:1, rotation:S.rotation});
+  const scale = target / vp1.width;
+  const vp = page.getViewport({scale, rotation:S.rotation});
+  S.W = Math.round(vp.width); S.H = Math.round(vp.height);
+  [base,overlay].forEach(c=>{c.width=S.W;c.height=S.H;});
+  cwrap.style.width=S.W+"px"; cwrap.style.height=S.H+"px";
+  anno.style.width=S.W+"px"; anno.style.height=S.H+"px";
+  baseCtx.fillStyle="#fff"; baseCtx.fillRect(0,0,S.W,S.H);
+  await page.render({canvasContext:baseCtx,viewport:vp}).promise;
+}
+
+async function renderPage(){
+  S.rotation = 0;
+  S.ocrCache = null; S.anchorCache = null; setStatus("");
+  await renderBase();
+  oCtx.clearRect(0,0,S.W,S.H);
+  S.undoStack=[]; S.redoStack=[]; pushUndo();
+  document.getElementById("pagelbl").textContent = S.page+" / "+S.pageCount;
+  applyZoom();
+  rebuildLegend();
+}
+document.getElementById("prev").onclick=async()=>{if(S.page>1){S.page--;spin.classList.add("show");await renderPage();spin.classList.remove("show");}};
+document.getElementById("next").onclick=async()=>{if(S.page<S.pageCount){S.page++;spin.classList.add("show");await renderPage();spin.classList.remove("show");}};
+
+/* ---------- Zoom (CSS, sans re-rendu : préserve les couleurs) ---------- */
+function applyZoom(){
+  cwrap.style.transform="scale("+S.zoom+")";
+  document.getElementById("zoomlbl").textContent=Math.round(S.zoom*100)+"%";
+  layoutNotes();
+}
+document.getElementById("zoomin").onclick=()=>{S.zoom=Math.min(4,S.zoom+.2);applyZoom();};
+document.getElementById("zoomout").onclick=()=>{S.zoom=Math.max(.3,S.zoom-.2);applyZoom();};
+
+/* ---------- Rotation 90° (conserve couleurs + annotations) ---------- */
+function rotateCanvas90(src,cw){
+  const w=src.width,h=src.height;
+  const t=document.createElement("canvas"); t.width=h; t.height=w;
+  const x=t.getContext("2d");
+  x.translate(h/2,w/2); x.rotate((cw?1:-1)*Math.PI/2); x.drawImage(src,-w/2,-h/2);
+  return t;
+}
+document.getElementById("rotate").onclick=async()=>{
+  if(!S.pdf) return;
+  spin.classList.add("show");
+  // copie de l'overlay courant
+  const old=document.createElement("canvas"); old.width=S.W; old.height=S.H;
+  old.getContext("2d").drawImage(overlay,0,0);
+  S.rotation=(S.rotation+90)%360;
+  S.ocrCache=null; S.anchorCache=null;
+  await renderBase();                 // refond pivoté (net), nouvelles dimensions
+  const rot=rotateCanvas90(old,true); // overlay pivoté 90° horaire
+  oCtx.clearRect(0,0,S.W,S.H);
+  oCtx.drawImage(rot,0,0,S.W,S.H);    // recalé sur les nouvelles dimensions
+  S.notes.forEach(n=>{const nx=1-n.y, ny=n.x; n.x=nx; n.y=ny;}); // repères pivotés
+  layoutNotes();
+  S.undoStack=[]; S.redoStack=[]; pushUndo();
+  applyZoom(); rebuildLegend();
+  spin.classList.remove("show");
+};
+
+/* ---------- Coordonnées souris -> pixels canvas ---------- */
+function evtToPx(e){
+  const r=overlay.getBoundingClientRect();
+  const x=(e.clientX-r.left)*(S.W/r.width);
+  const y=(e.clientY-r.top)*(S.H/r.height);
+  return {x:Math.round(x),y:Math.round(y)};
+}
+
+/* ---------- Undo / Redo ---------- */
+function pushUndo(){
+  S.undoStack.push(oCtx.getImageData(0,0,S.W,S.H));
+  if(S.undoStack.length>25) S.undoStack.shift();
+  S.redoStack=[];
+}
+document.getElementById("undo").onclick=()=>{
+  if(S.undoStack.length>1){ S.redoStack.push(S.undoStack.pop());
+    oCtx.putImageData(S.undoStack[S.undoStack.length-1],0,0); rebuildLegend(); }
+};
+document.getElementById("redo").onclick=()=>{
+  if(S.redoStack.length){ const img=S.redoStack.pop(); S.undoStack.push(img);
+    oCtx.putImageData(img,0,0); rebuildLegend(); }
+};
+document.getElementById("clear").onclick=()=>{
+  if(confirm("Effacer toutes les couleurs et annotations de cette page ?")){
+    oCtx.clearRect(0,0,S.W,S.H); pushUndo();
+    S.notes=[]; anno.innerHTML=""; S.selNote=null; rebuildLegend();
+  }
+};
+document.addEventListener("keydown",e=>{
+  if((e.ctrlKey||e.metaKey)&&e.key==="z"){e.preventDefault();document.getElementById("undo").click();}
+  if((e.ctrlKey||e.metaKey)&&(e.key==="y"||(e.shiftKey&&e.key==="Z"))){e.preventDefault();document.getElementById("redo").click();}
+  if((e.key==="Delete"||e.key==="Backspace")&&S.selNote!=null){deleteNote(S.selNote);}
+});
+
+/* ---------- Interactions sur l'overlay ---------- */
+overlay.addEventListener("mousedown",e=>{
+  if(!S.pdf) return;
+  const p=evtToPx(e);
+  if(S.tool==="fill"){ floodFill(p.x,p.y); pushUndo(); rebuildLegend(); }
+  else if(S.tool==="brush"||S.tool==="erase"){ S.drawing=true; S.lastPt=p; paintAt(p,p); }
+  else if(S.tool==="text"){ addNote(p.x,p.y); }
+});
+overlay.addEventListener("mousemove",e=>{
+  if(S.drawing){ const p=evtToPx(e); paintAt(S.lastPt,p); S.lastPt=p; }
+  moveRing(e);
+});
+window.addEventListener("mouseup",()=>{ if(S.drawing){S.drawing=false; pushUndo(); rebuildLegend();} });
+
+/* ---------- Pinceau / gomme ---------- */
+function paintAt(a,b){
+  oCtx.lineCap="round"; oCtx.lineJoin="round"; oCtx.lineWidth=S.brush;
+  if(S.tool==="erase"){
+    oCtx.globalCompositeOperation="destination-out"; oCtx.strokeStyle="rgba(0,0,0,1)";
+  }else{
+    oCtx.globalCompositeOperation="source-over";
+    const [r,g,bl]=hexToRgb(S.color);
+    oCtx.strokeStyle=`rgba(${r},${g},${bl},${S.opacity})`;
+  }
+  oCtx.beginPath(); oCtx.moveTo(a.x,a.y); oCtx.lineTo(b.x,b.y); oCtx.stroke();
+  oCtx.globalCompositeOperation="source-over";
+}
+
+/* ---------- Remplissage par zone (scanline + remplissage des îlots) ---------- */
+function floodFill(sx,sy){
+  if(sx<0||sy<0||sx>=S.W||sy>=S.H) return;
+  const base = baseCtx.getImageData(0,0,S.W,S.H).data;
+  const W=S.W,H=S.H, thr=S.threshold, N=W*H;
+  const isWall = idx=>{
+    const p=idx*4;
+    return (0.299*base[p]+0.587*base[p+1]+0.114*base[p+2])<thr; // trait sombre = bordure
+  };
+  const start=sy*W+sx;
+  if(isWall(start)){ showHint("Vous avez cliqué sur un trait — cliquez à l'intérieur de la parcelle."); return; }
+
+  // Passe 1 — remplissage scanline de la parcelle (s'arrête aux traits)
+  const filled=new Uint8Array(N);
+  const stack=[[sx,sy]];
+  while(stack.length){
+    let [x,y]=stack.pop();
+    let xL=x;
+    while(xL>=0 && !filled[y*W+xL] && !isWall(y*W+xL)) xL--;
+    xL++;
+    let spanUp=false, spanDown=false, xi=xL;
+    while(xi<W && !filled[y*W+xi] && !isWall(y*W+xi)){
+      const idx=y*W+xi; filled[idx]=1;
+      if(y>0){ const u=idx-W; if(!filled[u]&&!isWall(u)){ if(!spanUp){stack.push([xi,y-1]);spanUp=true;} } else spanUp=false; }
+      if(y<H-1){ const dn=idx+W; if(!filled[dn]&&!isWall(dn)){ if(!spanDown){stack.push([xi,y+1]);spanDown=true;} } else spanDown=false; }
+      xi++;
+    }
+  }
+
+  // Passe 2 — depuis les bords du plan, marquer tout ce qui communique avec
+  // l'extérieur (traits + fond + parcelles voisines). La couleur fait barrage.
+  const outside=new Uint8Array(N);
+  const st=[];
+  const seed=i=>{ if(!filled[i]&&!outside[i]){outside[i]=1;st.push(i);} };
+  for(let x=0;x<W;x++){ seed(x); seed((H-1)*W+x); }
+  for(let y=0;y<H;y++){ seed(y*W); seed(y*W+W-1); }
+  while(st.length){
+    const i=st.pop(), x=i%W, y=(i-x)/W;
+    if(x>0)   seed(i-1);
+    if(x<W-1) seed(i+1);
+    if(y>0)   seed(i-W);
+    if(y<H-1) seed(i+W);
+  }
+
+  // Passe 3 — peindre la parcelle ET les îlots enfermés par la couleur
+  // (boucles des chiffres : 6, 0, 8, 9…). Tout sauf l'extérieur.
+  const img=oCtx.getImageData(0,0,W,H), od=img.data;
+  const [fr,fg,fb]=hexToRgb(S.color); const fa=Math.round(S.opacity*255);
+  for(let i=0;i<N;i++){
+    if(!outside[i]){ const p=i*4; od[p]=fr; od[p+1]=fg; od[p+2]=fb; od[p+3]=fa; }
+  }
+  oCtx.putImageData(img,0,0);
+}
+
+/* ---------- Annotations texte ---------- */
+function addNote(px,py){
+  const txt = prompt("Texte de l'annotation :","");
+  if(txt===null||txt.trim()==="") return;
+  const note={id:Date.now(),x:px/S.W,y:py/S.H,text:txt,color:S.color,size:S.fontSize};
+  S.notes.push(note); renderNote(note);
+}
+function renderNote(note){
+  const el=document.createElement("div");
+  el.className="note"; el.dataset.id=note.id; el.textContent=note.text;
+  el.style.color=note.color;
+  el.style.fontSize=note.size+"px";
+  el.style.textShadow="0 0 3px #fff,0 0 3px #fff,0 0 3px #fff";
+  anno.appendChild(el);
+  positionNote(el,note);
+  el.addEventListener("mousedown",ev=>{
+    ev.stopPropagation();
+    selectNote(note.id);
+    const r=overlay.getBoundingClientRect();
+    S.dragNote=note;
+    S.dragOff={dx:ev.clientX-(r.left+note.x*r.width), dy:ev.clientY-(r.top+note.y*r.height)};
+  });
+  el.addEventListener("dblclick",ev=>{
+    ev.stopPropagation();
+    const nt=prompt("Modifier l'annotation :",note.text);
+    if(nt!==null){ if(nt.trim()===""){deleteNote(note.id);} else {note.text=nt; el.textContent=nt;} }
+  });
+}
+window.addEventListener("mousemove",e=>{
+  if(S.dragNote){
+    const r=overlay.getBoundingClientRect();
+    S.dragNote.x=Math.min(1,Math.max(0,(e.clientX-r.left-S.dragOff.dx)/r.width));
+    S.dragNote.y=Math.min(1,Math.max(0,(e.clientY-r.top-S.dragOff.dy)/r.height));
+    const el=anno.querySelector(`[data-id="${S.dragNote.id}"]`); positionNote(el,S.dragNote);
+  }
+});
+window.addEventListener("mouseup",()=>{S.dragNote=null;});
+function positionNote(el,note){ el.style.left=(note.x*S.W)+"px"; el.style.top=(note.y*S.H)+"px"; }
+function layoutNotes(){ S.notes.forEach(n=>{const el=anno.querySelector(`[data-id="${n.id}"]`); if(el)positionNote(el,n);}); }
+function selectNote(id){
+  S.selNote=id;
+  anno.querySelectorAll(".note").forEach(e=>e.classList.toggle("sel",e.dataset.id==id));
+}
+function deleteNote(id){
+  S.notes=S.notes.filter(n=>n.id!=id);
+  const el=anno.querySelector(`[data-id="${id}"]`); if(el)el.remove(); S.selNote=null;
+}
+overlay.addEventListener("mousedown",()=>{ if(S.tool!=="text"){selectNote(null);} });
+
+/* ---------- Export ---------- */
+// Localise la mention « cadastre.gouv.fr » sur le plan (OCR plein texte) pour
+// y ancrer la légende. Repli silencieux si absente ou OCR indisponible.
+let anchorWorker=null;
+async function findCadastreAnchor(){
+  const key=S.page+"|"+S.rotation;
+  if(S.anchorCache && S.anchorCache.key===key) return S.anchorCache.box;
+  let box=null;
+  try{
+    if(typeof Tesseract==="undefined") throw new Error("ocr");
+    if(!anchorWorker){
+      anchorWorker=await Tesseract.createWorker("eng",1,{
+        logger:m=>{ if(m.status==="recognizing text") spinmsg.textContent="Localisation de la légende… "+Math.round(m.progress*100)+"%"; }
+      });
+    }
+    const {data}=await anchorWorker.recognize(base,{},{tsv:true});
+    (data.tsv||"").split("\n").forEach(l=>{
+      const c=l.split("\t");
+      if(c.length<12||c[0]!=="5") return;
+      if((c[11]||"").toLowerCase().includes("cadastre")){
+        const left=+c[6],top=+c[7],w=+c[8],h=+c[9];
+        box={x0:left,y0:top,x1:left+w,y1:top+h};
+      }
+    });
+  }catch(e){ box=null; }
+  S.anchorCache={key,box};
+  return box;
+}
+
+function buildExportCanvas(anchor){
+  const c=document.createElement("canvas"); c.width=S.W; c.height=S.H;
+  const x=c.getContext("2d");
+  x.drawImage(base,0,0); x.drawImage(overlay,0,0);
+  // annotations
+  S.notes.forEach(n=>{
+    x.font=`600 ${n.size}px "Segoe UI",sans-serif`;
+    x.textAlign="center"; x.textBaseline="middle";
+    x.lineWidth=4; x.strokeStyle="#fff"; x.strokeText(n.text,n.x*S.W,n.y*S.H);
+    x.fillStyle=n.color; x.fillText(n.text,n.x*S.W,n.y*S.H);
+  });
+  // légende optionnelle
+  if(document.getElementById("inclegend").checked){
+    const items=usedColors().filter(h=>(S.legendLabels[h]||"").trim()!=="")
+                 .map(h=>({c:h,t:S.legendLabels[h]}));
+    if(items.length){
+      const pad=14, line=Math.max(22,S.fontSize+6), boxW=300, boxH=pad*2+line*(items.length+1);
+      const pos=document.getElementById("legendpos").value;
+      const M=22;
+      let bx, by;
+      if(pos==="auto" && anchor){              // centrée sous « cadastre.gouv.fr »
+        bx=Math.min(Math.max(8, (anchor.x0+anchor.x1)/2 - boxW/2), S.W-boxW-8);
+        by=Math.min(Math.max(8, anchor.y1+12), S.H-boxH-8);
+      }else{                                   // coin choisi (ou repli si ancre absente)
+        const p=(pos==="auto")?"tr":pos;
+        bx=(p==="tl"||p==="bl") ? M : S.W-boxW-M;
+        by=(p==="tl"||p==="tr") ? M : S.H-boxH-M;
+      }
+      x.fillStyle="rgba(255,255,255,.95)"; x.strokeStyle="#16314f"; x.lineWidth=2;
+      x.fillRect(bx,by,boxW,boxH); x.strokeRect(bx,by,boxW,boxH);
+      x.fillStyle="#0F2238"; x.textAlign="left"; x.textBaseline="middle";
+      x.font=`700 ${Math.max(15,S.fontSize-2)}px "Segoe UI",sans-serif`;
+      x.fillText("Légende",bx+pad,by+pad+line/2);
+      x.font=`500 ${Math.max(14,S.fontSize-3)}px "Segoe UI",sans-serif`;
+      items.forEach((it,i)=>{
+        const ly=by+pad+line*(i+1)+line/2;
+        x.fillStyle=it.c; x.fillRect(bx+pad,ly-9,18,18);
+        x.strokeStyle="#657D96"; x.lineWidth=1; x.strokeRect(bx+pad,ly-9,18,18);
+        x.fillStyle="#0F2238"; x.fillText(it.t,bx+pad+28,ly);
+      });
+    }
+  }
+  return c;
+}
+
+async function doExport(kind){
+  let anchor=null;
+  if(document.getElementById("inclegend").checked && document.getElementById("legendpos").value==="auto"){
+    spin.classList.add("show"); spinmsg.textContent="Localisation de la légende…";
+    anchor=await findCadastreAnchor();
+    spin.classList.remove("show");
+  }
+  const c=buildExportCanvas(anchor);
+  if(kind==="png"){
+    const a=document.createElement("a");
+    a.download=`cadastre-colorise-p${S.page}.png`; a.href=c.toDataURL("image/png"); a.click();
+  }else{
+    const {jsPDF}=window.jspdf;
+    const land = S.W>=S.H;
+    const pdf=new jsPDF({orientation:land?"landscape":"portrait",unit:"pt",format:"a4"});
+    const pw=pdf.internal.pageSize.getWidth(), ph=pdf.internal.pageSize.getHeight();
+    const m=24, r=Math.min((pw-2*m)/c.width,(ph-2*m)/c.height);
+    const w=c.width*r, h=c.height*r;
+    pdf.addImage(c.toDataURL("image/png"),"PNG",(pw-w)/2,(ph-h)/2,w,h);
+    pdf.save(`cadastre-colorise-p${S.page}.pdf`);
+  }
+}
+document.getElementById("pngbtn").onclick=()=>doExport("png");
+document.getElementById("pdfbtn").onclick=()=>doExport("pdf");
+
+/* ---------- Recherche de parcelles par numéro (OCR) ---------- */
+let ocrWorker=null;
+const spinmsg=document.getElementById("spinmsg");
+const statusEl=document.getElementById("status");
+function setStatus(msg,cls){
+  if(!msg){statusEl.className="status";statusEl.textContent="";return;}
+  statusEl.className="status show "+(cls||"ok");
+  statusEl.textContent=msg;
+}
+
+async function getWorker(){
+  if(ocrWorker) return ocrWorker;
+  if(typeof Tesseract==="undefined")
+    throw new Error("moteur OCR non chargé (vérifiez la connexion ou déployez l'application).");
+  ocrWorker = await Tesseract.createWorker("eng",1,{
+    logger:m=>{ if(m.status==="recognizing text") spinmsg.textContent="Lecture des numéros… "+Math.round(m.progress*100)+"%"; }
+  });
+  await ocrWorker.setParameters({
+    tessedit_char_whitelist:"0123456789",
+    tessedit_pageseg_mode:(Tesseract.PSM && Tesseract.PSM.SPARSE_TEXT) || "11"
+  });
+  return ocrWorker;
+}
+
+async function runOCR(){
+  const key=S.page+"|"+S.rotation;
+  if(S.ocrCache && S.ocrCache.key===key) return S.ocrCache.words;
+  // rendu haute résolution depuis le PDF (chiffres nets) avec la même rotation
+  const page=await S.pdf.getPage(S.page);
+  const ocrTarget=2800;
+  const vp1=page.getViewport({scale:1,rotation:S.rotation});
+  const sc=ocrTarget/vp1.width;
+  const vp=page.getViewport({scale:sc,rotation:S.rotation});
+  const oc=document.createElement("canvas"); oc.width=Math.round(vp.width); oc.height=Math.round(vp.height);
+  const ox=oc.getContext("2d"); ox.fillStyle="#fff"; ox.fillRect(0,0,oc.width,oc.height);
+  await page.render({canvasContext:ox,viewport:vp}).promise;
+  const worker=await getWorker();
+  spinmsg.textContent="Lecture des numéros…";
+  const {data}=await worker.recognize(oc,{},{tsv:true});
+  const factor=S.W/oc.width;            // remise à l'échelle vers les coords du plan affiché
+  const words=parseTSV(data.tsv,factor);
+  S.ocrCache={key,words};
+  return words;
+}
+
+function parseTSV(tsv,factor){
+  const out=[];
+  (tsv||"").split("\n").forEach(line=>{
+    const c=line.split("\t");
+    if(c.length<12 || c[0]!=="5") return;        // niveau 5 = mot
+    const text=(c[11]||"").replace(/[^0-9]/g,"");
+    if(!text) return;
+    const left=+c[6], top=+c[7], w=+c[8], h=+c[9];
+    out.push({text, cx:Math.round((left+w/2)*factor), cy:Math.round((top+h/2)*factor)});
+  });
+  return out;
+}
+
+// cherche le pixel clair (intérieur de parcelle) le plus proche du centre du numéro
+function findSeed(cx,cy){
+  const R=48;
+  const x0=Math.max(0,cx-R), y0=Math.max(0,cy-R), x1=Math.min(S.W-1,cx+R), y1=Math.min(S.H-1,cy+R);
+  if(x1<x0||y1<y0) return null;
+  const w=x1-x0+1;
+  const d=baseCtx.getImageData(x0,y0,w,y1-y0+1).data;
+  let best=null,bestD=1e12;
+  for(let y=y0;y<=y1;y++) for(let x=x0;x<=x1;x++){
+    const p=((y-y0)*w+(x-x0))*4;
+    const lum=0.299*d[p]+0.587*d[p+1]+0.114*d[p+2];
+    if(lum>=S.threshold){
+      const dist=(x-cx)*(x-cx)+(y-cy)*(y-cy);
+      if(dist<bestD){bestD=dist;best={x,y};}
+    }
+  }
+  return best;
+}
+
+async function searchAndFill(){
+  if(!S.pdf){ setStatus("Ouvrez d'abord un plan cadastral.","warn"); return; }
+  const raw=document.getElementById("numinput").value;
+  const nums=[...new Set(raw.split(/[^0-9]+/).filter(Boolean))];
+  if(nums.length===0){ setStatus("Saisissez au moins un numéro de parcelle.","warn"); return; }
+  setStatus("");
+  spin.classList.add("show"); spinmsg.textContent="Initialisation de l'OCR…";
+  let words;
+  try{ words=await runOCR(); }
+  catch(err){
+    spin.classList.remove("show");
+    setStatus("OCR indisponible ici : "+err.message+" Astuce : l'aperçu intégré bloque parfois l'OCR — il fonctionne une fois l'application déployée (Vercel) ou ouverte en local.","err");
+    return;
+  }
+  spin.classList.remove("show");
+
+  const found=[], missing=[];
+  nums.forEach(n=>{
+    const matches=words.filter(wd=>wd.text===n);
+    if(matches.length===0){ missing.push(n); return; }
+    let placed=false;
+    matches.forEach(m=>{
+      const seed=findSeed(m.cx,m.cy);
+      if(seed){ floodFill(seed.x,seed.y); placed=true; }
+    });
+    (placed?found:missing).push(n);
+  });
+  pushUndo(); rebuildLegend();
+
+  let msg="", cls="ok";
+  if(found.length) msg+=found.length+" parcelle"+(found.length>1?"s":"")+" colorisée"+(found.length>1?"s":"")+" : "+found.join(", ")+". ";
+  if(missing.length){ msg+="Introuvable"+(missing.length>1?"s":"")+" : "+missing.join(", ")+" — vérifiez le numéro ou colorisez à la main."; cls=found.length?"warn":"err"; }
+  setStatus(msg,cls);
+  if(missing.length) showHint("Numéro(s) introuvable(s) : "+missing.join(", "));
+}
+document.getElementById("findbtn").onclick=searchAndFill;
+document.getElementById("numinput").addEventListener("keydown",e=>{ if(e.key==="Enter") searchAndFill(); });
+
+/* ---------- Utilitaires ---------- */
+function hexToRgb(h){h=h.replace("#","");if(h.length===3)h=h.split("").map(c=>c+c).join("");
+  return [parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16)];}
+function rgbToHex(r,g,b){return "#"+[r,g,b].map(v=>v.toString(16).padStart(2,"0")).join("");}
+let hintTimer;
+function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTimeout(hintTimer);hintTimer=setTimeout(()=>hintbar.classList.remove("show"),2600);}
+</script>
+</body>
+</html>
