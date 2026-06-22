@@ -159,6 +159,22 @@
   .gen-status{margin-top:10px;font-size:12.5px;line-height:1.45;min-height:1px}
   .gen-status.err{color:#a52f2f}
   .gen-status.ok{color:#1f7a45}
+  .ac-wrap{position:relative;width:100%}
+  .ac-list{position:absolute;left:0;right:0;top:100%;z-index:6;background:#fff;border:1px solid var(--line);border-top:none;border-radius:0 0 8px 8px;max-height:190px;overflow:auto;box-shadow:0 10px 22px rgba(9,21,37,.16);display:none}
+  .ac-list.show{display:block}
+  .ac-item{padding:7px 9px;font-size:12px;cursor:pointer;color:var(--ink);display:flex;justify-content:space-between;gap:10px;align-items:center}
+  .ac-item:hover{background:#eafafb}
+  .ac-item small{color:var(--grey);white-space:nowrap}
+  .ac-ok{color:#1f7a45;font-size:11px;margin-top:3px;font-weight:600}
+  .ac-bad{color:#a52f2f;font-size:11px;margin-top:3px}
+  .gen-or{grid-column:1/-1;font-size:11px;color:var(--grey);margin:3px 0 0;border-top:1px solid var(--line);padding-top:9px}
+  .mic-btn{position:absolute;top:3px;right:3px;width:30px;height:30px;border:none;border-radius:7px;background:#eef4f5;color:var(--teal-deep);cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;z-index:2}
+  .mic-btn:hover{background:#dff1f2}
+  .mic-btn:disabled{opacity:.4;cursor:not-allowed}
+  .mic-btn.rec{background:#fde2e2;color:#c0392b;animation:micpulse 1s infinite}
+  .mic-btn svg{width:16px;height:16px}
+  @keyframes micpulse{0%,100%{opacity:1}50%{opacity:.5}}
+  #g_adr_nom{padding-right:38px}
   .privacy{font-size:11.5px;color:var(--grey);margin-top:18px;display:flex;align-items:center;gap:6px;justify-content:center}
 
   .hint-bar{
@@ -328,7 +344,22 @@
 
         <div class="gen-sep"><span>ou générer l'extrait officiel</span></div>
         <div class="gen-grid" id="genform" onclick="event.stopPropagation()">
-          <label>Commune (INSEE)<input id="g_commune" placeholder="62765" maxlength="5"></label>
+          <label style="grid-column:1/-1">Commune
+            <div class="ac-wrap" id="g_commune_wrap">
+              <input id="g_commune_nom" placeholder="Tapez le nom (ex. Saint-Omer)" autocomplete="off">
+              <div class="ac-list" id="g_commune_list"></div>
+            </div>
+            <div id="g_commune_mark"></div>
+          </label>
+          <label style="grid-column:1/-1">Adresse
+            <div class="ac-wrap" id="g_adr_wrap">
+              <input id="g_adr_nom" placeholder="Choisissez d'abord la commune" autocomplete="off" disabled>
+              <button type="button" class="mic-btn" id="g_adr_mic" title="Dicter l'adresse" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
+              <div class="ac-list" id="g_adr_list"></div>
+            </div>
+            <div id="g_addr_mark" style="font-size:11px;margin-top:2px"></div>
+          </label>
+          <div class="gen-or">ou directement par références cadastrales :</div>
           <label>Préfixe<input id="g_prefixe" value="000" maxlength="3"></label>
           <label>Section<input id="g_section" placeholder="AV" maxlength="2"></label>
           <label>Parcelle<input id="g_parcelle" placeholder="1" maxlength="4"></label>
@@ -487,19 +518,179 @@ document.getElementById("fontsize").oninput=e=>{S.fontSize=+e.target.value;docum
 /* ---------- Chargement PDF ---------- */
 document.getElementById("openbtn").onclick=()=>document.getElementById("fileinput").click();
 
-/* ---------- Génération de l'extrait officiel depuis les références ---------- */
+/* ---------- Autocomplétion commune (geo.api.gouv.fr, vérif temps réel) ---------- */
+let selectedCommune=null, acTimer=null;
+const cNom=()=>document.getElementById("g_commune_nom");
+const cList=()=>document.getElementById("g_commune_list");
+const cMark=()=>document.getElementById("g_commune_mark");
+function acClear(){ cList().innerHTML=""; cList().classList.remove("show"); }
+function acMark(state,txt){ const m=cMark(); m.textContent=txt||""; m.className = state==="ok"?"ac-ok":(state==="bad"?"ac-bad":""); }
+async function acSearch(q){
+  try{
+    const r=await fetch("https://geo.api.gouv.fr/communes?nom="+encodeURIComponent(q)+"&fields=nom,code,codesPostaux,departement&boost=population&limit=7");
+    if(!r.ok) throw 0;
+    return await r.json();
+  }catch(e){ return null; }
+}
+function acRender(list){
+  const el=cList(); el.innerHTML="";
+  if(!list||!list.length){ acClear(); acMark("bad","Aucune commune trouvée"); return; }
+  list.forEach(c=>{
+    const cp=(c.codesPostaux&&c.codesPostaux[0])||"";
+    const dep=c.departement?c.departement.code:"";
+    const it=document.createElement("div");
+    it.className="ac-item";
+    it.innerHTML="<span>"+c.nom+"</span><small>"+dep+(cp?" · "+cp:"")+"</small>";
+    it.onclick=()=>{ selectedCommune={code:c.code,nom:c.nom}; cNom().value=c.nom; acClear(); acMark("ok","✓ "+c.nom+" — INSEE "+c.code); enableAddr(); };
+    el.appendChild(it);
+  });
+  el.classList.add("show");
+}
+function acOnInput(){
+  selectedCommune=null; acMark("",""); disableAddr();
+  const q=cNom().value.trim();
+  clearTimeout(acTimer);
+  if(q.length<2){ acClear(); return; }
+  acTimer=setTimeout(async()=>{
+    const list=await acSearch(q);
+    if(list===null){ acClear(); acMark("bad","Vérification indisponible (connexion ?)"); return; }
+    acRender(list);
+  },250);
+}
+document.getElementById("g_commune_nom").addEventListener("input",acOnInput);
+document.getElementById("g_commune_nom").addEventListener("keydown",e=>{
+  if(e.key==="Enter"){ e.preventDefault(); const f=cList().querySelector(".ac-item"); if(f) f.click(); }
+});
+document.addEventListener("click",e=>{ if(!e.target.closest("#g_commune_wrap")) acClear(); });
+
+/* ---------- Autocomplétion adresse (Base Adresse Nationale) ---------- */
+let resolvedRefs=null, adrTimer=null;
+const adrNom=()=>document.getElementById("g_adr_nom");
+const adrList=()=>document.getElementById("g_adr_list");
+function adrListClear(){ adrList().innerHTML=""; adrList().classList.remove("show"); }
+function addrMark(state,txt){ const m=document.getElementById("g_addr_mark"); m.textContent=txt||""; m.className = state==="ok"?"ac-ok":(state==="bad"?"ac-bad":""); }
+function enableAddr(){ const i=adrNom(); i.disabled=false; i.placeholder="N° et voie (ex. 65 Rue de Paris)"; const mb=document.getElementById("g_adr_mic"); if(mb) mb.disabled=false; }
+function disableAddr(){ const i=adrNom(); i.disabled=true; i.value=""; i.placeholder="Choisissez d'abord la commune"; resolvedRefs=null; addrMark("",""); adrListClear(); const mb=document.getElementById("g_adr_mic"); if(mb){ mb.disabled=true; mb.classList.remove("rec"); } if(typeof recog!=="undefined" && recog && recActive){ try{recog.stop();}catch(e){} } }
+
+function centroid(geom){
+  try{
+    let ring;
+    if(geom.type==="Polygon") ring=geom.coordinates[0];
+    else if(geom.type==="MultiPolygon") ring=geom.coordinates[0][0];
+    else return null;
+    let sx=0,sy=0; ring.forEach(p=>{sx+=p[0];sy+=p[1];});
+    return [sx/ring.length, sy/ring.length];
+  }catch(e){ return null; }
+}
+// Point (lon,lat) → références cadastrales via API Carto IGN (petit carré ~10 m,
+// car le point de l'adresse tombe souvent sur l'axe de la voie, hors parcelle)
+async function parcelleAtPoint(lon,lat){
+  const m=10, dLat=m/111320, dLon=m/(111320*Math.cos(lat*Math.PI/180));
+  const poly={type:"Polygon",coordinates:[[
+    [lon-dLon,lat-dLat],[lon+dLon,lat-dLat],[lon+dLon,lat+dLat],[lon-dLon,lat+dLat],[lon-dLon,lat-dLat]
+  ]]};
+  const pr=await fetch("https://apicarto.ign.fr/api/cadastre/parcelle?geom="+encodeURIComponent(JSON.stringify(poly)));
+  if(!pr.ok) throw new Error("cadastre IGN indisponible");
+  const pj=await pr.json();
+  const feats=(pj.features)||[];
+  if(!feats.length) throw new Error("aucune parcelle à cette adresse");
+  let best=feats[0], bestD=Infinity;
+  for(const f of feats){ const c=centroid(f.geometry); if(!c) continue; const d=(c[0]-lon)*(c[0]-lon)+(c[1]-lat)*(c[1]-lat); if(d<bestD){bestD=d;best=f;} }
+  const p=best.properties||{};
+  return { prefixe:(p.com_abs||"000"), section:p.section, parcelle:String(parseInt(p.numero,10)||p.numero) };
+}
+async function adrSearch(q){
+  try{
+    const r=await fetch("https://api-adresse.data.gouv.fr/search/?q="+encodeURIComponent(q)+"&citycode="+selectedCommune.code+"&autocomplete=1&limit=7");
+    if(!r.ok) throw 0;
+    const j=await r.json(); return j.features||[];
+  }catch(e){ return null; }
+}
+function adrRender(list){
+  const el=adrList(); el.innerHTML="";
+  if(!list||!list.length){ adrListClear(); addrMark("bad","Aucune adresse trouvée"); return; }
+  list.forEach(f=>{
+    const p=f.properties||{};
+    const it=document.createElement("div"); it.className="ac-item";
+    it.innerHTML="<span>"+p.label+"</span>";
+    it.onclick=async()=>{
+      adrNom().value=p.label; adrListClear(); resolvedRefs=null;
+      const coords=f.geometry&&f.geometry.coordinates;
+      if(!coords){ addrMark("bad","adresse sans coordonnées"); return; }
+      addrMark("","Recherche de la parcelle…");
+      try{
+        const refs=await parcelleAtPoint(coords[0],coords[1]);
+        if(!refs.section||!refs.parcelle) throw new Error("parcelle non identifiée");
+        resolvedRefs=refs;
+        addrMark("ok","✓ Parcelle "+(refs.section||"").toUpperCase()+" "+refs.parcelle+" (préfixe "+refs.prefixe+")");
+      }catch(err){ resolvedRefs=null; addrMark("bad","✗ "+err.message); }
+    };
+    el.appendChild(it);
+  });
+  el.classList.add("show");
+}
+function adrOnInput(){
+  resolvedRefs=null; addrMark("","");
+  if(!selectedCommune) return;
+  const q=adrNom().value.trim();
+  clearTimeout(adrTimer);
+  if(q.length<3){ adrListClear(); return; }
+  adrTimer=setTimeout(async()=>{
+    const list=await adrSearch(q);
+    if(list===null){ adrListClear(); addrMark("bad","Vérification indisponible"); return; }
+    adrRender(list);
+  },250);
+}
+document.getElementById("g_adr_nom").addEventListener("input",adrOnInput);
+document.getElementById("g_adr_nom").addEventListener("keydown",e=>{
+  if(e.key==="Enter"){ e.preventDefault(); const f=adrList().querySelector(".ac-item"); if(f) f.click(); }
+});
+document.addEventListener("click",e=>{ if(!e.target.closest("#g_adr_wrap")) adrListClear(); });
+
+/* ---------- Dictée vocale de l'adresse (Web Speech API, fr-FR) ---------- */
+let recog=null, recActive=false;
+(function initRecog(){
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  const mic=document.getElementById("g_adr_mic");
+  if(!SR){ if(mic) mic.style.display="none"; return; } // navigateur sans dictée
+  recog=new SR();
+  recog.lang="fr-FR"; recog.interimResults=true; recog.maxAlternatives=1; recog.continuous=false;
+  recog.onresult=e=>{
+    let t=""; for(let i=0;i<e.results.length;i++) t+=e.results[i][0].transcript;
+    adrNom().value=t;
+  };
+  recog.onend=()=>{ recActive=false; mic.classList.remove("rec"); mic.title="Dicter l'adresse"; adrOnInput(); };
+  recog.onerror=ev=>{
+    recActive=false; mic.classList.remove("rec");
+    addrMark("bad","Dictée : "+(ev.error==="not-allowed"?"accès micro refusé":(ev.error==="no-speech"?"rien entendu":ev.error)));
+  };
+  mic.onclick=()=>{
+    if(!selectedCommune || mic.disabled) return;
+    if(recActive){ try{recog.stop();}catch(e){} return; }
+    adrNom().value=""; resolvedRefs=null; addrMark("","🎤 Dictez l'adresse…");
+    try{ recog.start(); recActive=true; mic.classList.add("rec"); mic.title="Arrêter la dictée"; }
+    catch(e){ recActive=false; }
+  };
+})();
+
+/* ---------- Génération de l'extrait officiel ---------- */
 function setGenStatus(t,cls){ const e=document.getElementById("genstatus"); e.textContent=t; e.className="gen-status"+(cls?" "+cls:""); }
 async function generateExtrait(){
   const v=id=>document.getElementById(id).value.trim();
-  const commune=v("g_commune"), prefixe=v("g_prefixe")||"000",
-        section=v("g_section").toUpperCase(), parcelle=v("g_parcelle");
-  if(!commune||!section||!parcelle){ setGenStatus("Renseignez au moins la commune (INSEE), la section et la parcelle.","err"); return; }
+  if(!selectedCommune){ setGenStatus("Choisissez une commune dans la liste de suggestions.","err"); return; }
+  let prefixe=v("g_prefixe")||"000", section=v("g_section").toUpperCase(), parcelle=v("g_parcelle");
   const [taille,orientation]=document.getElementById("g_format").value.split("|");
   const echelle=document.getElementById("g_echelle").value;
-  const qs=new URLSearchParams({commune,prefixe,section,parcelle,echelle,taille,orientation}).toString();
   const btn=document.getElementById("genrun"); btn.disabled=true;
-  setGenStatus("Récupération de l'extrait officiel… (quelques secondes)","");
   try{
+    // Mode adresse : parcelle déjà résolue lors du choix de l'adresse
+    if(resolvedRefs){
+      prefixe=resolvedRefs.prefixe||prefixe; section=(resolvedRefs.section||"").toUpperCase(); parcelle=resolvedRefs.parcelle;
+    } else if(!section||!parcelle){
+      setGenStatus("Choisissez une adresse, ou renseignez une section + une parcelle.","err"); btn.disabled=false; return;
+    }
+    setGenStatus("Récupération de l'extrait officiel… (quelques secondes)","");
+    const qs=new URLSearchParams({commune:selectedCommune.code,prefixe,section,parcelle,echelle,taille,orientation}).toString();
     const r=await fetch("/api/extrait?"+qs);
     if(!r.ok){
       let msg="Erreur "+r.status;
@@ -511,7 +702,7 @@ async function generateExtrait(){
     setGenStatus("","");
     await loadPDFData(buf);
   }catch(err){
-    setGenStatus("Échec : "+err.message+". Vérifiez les références cadastrales (et que la fonction serveur /api/extrait est bien déployée).","err");
+    setGenStatus("Échec : "+err.message+".","err");
   }finally{ btn.disabled=false; }
 }
 document.getElementById("genrun").onclick=generateExtrait;
