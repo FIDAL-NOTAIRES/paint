@@ -1175,11 +1175,24 @@ async function runOCR(){
   await page.render({canvasContext:ox,viewport:vp}).promise;
   const worker=await getWorker();
   spinmsg.textContent="Lecture des numéros…";
-  const {data}=await worker.recognize(oc,{},{tsv:true});
+  const {data}=await worker.recognize(oc,{},{blocks:true,tsv:true});
   const factor=S.W/oc.width;            // remise à l'échelle vers les coords du plan affiché
-  const words=parseTSV(data.tsv,factor);
+  let words=parseTSV(data.tsv,factor);
+  if(!words.length) words=wordsFromBlocks(data.blocks,factor);  // repli si la sortie TSV est vide (Tesseract v5+)
   S.ocrCache={key,words};
   return words;
+}
+
+// Repli : extrait les mots depuis la structure blocks de Tesseract v5+
+function wordsFromBlocks(blocks,factor){
+  const out=[];
+  (blocks||[]).forEach(b=>(b.paragraphs||[]).forEach(p=>(p.lines||[]).forEach(l=>(l.words||[]).forEach(w=>{
+    const text=(w.text||"").replace(/[^0-9]/g,"");
+    if(!text) return;
+    const bb=w.bbox||{};
+    out.push({text, cx:Math.round(((bb.x0+bb.x1)/2)*factor), cy:Math.round(((bb.y0+bb.y1)/2)*factor)});
+  }))));
+  return out;
 }
 
 function parseTSV(tsv,factor){
@@ -1229,6 +1242,11 @@ async function searchAndFill(){
     return;
   }
   spin.classList.remove("show");
+
+  if(!words.length){
+    setStatus("Aucun chiffre n'a pu être lu sur ce plan (numéros peut-être inclinés, manuscrits ou trop fins pour l'OCR). Colorisez ces parcelles à la main avec l'outil « Remplir ».","warn");
+    return;
+  }
 
   const found=[], missing=[];
   nums.forEach(n=>{
