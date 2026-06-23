@@ -1112,6 +1112,15 @@ function buildExportCanvas(anchor){
   return c;
 }
 
+const PDF_MAX_BYTES=2.6e6;   // cible de taille pour le PDF exporté (~2,5-2,6 Mo)
+// Encode le canvas en JPEG en abaissant la qualité par paliers jusqu'à passer sous maxBytes (plancher 0,45).
+function jpegUnderSize(canvas,maxBytes){
+  const bytes=d=>Math.ceil((d.length-(d.indexOf(",")+1))*3/4); // taille reelle depuis le dataURL base64
+  let q=0.92, data=canvas.toDataURL("image/jpeg",q);
+  while(bytes(data)>maxBytes && q>0.45){ q=Math.max(0.45,q-0.07); data=canvas.toDataURL("image/jpeg",q); }
+  return {data,quality:q};
+}
+
 async function doExport(kind){
   let anchor=null;
   if(document.getElementById("inclegend").checked && document.getElementById("legendpos").value==="auto"){
@@ -1126,18 +1135,21 @@ async function doExport(kind){
   }else{
     const {jsPDF}=window.jspdf;
     const land = S.W>=S.H;
-    const pdf=new jsPDF({orientation:land?"landscape":"portrait",unit:"pt",format:"a4"});
+    const pdf=new jsPDF({orientation:land?"landscape":"portrait",unit:"pt",format:"a4",compress:true});
     const pw=pdf.internal.pageSize.getWidth(), ph=pdf.internal.pageSize.getHeight();
     const m=24, r=Math.min((pw-2*m)/c.width,(ph-2*m)/c.height);
     const w=c.width*r, h=c.height*r;
-    pdf.addImage(c.toDataURL("image/png"),"PNG",(pw-w)/2,(ph-h)/2,w,h);
+    // JPEG compressé sous une taille cible (~2,5 Mo) au lieu d'un PNG sans perte (~15 Mo).
+    const {data,quality}=jpegUnderSize(c, PDF_MAX_BYTES);
+    pdf.addImage(data,"JPEG",(pw-w)/2,(ph-h)/2,w,h);
     pdf.save(`cadastre-colorise-p${S.page}.pdf`);
+    if(quality<=0.46) showHint("Plan très détaillé : qualité abaissée pour rester sous "+(PDF_MAX_BYTES/1e6).toFixed(1)+" Mo.");
   }
 }
 document.getElementById("pngbtn").onclick=()=>doExport("png");
 document.getElementById("pdfbtn").onclick=()=>doExport("pdf");
 
-/* ---------- Recherche de parcelles par numéro (OCR) ---------- */
+/* ---------- Recherche de parcelles par numéro (OCR multi-angles) ---------- */
 let ocrWorker=null;
 const spinmsg=document.getElementById("spinmsg");
 const statusEl=document.getElementById("status");
@@ -1146,6 +1158,9 @@ function setStatus(msg,cls){
   statusEl.className="status show "+(cls||"ok");
   statusEl.textContent=msg;
 }
+
+const OCR_TARGET=2800;                  // largeur de rendu pour l'OCR (chiffres nets)
+const OCR_ANGLES=[0,30,-30,60,-60,90];  // 0 d'abord, puis passes inclinees seulement si des numeros manquent
 
 async function getWorker(){
   if(ocrWorker) return ocrWorker;
@@ -1161,54 +1176,69 @@ async function getWorker(){
   return ocrWorker;
 }
 
-async function runOCR(){
-  const key=S.page+"|"+S.rotation;
-  if(S.ocrCache && S.ocrCache.key===key) return S.ocrCache.words;
-  // rendu haute résolution depuis le PDF (chiffres nets) avec la même rotation
+// Rendu haute resolution de la page courante (repere = rotation d'affichage)
+async function renderOcrBase(){
   const page=await S.pdf.getPage(S.page);
-  const ocrTarget=2800;
   const vp1=page.getViewport({scale:1,rotation:S.rotation});
-  const sc=ocrTarget/vp1.width;
+  const sc=OCR_TARGET/vp1.width;
   const vp=page.getViewport({scale:sc,rotation:S.rotation});
   const oc=document.createElement("canvas"); oc.width=Math.round(vp.width); oc.height=Math.round(vp.height);
   const ox=oc.getContext("2d"); ox.fillStyle="#fff"; ox.fillRect(0,0,oc.width,oc.height);
   await page.render({canvasContext:ox,viewport:vp}).promise;
-  const worker=await getWorker();
-  spinmsg.textContent="Lecture des numéros…";
-  const {data}=await worker.recognize(oc,{},{blocks:true,tsv:true});
-  const factor=S.W/oc.width;            // remise à l'échelle vers les coords du plan affiché
-  let words=parseTSV(data.tsv,factor);
-  if(!words.length) words=wordsFromBlocks(data.blocks,factor);  // repli si la sortie TSV est vide (Tesseract v5+)
-  S.ocrCache={key,words};
-  return words;
+  return oc;
 }
 
-// Repli : extrait les mots depuis la structure blocks de Tesseract v5+
-function wordsFromBlocks(blocks,factor){
+// Mots-chiffres bruts (coordonnees px du canvas analyse)
+function extractWords(data){
+  let raw=tsvWords(data.tsv);
+  if(!raw.length) raw=blockWords(data.blocks); // repli si TSV vide (Tesseract v5+)
+  return raw;
+}
+function tsvWords(tsv){
+  const out=[];
+  (tsv||"").split("\n").forEach(line=>{
+    const c=line.split("\t");
+    if(c.length<12||c[0]!=="5")return;        // niveau 5 = mot
+    const t=(c[11]||"").replace(/[^0-9]/g,""); if(!t)return;
+    const left=+c[6],top=+c[7],w=+c[8],h=+c[9];
+    out.push({text:t,x:left+w/2,y:top+h/2});
+  });
+  return out;
+}
+function blockWords(blocks){
   const out=[];
   (blocks||[]).forEach(b=>(b.paragraphs||[]).forEach(p=>(p.lines||[]).forEach(l=>(l.words||[]).forEach(w=>{
-    const text=(w.text||"").replace(/[^0-9]/g,"");
-    if(!text) return;
-    const bb=w.bbox||{};
-    out.push({text, cx:Math.round(((bb.x0+bb.x1)/2)*factor), cy:Math.round(((bb.y0+bb.y1)/2)*factor)});
+    const t=(w.text||"").replace(/[^0-9]/g,""); if(!t)return;
+    const bb=w.bbox||{}; out.push({text:t,x:(bb.x0+bb.x1)/2,y:(bb.y0+bb.y1)/2});
   }))));
   return out;
 }
 
-function parseTSV(tsv,factor){
-  const out=[];
-  (tsv||"").split("\n").forEach(line=>{
-    const c=line.split("\t");
-    if(c.length<12 || c[0]!=="5") return;        // niveau 5 = mot
-    const text=(c[11]||"").replace(/[^0-9]/g,"");
-    if(!text) return;
-    const left=+c[6], top=+c[7], w=+c[8], h=+c[9];
-    out.push({text, cx:Math.round((left+w/2)*factor), cy:Math.round((top+h/2)*factor)});
-  });
-  return out;
+// OCR sur la base tournee de `deg` degres. Renvoie les centres en coordonnees du plan affiche.
+async function ocrAngle(baseCanvas,deg){
+  const worker=await getWorker();
+  const factor=S.W/baseCanvas.width;
+  const w0=baseCanvas.width, h0=baseCanvas.height;
+  let target=baseCanvas, rw=w0, rh=h0, rad=0;
+  if(deg!==0){
+    rad=deg*Math.PI/180;
+    const diag=Math.ceil(Math.hypot(w0,h0));           // carre assez grand pour contenir la base tournee
+    const rc=document.createElement("canvas"); rc.width=diag; rc.height=diag;
+    const rx=rc.getContext("2d"); rx.fillStyle="#fff"; rx.fillRect(0,0,diag,diag);
+    rx.translate(diag/2,diag/2); rx.rotate(rad); rx.drawImage(baseCanvas,-w0/2,-h0/2);
+    target=rc; rw=diag; rh=diag;
+  }
+  const {data}=await worker.recognize(target,{},{blocks:true,tsv:true});
+  const cos=Math.cos(rad), sin=Math.sin(rad);
+  return extractWords(data).map(wd=>{
+    const dx=wd.x-rw/2, dy=wd.y-rh/2;                   // re-projection vers la base (rotation inverse -deg)
+    const xB=w0/2 + cos*dx + sin*dy;
+    const yB=h0/2 - sin*dx + cos*dy;
+    return {text:wd.text, cx:Math.round(xB*factor), cy:Math.round(yB*factor)};
+  }).filter(wd=>wd.cx>=0 && wd.cy>=0 && wd.cx<S.W && wd.cy<S.H);
 }
 
-// cherche le pixel clair (intérieur de parcelle) le plus proche du centre du numéro
+// cherche le pixel clair (interieur de parcelle) le plus proche du centre du numero
 function findSeed(cx,cy){
   const R=48;
   const x0=Math.max(0,cx-R), y0=Math.max(0,cy-R), x1=Math.min(S.W-1,cx+R), y1=Math.min(S.H-1,cy+R);
@@ -1234,32 +1264,59 @@ async function searchAndFill(){
   if(nums.length===0){ setStatus("Saisissez au moins un numéro de parcelle.","warn"); return; }
   setStatus("");
   spin.classList.add("show"); spinmsg.textContent="Initialisation de l'OCR…";
-  let words;
-  try{ words=await runOCR(); }
-  catch(err){
+
+  // Cache par page+rotation : base haute resolution, mots accumules, angles deja traites
+  const key=S.page+"|"+S.rotation;
+  if(!S.ocrCache || S.ocrCache.key!==key) S.ocrCache={key, base:null, words:[], done:new Set()};
+
+  try{
+    if(!S.ocrCache.base) S.ocrCache.base=await renderOcrBase();
+  }catch(err){
     spin.classList.remove("show");
-    setStatus("OCR indisponible ici : "+err.message+" Astuce : l'aperçu intégré bloque parfois l'OCR — il fonctionne une fois l'application déployée (Vercel) ou ouverte en local.","err");
+    setStatus("OCR indisponible ici : "+((err&&err.message)||err)+" Astuce : l'aperçu intégré bloque parfois l'OCR — il fonctionne une fois l'application déployée (Vercel) ou ouverte en local.","err");
+    return;
+  }
+
+  const tryPlace=(targets)=>{
+    const ok=[], ko=[];
+    targets.forEach(n=>{
+      let placed=false;
+      S.ocrCache.words.filter(wd=>wd.text===n).forEach(m=>{
+        const seed=findSeed(m.cx,m.cy);
+        if(seed){ floodFill(seed.x,seed.y); placed=true; }
+      });
+      (placed?ok:ko).push(n);
+    });
+    return {ok,ko};
+  };
+
+  const found=[]; let missing=[...nums];
+  try{
+    for(const deg of OCR_ANGLES){
+      if(!missing.length) break;                       // tout trouve : on s'arrete (cas horizontal = 1 seule passe)
+      if(!S.ocrCache.done.has(deg)){
+        spinmsg.textContent = deg===0 ? "Lecture des numéros…"
+                                      : "Recherche approfondie (numéros inclinés à "+deg+"°)…";
+        const w=await ocrAngle(S.ocrCache.base,deg);
+        S.ocrCache.words.push(...w);
+        S.ocrCache.done.add(deg);
+      }
+      const {ok,ko}=tryPlace(missing);
+      found.push(...ok); missing=ko;
+    }
+  }catch(err){
+    spin.classList.remove("show");
+    setStatus("Erreur OCR : "+((err&&err.message)||err),"err");
     return;
   }
   spin.classList.remove("show");
 
-  if(!words.length){
-    setStatus("Aucun chiffre n'a pu être lu sur ce plan (numéros peut-être inclinés, manuscrits ou trop fins pour l'OCR). Colorisez ces parcelles à la main avec l'outil « Remplir ».","warn");
+  if(found.length){ pushUndo(); rebuildLegend(); }
+
+  if(!found.length && !S.ocrCache.words.length){
+    setStatus("Aucun chiffre n'a pu être lu sur ce plan (numéros peut-être manuscrits ou trop fins pour l'OCR). Colorisez ces parcelles à la main avec l'outil « Remplir ».","warn");
     return;
   }
-
-  const found=[], missing=[];
-  nums.forEach(n=>{
-    const matches=words.filter(wd=>wd.text===n);
-    if(matches.length===0){ missing.push(n); return; }
-    let placed=false;
-    matches.forEach(m=>{
-      const seed=findSeed(m.cx,m.cy);
-      if(seed){ floodFill(seed.x,seed.y); placed=true; }
-    });
-    (placed?found:missing).push(n);
-  });
-  pushUndo(); rebuildLegend();
 
   let msg="", cls="ok";
   if(found.length) msg+=found.length+" parcelle"+(found.length>1?"s":"")+" colorisée"+(found.length>1?"s":"")+" : "+found.join(", ")+". ";
