@@ -52,9 +52,17 @@ async function fetchExtrait(params, debug) {
 
   let step = 'commune';
   try {
-    const villePrincipale = deburr(await nomCommune(commune)).toUpperCase();
-    const variantes = [villePrincipale];
-    if (villePrincipale.includes('-')) variantes.push(villePrincipale.replace(/-/g, ' '));
+    const base = deburr(await nomCommune(commune)).toUpperCase().trim();
+    // Le SCPC attend un nom ASCII où les tirets ET les apostrophes sont remplacés
+    // par une espace (ex. « VILLENEUVE D ASCQ », « SAINT OMER »). On teste plusieurs
+    // variantes et on garde la première qui renvoie un résultat.
+    const variantes = [...new Set([
+      base,
+      base.replace(/-/g, ' '),
+      base.replace(/['\u2019]/g, ' '),
+      base.replace(/[-'\u2019]/g, ' ').replace(/\s+/g, ' '),
+      base.replace(/['\u2019]/g, '')
+    ].map(s => s.trim()))];
 
     const agent = request.agent();
 
