@@ -311,8 +311,8 @@
         <input type="range" id="brushsize" min="3" max="60" value="14">
       </div>
       <div class="slider" id="fontwrap">
-        <label>Taille du texte <span id="fsval">18 px</span></label>
-        <input type="range" id="fontsize" min="10" max="60" value="18">
+        <label>Taille du texte <span id="fsval">36 px</span></label>
+        <input type="range" id="fontsize" min="12" max="100" value="36">
       </div>
     </div>
 
@@ -388,7 +388,14 @@
           <div class="method">
             <div class="method-head"><span class="num">2</span> Par références cadastrales</div>
             <div class="gen-grid">
-              <label>Préfixe<input id="g_prefixe" value="000" maxlength="3"></label>
+              <label style="grid-column:1/-1">Commune
+                <div class="ac-wrap" id="g2_commune_wrap">
+                  <input id="g2_commune_nom" placeholder="Tapez le nom (ex. Marcq-en-Barœul)" autocomplete="off">
+                  <div class="ac-list" id="g2_commune_list"></div>
+                </div>
+                <div id="g2_commune_mark"></div>
+              </label>
+              <label>Préfixe<input id="g_prefixe" placeholder="auto" maxlength="3"></label>
               <label>Section<input id="g_section" placeholder="AV" maxlength="2"></label>
               <label>Parcelle<input id="g_parcelle" placeholder="1" maxlength="4"></label>
               <label>Échelle
@@ -407,7 +414,7 @@
                 </select>
               </label>
             </div>
-            <div class="method-hint">Utilise la commune saisie en ①. L'échelle et le format s'appliquent aussi à la génération par adresse.</div>
+            <div class="method-hint">Préfixe laissé vide = détecté automatiquement (utile pour les communes fusionnées). L'échelle et le format s'appliquent aussi à la génération par adresse.</div>
             <button class="gen-btn" id="genrun_ref">🗺 Générer depuis les références</button>
           </div>
 
@@ -441,7 +448,7 @@ const PALETTE = ["#FF982D","#33838B","#6DD5DC","#657D96",
                  "#2F6FB0","#9C6B3F"];
 const S = {
   pdf:null, page:1, pageCount:1, ocrCache:null, anchorCache:null,
-  tool:"fill", color:"#FF982D", opacity:.45, threshold:100, brush:14, fontSize:18,
+  tool:"fill", color:"#FF982D", opacity:.45, threshold:100, brush:14, fontSize:36,
   zoom:1, rotation:0, drawing:false, lastPt:null,
   undoStack:[], redoStack:[],
   notes:[], selNote:null, dragNote:null, dragOff:null,
@@ -552,7 +559,14 @@ overlay.addEventListener("mouseleave",()=>{ring.style.display="none";});
 document.getElementById("opacity").oninput=e=>{S.opacity=e.target.value/100;document.getElementById("opaval").textContent=e.target.value+"%";};
 document.getElementById("threshold").oninput=e=>{S.threshold=+e.target.value;document.getElementById("thrval").textContent=e.target.value;};
 document.getElementById("brushsize").oninput=e=>{S.brush=+e.target.value;document.getElementById("szval").textContent=e.target.value+" px";};
-document.getElementById("fontsize").oninput=e=>{S.fontSize=+e.target.value;document.getElementById("fsval").textContent=e.target.value+" px";};
+document.getElementById("fontsize").oninput=e=>{
+  S.fontSize=+e.target.value;
+  document.getElementById("fsval").textContent=e.target.value+" px";
+  if(S.selNote!=null){
+    const n=S.notes.find(n=>n.id==S.selNote);
+    if(n){ n.size=S.fontSize; const el=anno.querySelector(`[data-id="${n.id}"]`); if(el) el.style.fontSize=n.size+"px"; }
+  }
+};
 
 /* ---------- Chargement PDF ---------- */
 
@@ -600,6 +614,44 @@ document.getElementById("g_commune_nom").addEventListener("keydown",e=>{
   if(e.key==="Enter"){ e.preventDefault(); const f=cList().querySelector(".ac-item"); if(f) f.click(); }
 });
 document.addEventListener("click",e=>{ if(!e.target.closest("#g_commune_wrap")) acClear(); });
+
+/* ---------- Autocomplétion commune — méthode ② (références), indépendante de ① ---------- */
+let selectedCommune2=null, ac2Timer=null;
+const c2Nom=()=>document.getElementById("g2_commune_nom");
+const c2List=()=>document.getElementById("g2_commune_list");
+const c2Mark=()=>document.getElementById("g2_commune_mark");
+function ac2Clear(){ c2List().innerHTML=""; c2List().classList.remove("show"); }
+function ac2Mark(state,txt){ const m=c2Mark(); m.textContent=txt||""; m.className = state==="ok"?"ac-ok":(state==="bad"?"ac-bad":""); }
+function ac2Render(list){
+  const el=c2List(); el.innerHTML="";
+  if(!list||!list.length){ ac2Clear(); ac2Mark("bad","Aucune commune trouvée"); return; }
+  list.forEach(c=>{
+    const cp=(c.codesPostaux&&c.codesPostaux[0])||"";
+    const dep=c.departement?c.departement.code:"";
+    const it=document.createElement("div");
+    it.className="ac-item";
+    it.innerHTML="<span>"+c.nom+"</span><small>"+dep+(cp?" · "+cp:"")+"</small>";
+    it.onclick=()=>{ selectedCommune2={code:c.code,nom:c.nom}; c2Nom().value=c.nom; ac2Clear(); ac2Mark("ok","✓ "+c.nom+" — INSEE "+c.code); };
+    el.appendChild(it);
+  });
+  el.classList.add("show");
+}
+function ac2OnInput(){
+  selectedCommune2=null; ac2Mark("","");
+  const q=c2Nom().value.trim();
+  clearTimeout(ac2Timer);
+  if(q.length<2){ ac2Clear(); return; }
+  ac2Timer=setTimeout(async()=>{
+    const list=await acSearch(q);
+    if(list===null){ ac2Clear(); ac2Mark("bad","Vérification indisponible (connexion ?)"); return; }
+    ac2Render(list);
+  },250);
+}
+document.getElementById("g2_commune_nom").addEventListener("input",ac2OnInput);
+document.getElementById("g2_commune_nom").addEventListener("keydown",e=>{
+  if(e.key==="Enter"){ e.preventDefault(); const f=c2List().querySelector(".ac-item"); if(f) f.click(); }
+});
+document.addEventListener("click",e=>{ if(!e.target.closest("#g2_commune_wrap")) ac2Clear(); });
 
 /* ---------- Autocomplétion adresse (Base Adresse Nationale) ---------- */
 let resolvedRefs=null, adrTimer=null;
@@ -733,24 +785,45 @@ async function resolveDictation(q){
 })();
 
 /* ---------- Génération de l'extrait officiel ---------- */
+// Détecte le préfixe (code de la commune absorbée, "000" si aucune) d'une parcelle
+// via l'API Carto IGN. Gère les communes fusionnées sans saisie manuelle du préfixe.
+// Renvoie le préfixe, ou null si la parcelle n'est pas trouvée côté IGN.
+async function ignPrefixe(insee, section, parcelle){
+  const sec=(section||"").toUpperCase().padStart(2,"0");
+  const num=String(parseInt(parcelle,10)||parcelle).padStart(4,"0");
+  const url="https://apicarto.ign.fr/api/cadastre/parcelle?code_insee="+encodeURIComponent(insee)+"&section="+encodeURIComponent(sec)+"&numero="+encodeURIComponent(num);
+  const r=await fetch(url);
+  if(!r.ok) return null;
+  const j=await r.json();
+  const feats=(j&&j.features)||[];
+  if(!feats.length) return null;
+  return (feats[0].properties||{}).com_abs || "000";
+}
 function setGenStatus(t,cls){ const e=document.getElementById("genstatus"); e.textContent=t; e.className="gen-status"+(cls?" "+cls:""); }
 async function generateExtrait(mode){
   const v=id=>document.getElementById(id).value.trim();
-  if(!selectedCommune){ setGenStatus("Indiquez d'abord une commune (section ①).","err"); return; }
-  let prefixe=v("g_prefixe")||"000", section=v("g_section").toUpperCase(), parcelle=v("g_parcelle");
+  const commune = (mode==="adresse") ? selectedCommune : selectedCommune2;
+  if(!commune){ setGenStatus(mode==="adresse" ? "Indiquez d'abord une commune (section ①)." : "Indiquez d'abord une commune (section ②).","err"); return; }
+  let prefixe=v("g_prefixe"), section=v("g_section").toUpperCase(), parcelle=v("g_parcelle");
   const [taille,orientation]=document.getElementById("g_format").value.split("|");
   const echelle=document.getElementById("g_echelle").value;
   if(mode==="adresse"){
     if(!resolvedRefs){ setGenStatus("Choisissez une adresse dans la liste (section ①).","err"); return; }
-    prefixe=resolvedRefs.prefixe||prefixe; section=(resolvedRefs.section||"").toUpperCase(); parcelle=resolvedRefs.parcelle;
+    prefixe=resolvedRefs.prefixe||prefixe||"000"; section=(resolvedRefs.section||"").toUpperCase(); parcelle=resolvedRefs.parcelle;
   }else{ // références
     if(!section||!parcelle){ setGenStatus("Renseignez une section et une parcelle (section ②).","err"); return; }
   }
   const b1=document.getElementById("genrun_adr"), b2=document.getElementById("genrun_ref");
   b1.disabled=true; b2.disabled=true;
   try{
-    setGenStatus("Récupération de l'extrait officiel… (quelques secondes)","");
-    const qs=new URLSearchParams({commune:selectedCommune.code,prefixe,section,parcelle,echelle,taille,orientation}).toString();
+    // Préfixe non saisi (méthode ②) → détection automatique via IGN (communes fusionnées)
+    if(mode==="ref" && !prefixe){
+      setGenStatus("Détection du préfixe de la commune…","");
+      try{ const pfx=await ignPrefixe(commune.code, section, parcelle); if(pfx!=null) prefixe=pfx; }catch(e){}
+    }
+    if(!prefixe) prefixe="000";
+    setGenStatus(prefixe!=="000" ? ("Préfixe détecté : "+prefixe+" — récupération de l'extrait officiel…") : "Récupération de l'extrait officiel… (quelques secondes)","");
+    const qs=new URLSearchParams({commune:commune.code,prefixe,section,parcelle,echelle,taille,orientation}).toString();
     const r=await fetch("/api/extrait?"+qs);
     if(!r.ok){
       let msg="Erreur "+r.status;
