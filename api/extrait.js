@@ -15,7 +15,15 @@ const MAP_SIZES = {
   'A4-Portrait': { width: 19550, height: 21100 }
 };
 
-function deburr(s) { return s.normalize('NFD').replace(/[\u0300-\u036f]/g, ''); }
+// Retire les accents ET les ligatures (œ→oe, æ→ae) : NFD ne décompose pas
+// les ligatures précomposées, il faut donc les traiter explicitement.
+// Sans cela, une commune comme « Marcq-en-Barœul » est envoyée au SCPC avec
+// le Œ, ne matche pas « MARCQ EN BAROEUL » et renvoie « aucun résultat ».
+function deburr(s) {
+  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/Œ/g, 'OE').replace(/œ/g, 'oe')
+    .replace(/Æ/g, 'AE').replace(/æ/g, 'ae');
+}
 function codeDepartement(c) { return c.startsWith('97') ? c.slice(0, 3) : c.slice(0, 2); }
 function computeBbox({ x, y, taille, orientation, echelle }) {
   const { width, height } = MAP_SIZES[`${taille}-${orientation}`];
