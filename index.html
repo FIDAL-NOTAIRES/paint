@@ -443,12 +443,29 @@
 pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 
 /* ---------- État ---------- */
-const PALETTE = ["#FF982D","#33838B","#6DD5DC","#657D96",
-                 "#d35f5f","#5fb37a","#7a6fd3","#cf6fb0","#0F2238","#9aa7b3",
-                 "#2F6FB0","#9C6B3F"];
+// Palette. Premier élément = couleur active par défaut.
+// LE BÂTI DE L'EXTRAIT CADASTRAL EST FIGURÉ EN ORANGE : colorier en orange rend
+// indistinguables la parcelle retenue et les constructions, ce qui est
+// inacceptable sur une pièce remise à un client ou à un confrère.
+// Le CARMIN PROFOND #A01040 passe en tête, sur demande de JFD (registre des rouges).
+// Il a été choisi par MESURE, et non au jugé : composée à 45 % d'opacité, chaque
+// teinte a été comparée au pêche que donne le bâti orange dans les mêmes
+// conditions (distance euclidienne RVB).
+//     orange #FF982D ......  0  -> confusion totale
+//     rouge doux #d35f5f ... 40  -> confusion
+//     rouge vif #E01B24 .... 59  -> limite
+//     framboise #C2185B .... 67  -> limite
+//     carmin #A01040 ....... 76  -> distinct   ← retenu
+// Ne pas « simplifier » en reprenant le rouge doux de l'ancienne palette : il est
+// justement dans la zone de confusion.
+// Restent exclus de la tête de palette : le jaune et l'orange (figuré du bâti).
+// Toutes les teintes demeurent disponibles — seul l'ordre change.
+const PALETTE = ["#A01040","#C2185B","#7a6fd3","#cf6fb0",
+                 "#33838B","#2F6FB0","#5fb37a","#6DD5DC","#657D96","#0F2238",
+                 "#FF982D","#9C6B3F"];
 const S = {
   pdf:null, page:1, pageCount:1, ocrCache:null, anchorCache:null,
-  tool:"fill", color:"#FF982D", opacity:.45, threshold:100, brush:14, fontSize:36,
+  tool:"fill", color:"#A01040", opacity:.45, threshold:100, brush:14, fontSize:36,
   zoom:1, rotation:0, drawing:false, lastPt:null,
   undoStack:[], redoStack:[],
   notes:[], selNote:null, dragNote:null, dragOff:null,
@@ -1480,6 +1497,16 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
   setVal("g_parcelle", parcelle);
   setVal("g_echelle",  p.get("echelle"));
   setVal("g_format",   p.get("format"));
+
+  // Couleur imposable par l'appelant. MARTEAU en aura besoin pour distinguer ses
+  // trois statuts (concordant, déclaré mais absent du cadastre, non déclaré).
+  // On refuse l'orange par défaut, mais on n'interdit rien à qui le demande.
+  const couleur = (p.get("couleur") || "").trim();
+  if(/^#[0-9A-Fa-f]{6}$/.test(couleur)){
+    const sw = [...document.querySelectorAll(".sw")]
+      .find(el => (el.dataset.color || "").toLowerCase() === couleur.toLowerCase());
+    setColor(couleur, sw || null);
+  }
 
   drop.classList.remove("hide");
 
