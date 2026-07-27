@@ -1607,10 +1607,16 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
       // Ne PAS revenir à un plafond d'aire plus sévère : à 1/1000, une parcelle de
       // deux hectares occupe légitimement la moitié du cadre. On pénaliserait les
       // grandes parcelles tout en laissant passer les rues.
+      // Tampon unique, réutilisé d'une sonde à l'autre grâce à un numéro de passe :
+      // allouer un Uint8Array de la taille de l'image à chaque sonde faisait
+      // plusieurs centaines de mégaoctets sur une cinquantaine de sondes.
+      const vus = new Int32Array(NPIX);
+      let passe = 0;
       const mesurerRegion = (sx, sy, limite) => {
         if(sx < 0 || sy < 0 || sx >= W || sy >= H) return null;
         const s0 = sy * W + sx; if(!clair(s0)) return null;
-        const vus = new Uint8Array(NPIX); const pile = [s0]; vus[s0] = 1;
+        passe += 1;
+        const pile = [s0]; vus[s0] = passe;
         let n = 0, x0 = sx, x1 = sx, y0 = sy, y1 = sy;
         while(pile.length && n <= limite){
           const i = pile.pop(); n++;
@@ -1619,10 +1625,10 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
           if(x > x1) x1 = x;
           if(y < y0) y0 = y;
           if(y > y1) y1 = y;
-          if(x > 0 && !vus[i - 1] && clair(i - 1)){ vus[i - 1] = 1; pile.push(i - 1); }
-          if(x < W - 1 && !vus[i + 1] && clair(i + 1)){ vus[i + 1] = 1; pile.push(i + 1); }
-          if(i >= W && !vus[i - W] && clair(i - W)){ vus[i - W] = 1; pile.push(i - W); }
-          if(i < W * (H - 1) && !vus[i + W] && clair(i + W)){ vus[i + W] = 1; pile.push(i + W); }
+          if(x > 0 && vus[i - 1] !== passe && clair(i - 1)){ vus[i - 1] = passe; pile.push(i - 1); }
+          if(x < W - 1 && vus[i + 1] !== passe && clair(i + 1)){ vus[i + 1] = passe; pile.push(i + 1); }
+          if(i >= W && vus[i - W] !== passe && clair(i - W)){ vus[i - W] = passe; pile.push(i - W); }
+          if(i < W * (H - 1) && vus[i + W] !== passe && clair(i + W)){ vus[i + W] = passe; pile.push(i + W); }
         }
         const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
         return { aire: n, bw, bh, x0, y0, x1, y1, boite: bw * bh, compacite: n / (bw * bh) };
@@ -1671,7 +1677,9 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
           for(let a = 0; a < pas; a++){
             const t = 2 * Math.PI * a / pas;
             const x = Math.round(m.cx + r * Math.cos(t)), y = Math.round(m.cy + r * Math.sin(t));
-            const g = mesurerRegion(x, y, NPIX);
+            // Plafond : au-delà, la région est trop vaste pour être la parcelle
+            // cherchée ; inutile de la parcourir jusqu'au bout.
+            const g = mesurerRegion(x, y, Math.round(0.35 * NPIX));
             if(!g || g.aire < MINI) continue;
             if(g.bw > ETENDUE_MAXI * W && g.bh > ETENDUE_MAXI * H) continue;
             if(m.cx < g.x0 || m.cx > g.x1 || m.cy < g.y0 || m.cy > g.y1) continue;
@@ -1692,6 +1700,8 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
       }else{
         candidats.sort((a, b) => a.boite - b.boite);
       }
+      console.log("PAINT auto :", { numero: num, numerosLus: mots.length,
+        occurrences: cibles.length, attendu, candidats: candidats.slice(0, 5) });
       const amorce = candidats[0] || null;
       if(!amorce){
         aLaMain("Aucune région exploitable n'a été isolée autour du numéro " + num + ".");
@@ -1724,8 +1734,15 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
         setStatus("Parcelle " + num + " coloriée automatiquement." + detail, "ok");
       }
     }catch(err){
-      setGenStatus("Colorisation automatique impossible : " + ((err && err.message) || err)
-        + " — le plan reste utilisable à la main.", "err");
+      // setStatus et NON setGenStatus : loadPDFData masque le panneau de
+      // génération (drop.classList.add("hide")) dès que le plan s'affiche, donc
+      // tout message écrit là devient invisible. C'est ce qui a rendu quatre
+      // tentatives de mise au point aveugles.
+      console.error("PAINT colorisation auto :", err);
+      S.tool = "fill";
+      setStatus("Colorisation automatique interrompue : " + ((err && err.message) || err)
+        + ". Le plan reste prêt : cliquez dans la parcelle avec l'outil « Remplir », "
+        + "déjà sélectionné. Détail technique dans la console du navigateur (F12).", "err");
     }
   })();
 })();
