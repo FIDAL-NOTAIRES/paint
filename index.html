@@ -444,9 +444,15 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs
 
 /* ---------- État ---------- */
 // Palette. Premier élément = couleur active par défaut.
-// LE BÂTI DE L'EXTRAIT CADASTRAL EST FIGURÉ EN ORANGE : colorier en orange rend
-// indistinguables la parcelle retenue et les constructions, ce qui est
-// inacceptable sur une pièce remise à un client ou à un confrère.
+// CONVENTION DE COULEURS DU PLAN CADASTRAL (rappelée par JFD, notaire) :
+//     BLANC        le non bâti
+//     JAUNE-ORANGE le bâti
+//     BLEU         l'eau
+// Le plan est donc DÉJÀ coloré : toute teinte de colorisation qui reprend l'une de
+// ces trois familles devient ambiguë sur une pièce remise à un client ou à un
+// confrère. Sont donc exclus de la tête de palette le jaune et l'orange (bâti)
+// AINSI QUE le bleu et le cyan (eau) — y compris le bleu canard de la charte
+// FIDAL, écarté pour cette raison et non par goût.
 // Le CARMIN PROFOND #A01040 passe en tête, sur demande de JFD (registre des rouges).
 // Il a été choisi par MESURE, et non au jugé : composée à 45 % d'opacité, chaque
 // teinte a été comparée au pêche que donne le bâti orange dans les mêmes
@@ -458,8 +464,13 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs
 //     carmin #A01040 ....... 76  -> distinct   ← retenu
 // Ne pas « simplifier » en reprenant le rouge doux de l'ancienne palette : il est
 // justement dans la zone de confusion.
-// Restent exclus de la tête de palette : le jaune et l'orange (figuré du bâti).
 // Toutes les teintes demeurent disponibles — seul l'ordre change.
+// PISTE NON EXPLOITÉE, notée pour plus tard : puisque le plan porte de l'orange et
+// du bleu alors que l'en-tête et le cartouche sont en noir sur blanc, on peut
+// délimiter la CARTE par la boîte englobante des pixels saturés. Ce serait un
+// repère plus robuste que la projection des pixels sombres, déjà mise en échec.
+// Limite : un plan rural sans bâti ni eau n'offre aucun pixel saturé, il faudrait
+// donc conserver un repli.
 const PALETTE = ["#A01040","#C2185B","#7a6fd3","#cf6fb0",
                  "#33838B","#2F6FB0","#5fb37a","#6DD5DC","#657D96","#0F2238",
                  "#FF982D","#9C6B3F"];
@@ -1520,28 +1531,121 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
       await generateExtrait("ref");
       if(!S.pdf) return;                 // génération échouée : message déjà affiché
 
+      // ---- Colorisation automatique : OCR ciblé + amorce bornée ----------------
+      // Trois enseignements des tentatives précédentes, à ne pas reperdre :
+      //  1. floodFill peint « tout ce qui ne communique pas avec le bord » : une
+      //     amorce dans la rue fait du réseau viaire une barrière et peint tout ce
+      //     qu'il enclot. L'amorce DOIT être dans la parcelle.
+      //  2. Le centre de l'IMAGE ne convient pas (en-tête et cartouche), et le
+      //     repérage du cadre par projection des pixels sombres se fait piéger par
+      //     toute longue ligne droite.
+      //  3. findSeed retient la plus grande région claire et plafonne sa mesure à
+      //     5 000 pixels : il ne distingue pas une parcelle d'une voirie.
+      // D'où la méthode retenue ici, qui n'utilise que des grandeurs sûres :
+      //     — l'OCR donne la POSITION du numéro cherché, qui est imprimé DANS sa
+      //       parcelle ; on sonde donc à quelques pixels de lui seulement ;
+      //     — tous les numéros lus sont à l'intérieur de la carte, donc la MÉDIANE
+      //       de leurs positions estime le centre de la carte sans rien supposer
+      //       de la géométrie des traits : cela départage plusieurs occurrences
+      //       d'un même numéro, l'extrait étant centré sur la parcelle demandée ;
+      //     — la taille de région est mesurée avec un plafond réel, ce qui permet
+      //       d'écarter la voirie.
       const numEl = document.getElementById("numinput");
       if(!numEl) return;
       // Le plan affiche le numéro SANS zéros de tête : « 30 », pas « 0030 ».
-      numEl.value = String(parcelle).replace(/^0+/, "") || parcelle;
-      await searchAndFill();
+      const num = String(parcelle).replace(/^0+/, "") || parcelle;
+      numEl.value = num;
 
-      // ---- Garde-fou : refuser une colorisation qui a fui ----
+      // -- OCR, appelé directement : on veut les positions, pas le remplissage --
+      const cle = S.page + "|" + S.rotation;
+      if(!S.ocrCache || S.ocrCache.key !== cle) S.ocrCache = { key: cle, base: null, words: [], done: new Set() };
+      spin.classList.add("show"); spinmsg.textContent = "Lecture des numéros…";
+      try{
+        if(!S.ocrCache.base) S.ocrCache.base = await renderOcrBase();
+        for(const deg of OCR_ANGLES){
+          if(!S.ocrCache.done.has(deg)){
+            spinmsg.textContent = deg === 0 ? "Lecture des numéros…"
+              : "Recherche approfondie (numéros inclinés à " + deg + "°)…";
+            S.ocrCache.words.push(...await ocrAngle(S.ocrCache.base, deg));
+            S.ocrCache.done.add(deg);
+          }
+          if(S.ocrCache.words.some(w => w.text === num)) break;
+        }
+      } finally { spin.classList.remove("show"); }
+
+      const mots = S.ocrCache.words;
+      const cibles = mots.filter(w => w.text === num);
+      const aLaMain = (msg) => {
+        S.tool = "fill";
+        setStatus(msg + " L'extrait reste prêt, à l'échelle demandée et centré sur la "
+          + "parcelle : cliquez dedans avec l'outil « Remplir », déjà sélectionné.", "warn");
+        showHint("Cliquez dans la parcelle, au centre de la carte.");
+      };
+      if(!cibles.length){ aLaMain("Le numéro " + num + " n'a pas été lu sur ce plan."); return; }
+
+      // Centre de la carte estimé par la MÉDIANE des positions de tous les numéros.
+      const med = (t) => { const a = [...t].sort((x, y) => x - y); return a[Math.floor(a.length / 2)]; };
+      const mcx = med(mots.map(w => w.cx)), mcy = med(mots.map(w => w.cy));
+      const dist2 = (w) => (w.cx - mcx) * (w.cx - mcx) + (w.cy - mcy) * (w.cy - mcy);
+      cibles.sort((a, b) => dist2(a) - dist2(b));
+
+      // Taille de la région claire atteinte, plafonnée : écarte la voirie sans
+      // parcourir des millions de pixels.
+      const W = S.W, H = S.H, thr = S.threshold, NPIX = W * H;
+      const donnees = baseCtx.getImageData(0, 0, W, H).data;
+      const clair = (i) => (0.299 * donnees[i * 4] + 0.587 * donnees[i * 4 + 1]
+        + 0.114 * donnees[i * 4 + 2]) >= thr;
+      const tailleRegion = (sx, sy, limite) => {
+        if(sx < 0 || sy < 0 || sx >= W || sy >= H) return 0;
+        const s0 = sy * W + sx; if(!clair(s0)) return 0;
+        const vus = new Uint8Array(NPIX); const pile = [s0]; vus[s0] = 1; let n = 0;
+        while(pile.length && n <= limite){
+          const i = pile.pop(); n++; const x = i % W;
+          if(x > 0 && !vus[i - 1] && clair(i - 1)){ vus[i - 1] = 1; pile.push(i - 1); }
+          if(x < W - 1 && !vus[i + 1] && clair(i + 1)){ vus[i + 1] = 1; pile.push(i + 1); }
+          if(i >= W && !vus[i - W] && clair(i - W)){ vus[i - W] = 1; pile.push(i - W); }
+          if(i < W * (H - 1) && !vus[i + W] && clair(i + W)){ vus[i + W] = 1; pile.push(i + W); }
+        }
+        return n;
+      };
+
+      const MINI = Math.max(200, Math.round(0.00001 * NPIX));   // pas un interstice
+      const MAXI = Math.round(0.25 * NPIX);                     // pas la voirie
+      let amorce = null;
+      for(const m of cibles){
+        for(const r of [3, 6, 9, 12, 16, 20, 26]){
+          const pas = Math.max(6, Math.round(r / 2));
+          for(let a = 0; a < pas && !amorce; a++){
+            const t = 2 * Math.PI * a / pas;
+            const x = Math.round(m.cx + r * Math.cos(t)), y = Math.round(m.cy + r * Math.sin(t));
+            const taille = tailleRegion(x, y, MAXI + 1);
+            if(taille >= MINI && taille <= MAXI) amorce = { x, y, taille };
+          }
+          if(amorce) break;
+        }
+        if(amorce) break;
+      }
+      if(!amorce){ aLaMain("Aucune parcelle bornée n'a été isolée autour du numéro " + num + "."); return; }
+
+      floodFill(amorce.x, amorce.y);
+      pushUndo();
+      rebuildLegend();
+
+      // ---- Garde-fou : refuser une colorisation qui aurait tout de même fui ----
       // Sur une pièce de dossier, aucune couleur vaut mieux qu'une couleur fausse.
-      const img = oCtx.getImageData(0, 0, S.W, S.H).data;
+      const img = oCtx.getImageData(0, 0, W, H).data;
       let peints = 0;
       for(let i = 3; i < img.length; i += 4) if(img[i] > 0) peints++;
-      const part = peints / (S.W * S.H);
+      const part = peints / NPIX;
       if(part > 0.30){
-        oCtx.clearRect(0, 0, S.W, S.H);
+        oCtx.clearRect(0, 0, W, H);
         S.legendLabels = {};
         rebuildLegend();
-        S.tool = "fill";
-        setStatus("Colorisation automatique écartée : la zone atteinte couvrait "
-          + Math.round(part * 100) + " % du plan — c'est la voirie, pas la parcelle. "
-          + "L'extrait reste prêt, à l'échelle demandée et centré sur la parcelle : "
-          + "cliquez dedans avec l'outil « Remplir », déjà sélectionné.", "warn");
-        showHint("Cliquez dans la parcelle, au centre de la carte.");
+        aLaMain("Colorisation automatique écartée : la zone atteinte couvrait "
+          + Math.round(part * 100) + " % du plan — c'est la voirie, pas la parcelle.");
+      }else{
+        setStatus("Parcelle " + num + " coloriée automatiquement ("
+          + amorce.taille.toLocaleString("fr-FR") + " pixels). Ajustez si nécessaire.", "ok");
       }
     }catch(err){
       setGenStatus("Colorisation automatique impossible : " + ((err && err.message) || err)
