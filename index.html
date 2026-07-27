@@ -1493,6 +1493,28 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
       if(!numEl) return;
       numEl.value = String(parcelle).replace(/^0+/, "") || parcelle;
       await searchAndFill();        // gère l'OCR, l'annulation, la légende et les échecs
+
+      // ---- Garde-fou : refuser une colorisation qui a manifestement fui ----
+      // findSeed retient la PLUS GRANDE région claire autour du chiffre et
+      // s'arrête dès 5 000 pixels. Sur une parcelle minuscule à petite échelle,
+      // la première sonde qui touche la voirie trouve une région immense : c'est
+      // la rue qui est coloriée, et par continuité tout le plan. On ne modifie
+      // pas findSeed, qui sert aussi la recherche manuelle ; on vérifie
+      // seulement le résultat du chemin AUTOMATIQUE, où personne ne regarde.
+      // Mieux vaut aucune couleur qu'une couleur fausse sur une pièce de dossier.
+      const img = oCtx.getImageData(0, 0, S.W, S.H).data;
+      let peints = 0;
+      for (let i = 3; i < img.length; i += 4) if (img[i] > 0) peints++;
+      const part = peints / (S.W * S.H);
+      if (part > 0.30) {
+        oCtx.clearRect(0, 0, S.W, S.H);
+        S.legendLabels = {};
+        rebuildLegend();
+        setStatus("Colorisation automatique écartée : la zone détectée couvre "
+          + Math.round(part * 100) + " % du plan, ce qui trahit une fuite dans le réseau "
+          + "viaire plutôt qu'une parcelle. Rapprochez l'échelle puis relancez, ou "
+          + "colorisez à la main avec l'outil « Remplir ».", "warn");
+      }
     }catch(err){
       setGenStatus("Colorisation automatique impossible : " + ((err && err.message) || err)
         + " — le plan reste utilisable à la main.", "err");
