@@ -1531,181 +1531,130 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
       await generateExtrait("ref");
       if(!S.pdf) return;                 // génération échouée : message déjà affiché
 
-      // ---- Colorisation automatique : OCR ciblé + amorce bornée ----------------
-      // Trois enseignements des tentatives précédentes, à ne pas reperdre :
-      //  1. floodFill peint « tout ce qui ne communique pas avec le bord » : une
-      //     amorce dans la rue fait du réseau viaire une barrière et peint tout ce
-      //     qu'il enclot. L'amorce DOIT être dans la parcelle.
-      //  2. Le centre de l'IMAGE ne convient pas (en-tête et cartouche), et le
-      //     repérage du cadre par projection des pixels sombres se fait piéger par
-      //     toute longue ligne droite.
-      //  3. findSeed retient la plus grande région claire et plafonne sa mesure à
-      //     5 000 pixels : il ne distingue pas une parcelle d'une voirie.
-      // D'où la méthode retenue ici, qui n'utilise que des grandeurs sûres :
-      //     — l'OCR donne la POSITION du numéro cherché, qui est imprimé DANS sa
-      //       parcelle ; on sonde donc à quelques pixels de lui seulement ;
-      //     — tous les numéros lus sont à l'intérieur de la carte, donc la MÉDIANE
-      //       de leurs positions estime le centre de la carte sans rien supposer
-      //       de la géométrie des traits : cela départage plusieurs occurrences
-      //       d'un même numéro, l'extrait étant centré sur la parcelle demandée ;
-      //     — la taille de région est mesurée avec un plafond réel, ce qui permet
-      //       d'écarter la voirie.
-      const numEl = document.getElementById("numinput");
-      if(!numEl) return;
-      // Le plan affiche le numéro SANS zéros de tête : « 30 », pas « 0030 ».
-      const num = String(parcelle).replace(/^0+/, "") || parcelle;
-      numEl.value = num;
+      // ================== COLORISATION AUTOMATIQUE ==========================
+      // MÉTHODE : recensement exhaustif, puis sélection par TAILLE ATTENDUE.
+      // On ne devine plus. Une seule passe étiquette toutes les régions claires du
+      // rendu avec leur boîte englobante, et l'on retient celle dont les dimensions
+      // correspondent à celles de la parcelle, transmises EN MÈTRES par l'appelant.
+      // Pourquoi c'est fondé : un extrait couvre une largeur de terrain connue
+      // (largeur de feuille × échelle), donc le rendu donne l'échelle pixels par
+      // mètre. AV 1 à Saint-Omer : 16,3 × 11,6 m à 1/1000 sur A4 portrait, rendu
+      // 1 700 px de large → 8,1 px/m → 132 × 94 px attendus, quand la voirie en
+      // faisait 808 × 928.
+      // L'OCR A ÉTÉ RETIRÉ de ce chemin : lent (chargement de Tesseract puis six
+      // passes angulaires) et porteur de deux modes d'échec supplémentaires
+      // (numéro illisible, numéro court présent plusieurs fois). Il ne fournissait
+      // qu'une position approximative, que la taille attendue rend superflue.
+      // La recherche manuelle par numéro, elle, continue de l'utiliser : intacte.
+      // TOUT LE DIAGNOSTIC EST AFFICHÉ À L'ÉCRAN et pas seulement en console :
+      // quatre mises au point ont été perdues faute de pouvoir lire les messages,
+      // ceux-ci partant dans le panneau de génération que loadPDFData masque.
+      const W = S.W, H = S.H, thr = S.threshold, NPIX = W * H;
 
-      // -- OCR, appelé directement : on veut les positions, pas le remplissage --
-      const cle = S.page + "|" + S.rotation;
-      if(!S.ocrCache || S.ocrCache.key !== cle) S.ocrCache = { key: cle, base: null, words: [], done: new Set() };
-      spin.classList.add("show"); spinmsg.textContent = "Lecture des numéros…";
-      try{
-        if(!S.ocrCache.base) S.ocrCache.base = await renderOcrBase();
-        for(const deg of OCR_ANGLES){
-          if(!S.ocrCache.done.has(deg)){
-            spinmsg.textContent = deg === 0 ? "Lecture des numéros…"
-              : "Recherche approfondie (numéros inclinés à " + deg + "°)…";
-            S.ocrCache.words.push(...await ocrAngle(S.ocrCache.base, deg));
-            S.ocrCache.done.add(deg);
-          }
-          if(S.ocrCache.words.some(w => w.text === num)) break;
-        }
-      } finally { spin.classList.remove("show"); }
-
-      const mots = S.ocrCache.words;
-      const cibles = mots.filter(w => w.text === num);
       const aLaMain = (msg) => {
         S.tool = "fill";
-        setStatus(msg + " L'extrait reste prêt, à l'échelle demandée et centré sur la "
-          + "parcelle : cliquez dedans avec l'outil « Remplir », déjà sélectionné.", "warn");
+        setStatus(msg + " Cliquez dans la parcelle avec l'outil « Remplir », déjà sélectionné.", "warn");
         showHint("Cliquez dans la parcelle, au centre de la carte.");
       };
-      if(!cibles.length){ aLaMain("Le numéro " + num + " n'a pas été lu sur ce plan."); return; }
 
-      // Centre de la carte estimé par la MÉDIANE des positions de tous les numéros.
-      const med = (t) => { const a = [...t].sort((x, y) => x - y); return a[Math.floor(a.length / 2)]; };
-      const mcx = med(mots.map(w => w.cx)), mcy = med(mots.map(w => w.cy));
-      const dist2 = (w) => (w.cx - mcx) * (w.cx - mcx) + (w.cy - mcy) * (w.cy - mcy);
-      cibles.sort((a, b) => dist2(a) - dist2(b));
+      const largeursFeuille = { "A4|portrait": 0.210, "A4|paysage": 0.297,
+                                "A3|portrait": 0.297, "A3|paysage": 0.420 };
+      const fmt = p.get("format") || "A4|portrait";
+      const ech = parseFloat(p.get("echelle") || "1000");
+      const mDim = (p.get("dim") || "").trim().match(/^([0-9.]+)x([0-9.]+)$/);
+      if(!mDim || !largeursFeuille[fmt] || !(ech > 0)){
+        aLaMain("Dimensions de la parcelle non transmises : la colorisation automatique "
+          + "a besoin du paramètre « dim », que REDPAR fournit une fois les contours chargés.");
+        return;
+      }
+      const pxParMetre = W / (largeursFeuille[fmt] * ech);
+      const attendu = { bw: parseFloat(mDim[1]) * pxParMetre,
+                        bh: parseFloat(mDim[2]) * pxParMetre };
 
-      // Taille de la région claire atteinte, plafonnée : écarte la voirie sans
-      // parcourir des millions de pixels.
-      const W = S.W, H = S.H, thr = S.threshold, NPIX = W * H;
+      // ---- Recensement de toutes les régions claires, en une seule passe ----
       const donnees = baseCtx.getImageData(0, 0, W, H).data;
       const clair = (i) => (0.299 * donnees[i * 4] + 0.587 * donnees[i * 4 + 1]
         + 0.114 * donnees[i * 4 + 2]) >= thr;
-      // Mesure d'une région claire : aire ET boîte englobante.
-      // LE CRITÈRE DISCRIMINANT N'EST PAS L'AIRE, MAIS LA COMPACITÉ.
-      // Constaté sur un plan réel de centre-ville (Saint-Omer AV 1) : le réseau
-      // viaire ne couvrait qu'environ 20 % de l'image, passait donc sous un
-      // plafond d'aire de 25 %, et se faisait colorier. Un réseau de rues est LONG
-      // ET MINCE : sa boîte englobante couvre presque toute la carte alors qu'il
-      // n'en remplit qu'une fraction. Une parcelle est COMPACTE : sa boîte est à sa
-      // mesure et bien remplie. Mesuré sur jeu de contrôle — voirie 0,09 ; fond du
-      // cadre 0,34 ; parcelles 1,00.
-      // Ne PAS revenir à un plafond d'aire plus sévère : à 1/1000, une parcelle de
-      // deux hectares occupe légitimement la moitié du cadre. On pénaliserait les
-      // grandes parcelles tout en laissant passer les rues.
-      // Tampon unique, réutilisé d'une sonde à l'autre grâce à un numéro de passe :
-      // allouer un Uint8Array de la taille de l'image à chaque sonde faisait
-      // plusieurs centaines de mégaoctets sur une cinquantaine de sondes.
-      const vus = new Int32Array(NPIX);
-      let passe = 0;
-      const mesurerRegion = (sx, sy, limite) => {
-        if(sx < 0 || sy < 0 || sx >= W || sy >= H) return null;
-        const s0 = sy * W + sx; if(!clair(s0)) return null;
-        passe += 1;
-        const pile = [s0]; vus[s0] = passe;
-        let n = 0, x0 = sx, x1 = sx, y0 = sy, y1 = sy;
-        while(pile.length && n <= limite){
+      const etiquette = new Int32Array(NPIX);
+      const regions = [];
+      const AIRE_MINI = Math.max(120, Math.round(0.000005 * NPIX));
+      for(let depart = 0; depart < NPIX; depart++){
+        if(etiquette[depart] !== 0 || !clair(depart)) continue;
+        const id = regions.length + 1;
+        const pile = [depart]; etiquette[depart] = id;
+        let n = 0, x0 = W, x1 = 0, y0 = H, y1 = 0, bord = false;
+        while(pile.length){
           const i = pile.pop(); n++;
           const x = i % W, y = (i - x) / W;
           if(x < x0) x0 = x;
           if(x > x1) x1 = x;
           if(y < y0) y0 = y;
           if(y > y1) y1 = y;
-          if(x > 0 && vus[i - 1] !== passe && clair(i - 1)){ vus[i - 1] = passe; pile.push(i - 1); }
-          if(x < W - 1 && vus[i + 1] !== passe && clair(i + 1)){ vus[i + 1] = passe; pile.push(i + 1); }
-          if(i >= W && vus[i - W] !== passe && clair(i - W)){ vus[i - W] = passe; pile.push(i - W); }
-          if(i < W * (H - 1) && vus[i + W] !== passe && clair(i + W)){ vus[i + W] = passe; pile.push(i + W); }
+          if(x === 0 || y === 0 || x === W - 1 || y === H - 1) bord = true;
+          if(x > 0 && etiquette[i - 1] === 0 && clair(i - 1)){ etiquette[i - 1] = id; pile.push(i - 1); }
+          if(x < W - 1 && etiquette[i + 1] === 0 && clair(i + 1)){ etiquette[i + 1] = id; pile.push(i + 1); }
+          if(i >= W && etiquette[i - W] === 0 && clair(i - W)){ etiquette[i - W] = id; pile.push(i - W); }
+          if(i < W * (H - 1) && etiquette[i + W] === 0 && clair(i + W)){ etiquette[i + W] = id; pile.push(i + W); }
         }
-        const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
-        return { aire: n, bw, bh, x0, y0, x1, y1, boite: bw * bh, compacite: n / (bw * bh) };
-      };
-
-      // ---- TAILLE ATTENDUE, DÉDUITE DES DIMENSIONS RÉELLES -------------------
-      // Quand l'appelant transmet dim=LxH en mètres — REDPAR le fait depuis le
-      // contour cadastral — on cesse de deviner. Un extrait couvre une largeur de
-      // terrain connue (largeur de la feuille × échelle), donc le rendu donne
-      // l'échelle pixels par mètre, et la parcelle a une taille ATTENDUE en pixels.
-      // Mesuré sur AV 1 à Saint-Omer : 16,3 × 11,6 m à 1/1000 sur A4 portrait,
-      // rendu 1 700 px de large → 8,1 px/m → 132 × 94 px attendus, quand la voirie
-      // en mesurait 808 × 928. La discrimination devient arithmétique.
-      const largeursFeuille = { "A4|portrait": 0.210, "A4|paysage": 0.297,
-                                "A3|portrait": 0.297, "A3|paysage": 0.420 };
-      const fmt = p.get("format") || "A4|portrait";
-      const ech = parseFloat(p.get("echelle") || "1000");
-      const mDim = (p.get("dim") || "").trim().match(/^([0-9.]+)x([0-9.]+)$/);
-      let attendu = null;
-      if(mDim && largeursFeuille[fmt] && ech > 0){
-        const pxParMetre = W / (largeursFeuille[fmt] * ech);
-        attendu = { bw: parseFloat(mDim[1]) * pxParMetre,
-                    bh: parseFloat(mDim[2]) * pxParMetre, pxParMetre };
+        if(n >= AIRE_MINI){
+          regions.push({ id, aire: n, bw: x1 - x0 + 1, bh: y1 - y0 + 1,
+                         cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, bord, x0, y0, x1, y1 });
+        }
       }
 
-      // ---- SÉLECTION : deux conditions, puis classement ----------------------
-      //  1. la région doit ENFERMER LE NUMÉRO imprimé — sa boîte englobante
-      //     contient le centre du chiffre. C'est ce qui écarte l'intérieur d'un
-      //     bâtiment voisin, région petite et bornée mais qui ne contient pas le
-      //     numéro : sans cela, sur une parcelle entièrement construite on colorie
-      //     le bâtiment, ce qui est franchement faux s'il est mitoyen ;
-      //  2. rejet absolu d'une région couvrant plus de 70 % de la carte dans les
-      //     DEUX dimensions — marge de page ou réseau viaire entier.
-      // Puis CLASSEMENT, et non seuil : par écart relatif à la taille attendue
-      // quand on la connaît, par plus petite boîte sinon. Trois seuils absolus ont
-      // été essayés et démentis (plafond d'aire, compacité, étendue seule) : voir
-      // le mémo. Un seuil de compacité rejette les parcelles entièrement bâties,
-      // dont la région n'est qu'un liseré autour du bâti.
-      const MINI = Math.max(200, Math.round(0.00001 * NPIX));
-      const ETENDUE_MAXI = 0.70;
-      const candidats = [];
-      const dejaVu = new Set();
-      for(const m of cibles){
-        for(const r of [3, 6, 9, 12, 16, 20, 26]){
-          const pas = Math.max(6, Math.round(r / 2));
-          for(let a = 0; a < pas; a++){
-            const t = 2 * Math.PI * a / pas;
-            const x = Math.round(m.cx + r * Math.cos(t)), y = Math.round(m.cy + r * Math.sin(t));
-            // Plafond : au-delà, la région est trop vaste pour être la parcelle
-            // cherchée ; inutile de la parcourir jusqu'au bout.
-            const g = mesurerRegion(x, y, Math.round(0.35 * NPIX));
-            if(!g || g.aire < MINI) continue;
-            if(g.bw > ETENDUE_MAXI * W && g.bh > ETENDUE_MAXI * H) continue;
-            if(m.cx < g.x0 || m.cx > g.x1 || m.cy < g.y0 || m.cy > g.y1) continue;
-            const empreinte = g.bw + "x" + g.bh + "x" + g.aire;
-            if(dejaVu.has(empreinte)) continue;
-            dejaVu.add(empreinte);
-            candidats.push({ x, y, ...g });
+      // ---- Sélection : compatibilité de taille, puis proximité du centre ----
+      // La marge de page touche le bord de l'image : écartée d'office.
+      // L'extrait étant centré sur la parcelle demandée, la plus centrale des
+      // régions compatibles est la bonne.
+      // Tolérance resserrée à 30 % : à 45 %, un fragment de voirie de 39×39 px
+      // passait pour une parcelle de 66×47 attendue.
+      const TOLERANCE = 0.30;
+      // Marge d'ex æquo : au-delà, la ressemblance de taille primait déjà.
+      const BANDE = 0.12;
+      const ecart = (g) => Math.abs(g.bw - attendu.bw) / attendu.bw
+                         + Math.abs(g.bh - attendu.bh) / attendu.bh;
+      const compatible = (g) => Math.abs(g.bw - attendu.bw) / attendu.bw <= TOLERANCE
+                             && Math.abs(g.bh - attendu.bh) / attendu.bh <= TOLERANCE;
+      const dist = (g) => Math.hypot(g.cx - W / 2, g.cy - H / 2);
+      // CLASSEMENT EN DEUX TEMPS, et l'ordre compte.
+      // La ressemblance de taille d'abord : classer par distance au centre laissait
+      // gagner un petit fragment de voirie central contre la vraie parcelle,
+      // pourtant exacte au pixel près mais plus excentrée.
+      // La position ne sert qu'à départager les quasi-ex æquo, ce qui est son rôle
+      // légitime puisque l'extrait est centré sur la parcelle demandée.
+      const utiles = regions.filter((g) => !g.bord);
+      const compatibles = utiles.filter(compatible).sort((a, b) => ecart(a) - ecart(b));
+      const retenues = compatibles.length
+        ? compatibles.filter((g) => ecart(g) <= ecart(compatibles[0]) + BANDE)
+                     .sort((a, b) => dist(a) - dist(b))
+        : [];
+      const proches = [...utiles].sort((a, b) => ecart(a) - ecart(b)).slice(0, 3);
+
+      const dims = (g) => g.bw + "×" + g.bh;
+      const resume = "Attendu " + Math.round(attendu.bw) + "×" + Math.round(attendu.bh)
+        + " px, soit " + mDim[1] + "×" + mDim[2] + " m à 1/" + ech + " ("
+        + pxParMetre.toFixed(1) + " px/m). " + regions.length + " région(s) recensée(s), "
+        + retenues.length + " compatible(s) à ±" + Math.round(TOLERANCE * 100) + " %.";
+      console.log("PAINT auto :", { attendu, regions: regions.length, retenues, proches });
+
+      if(!retenues.length){
+        aLaMain(resume + " Les trois plus proches mesurent "
+          + proches.map(dims).join(" px, ") + " px.");
+        return;
+      }
+
+      const cible = retenues[0];
+      const amorce = { x: Math.round(cible.cx), y: Math.round(cible.cy),
+                       bw: cible.bw, bh: cible.bh, aire: cible.aire };
+      // Le centre de la boîte peut tomber sur un trait ou dans un bâtiment : on
+      // reprend alors un pixel appartenant réellement à la région retenue.
+      if(etiquette[amorce.y * W + amorce.x] !== cible.id){
+        let trouve = false;
+        for(let y = cible.y0; y <= cible.y1 && !trouve; y++){
+          for(let x = cible.x0; x <= cible.x1; x++){
+            if(etiquette[y * W + x] === cible.id){ amorce.x = x; amorce.y = y; trouve = true; break; }
           }
         }
-        if(candidats.length) break;      // on s'en tient au numéro le plus central
-      }
-      if(attendu){
-        candidats.forEach((c) => {
-          c.ecart = Math.abs(c.bw - attendu.bw) / attendu.bw
-                  + Math.abs(c.bh - attendu.bh) / attendu.bh;
-        });
-        candidats.sort((a, b) => a.ecart - b.ecart);
-      }else{
-        candidats.sort((a, b) => a.boite - b.boite);
-      }
-      console.log("PAINT auto :", { numero: num, numerosLus: mots.length,
-        occurrences: cibles.length, attendu, candidats: candidats.slice(0, 5) });
-      const amorce = candidats[0] || null;
-      if(!amorce){
-        aLaMain("Aucune région exploitable n'a été isolée autour du numéro " + num + ".");
-        return;
       }
 
       floodFill(amorce.x, amorce.y);
@@ -1725,13 +1674,11 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
         aLaMain("Colorisation automatique écartée : la zone atteinte couvrait "
           + Math.round(part * 100) + " % du plan — c'est la voirie, pas la parcelle.");
       }else{
-        const detail = attendu
-          ? " Boîte " + amorce.bw + "×" + amorce.bh + " px pour "
-            + Math.round(attendu.bw) + "×" + Math.round(attendu.bh) + " attendus, soit "
-            + Math.round(100 * amorce.ecart) + " % d'écart."
-          : " Aire " + amorce.aire.toLocaleString("fr-FR") + " px, compacité "
-            + Math.round(amorce.compacite * 100) + " %.";
-        setStatus("Parcelle " + num + " coloriée automatiquement." + detail, "ok");
+        setStatus("Parcelle coloriée automatiquement — boîte retenue " + amorce.bw + "×"
+          + amorce.bh + " px. " + resume
+          + (retenues.length > 1 ? " Plusieurs régions étaient compatibles : la plus "
+             + "centrale a été retenue, vérifiez le résultat." : "")
+          + " Ajustez si nécessaire.", "ok");
       }
     }catch(err){
       // setStatus et NON setGenStatus : loadPDFData masque le panneau de
