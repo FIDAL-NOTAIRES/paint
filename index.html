@@ -1434,6 +1434,72 @@ function hexToRgb(h){h=h.replace("#","");if(h.length===3)h=h.split("").map(c=>c+
 function rgbToHex(r,g,b){return "#"+[r,g,b].map(v=>v.toString(16).padStart(2,"0")).join("");}
 let hintTimer;
 function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTimeout(hintTimer);hintTimer=setTimeout(()=>hintbar.classList.remove("show"),2600);}
+/* ---------- Préremplissage par URL — chaînage REDPAR → PAINT (et MARTEAU) ----------
+   PAINT reste AUTONOME : ce bloc n'ajoute aucune dépendance à un autre outil, il
+   expose seulement un contrat d'URL générique, que REDPAR utilise aujourd'hui et
+   que MARTEAU utilisera demain.
+
+     ?commune=59009&nomCommune=VILLENEUVE+D+ASCQ&prefixe=000&section=LE
+     &parcelle=0030&echelle=1000&format=A4|portrait&auto=1
+
+   Sans auto=1 : les champs de la méthode ② sont préremplis, l'utilisateur garde
+   la main sur l'échelle, le format et le moment de la génération.
+   Avec auto=1 : l'extrait est généré, puis la parcelle coloriée.
+
+   POURQUOI PASSER PAR L'OCR ET NON PAR LE CENTRE DE L'IMAGE
+   Une première version amorçait le remplissage au centre de l'image, en partant
+   de l'idée que l'extrait est centré sur la parcelle demandée. C'est vrai de la
+   CARTE, pas de la PAGE : un A4 porte un en-tête et un cartouche, si bien que le
+   milieu de l'image tombe à côté de la parcelle, parfois sur un trait — et le
+   remplissage ne prend pas. On réutilise donc « Rechercher par numéro », déjà
+   éprouvé : OCR multi-angle, puis amorce sur un pixel blanc voisin du chiffre.
+   Le numéro s'affiche sur le plan SANS zéros de tête (« 30 », pas « 0030 ») :
+   c'est PAINT qui connaît cette convention d'affichage, donc c'est ici qu'on la
+   traite, pas dans l'outil appelant.
+*/
+(function preremplirDepuisURL(){
+  const p = new URLSearchParams(location.search);
+  const commune  = (p.get("commune")  || "").trim();
+  const section  = (p.get("section")  || "").trim().toUpperCase();
+  const parcelle = (p.get("parcelle") || "").trim();
+  if(!commune || !section || !parcelle) return;
+
+  const setVal = (id, v) => { const el = document.getElementById(id); if(el && v) el.value = v; };
+
+  // Renseigner la commune comme le ferait un clic dans l'autocomplétion ②.
+  selectedCommune2 = { code: commune, nom: p.get("nomCommune") || commune };
+  const nomEl = c2Nom(); if(nomEl) nomEl.value = selectedCommune2.nom;
+  ac2Mark("ok", "✓ " + selectedCommune2.nom + " — INSEE " + commune);
+
+  setVal("g_prefixe",  p.get("prefixe") || "");
+  setVal("g_section",  section);
+  setVal("g_parcelle", parcelle);
+  setVal("g_echelle",  p.get("echelle"));
+  setVal("g_format",   p.get("format"));
+
+  // Ouvrir le panneau de génération, comme le bouton « Générer ».
+  drop.classList.remove("hide");
+
+  const auto = p.get("auto") === "1";
+  setGenStatus("Références reçues : " + selectedCommune2.nom + " — section " + section
+    + " nº " + parcelle + (auto ? " — génération puis colorisation en cours…" : "."), "");
+  if(!auto) return;
+
+  (async () => {
+    try{
+      await generateExtrait("ref");
+      if(!S.pdf) return;            // génération échouée : le message est déjà affiché
+      const numEl = document.getElementById("numinput");
+      if(!numEl) return;
+      numEl.value = String(parcelle).replace(/^0+/, "") || parcelle;
+      await searchAndFill();        // gère l'OCR, l'annulation, la légende et les échecs
+    }catch(err){
+      setGenStatus("Colorisation automatique impossible : " + ((err && err.message) || err)
+        + " — le plan reste utilisable à la main.", "err");
+    }
+  })();
+})();
+
 </script>
 </body>
 </html>
