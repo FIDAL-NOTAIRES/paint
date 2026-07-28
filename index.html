@@ -1604,7 +1604,9 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
       // Lit les valeurs de coordonnées portées le long du cadre et en déduit la
       // correspondance pixels ↔ mètres projetés. Mesuré sur Saint-Omer :
       // corrélation 1,0000 sur les deux axes, écart de 0,06 % à la théorie.
-      const georeferencer = async () => {
+      // attendus : { X, Y } transmis par l'appelant, sert à classer les groupes
+      // d'étiquettes par ordre de grandeur quand la corrélation ne suffit pas.
+      const georeferencer = async (attendus) => {
         const cle = "geo|" + S.page + "|" + S.rotation;
         if(!S.ocrCache || S.ocrCache.key !== cle) S.ocrCache = { key: cle, base: null, words: [], done: new Set() };
         if(!S.ocrCache.base) S.ocrCache.base = await renderOcrBase();
@@ -1640,101 +1642,83 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
           return { a, b: mv - a * mu, n, r: num / Math.sqrt(du * dv),
                    min: Math.min(...v), max: Math.max(...v) };
         };
-        let fx = null, fy = null;
+        // AFFECTATION DES GROUPES AUX AXES.
+        // Par corrélation quand le groupe porte au moins deux valeurs distinctes.
+        // Sinon — cas fréquent, quand le plan ne traverse qu'une seule ligne de
+        // coordonnée sur un axe — par proximité aux valeurs attendues, que
+        // l'appelant transmet avec le point projeté.
+        let fx = null, fy = null, ancreX = null, ancreY = null;
         groupes.forEach((g) => {
-          const sx = stats(g, "x"), sy = stats(g, "y");
-          if(!sx || !sy) return;
-          if(Math.abs(sx.r) >= Math.abs(sy.r)){ if(!fx || Math.abs(sx.r) > Math.abs(fx.r)) fx = sx; }
-          else { if(!fy || Math.abs(sy.r) > Math.abs(fy.r)) fy = sy; }
+          const distinctes = new Set(g.map((e) => e.v)).size;
+          if(distinctes >= 2){
+            const sx = stats(g, "x"), sy = stats(g, "y");
+            if(sx && sy && Math.abs(sx.r) >= Math.abs(sy.r)){
+              if(!fx || Math.abs(sx.r) > Math.abs(fx.r)) fx = sx;
+            }else if(sy){
+              if(!fy || Math.abs(sy.r) > Math.abs(fy.r)) fy = sy;
+            }
+          }else if(attendus){
+            // Une seule valeur : elle ne donne pas de pente, mais elle CALE un axe.
+            const v = g[0].v;
+            const dX = Math.abs(v - attendus.X), dY = Math.abs(v - attendus.Y);
+            const pos = dX <= dY
+              ? { v, u: g.reduce((t, e) => t + e.cx, 0) / g.length, axe: "x" }
+              : { v, u: g.reduce((t, e) => t + e.cy, 0) / g.length, axe: "y" };
+            if(pos.axe === "x" && !ancreX) ancreX = pos;
+            if(pos.axe === "y" && !ancreY) ancreY = pos;
+          }
         });
-        return { etiquettes, groupes, rejetes, fx, fy };
+
+        // L'ÉCHELLE EST ISOTROPE : la projection est conforme et le plan imprimé à
+        // échelle uniforme. Mesuré sur Saint-Omer : 0,123457 m/px sur les deux
+        // axes. Une seule étiquette suffit donc à caler un axe dès que l'autre
+        // fournit l'échelle. Les sens sont connus : les abscisses croissent avec
+        // les pixels vers la droite, les ordonnées décroissent vers le bas.
+        const echelle = (fx && Math.abs(fx.a)) || (fy && Math.abs(fy.a)) || null;
+        if(!fx && ancreX && echelle){
+          fx = { a: echelle, b: ancreX.v - echelle * ancreX.u, n: 1, r: 1,
+                 min: ancreX.v, max: ancreX.v, cale: true };
+        }
+        if(!fy && ancreY && echelle){
+          fy = { a: -echelle, b: ancreY.v + echelle * ancreY.u, n: 1, r: -1,
+                 min: ancreY.v, max: ancreY.v, cale: true };
+        }
+        return { etiquettes, groupes, rejetes, fx, fy, echelle };
       };
 
       if(p.get("diaggeo") === "1"){
         try{
           spin.classList.add("show"); spinmsg.textContent = "Lecture des coordonnées en marge…";
-          const cle = "diag|" + S.page + "|" + S.rotation;
-          if(!S.ocrCache || S.ocrCache.key !== cle) S.ocrCache = { key: cle, base: null, words: [], done: new Set() };
-          if(!S.ocrCache.base) S.ocrCache.base = await renderOcrBase();
-          for(const deg of [0, 90, -90]){
-            if(S.ocrCache.done.has(deg)) continue;
-            spinmsg.textContent = "Lecture des coordonnées" + (deg ? " (étiquettes à " + deg + "°)" : "") + "…";
-            S.ocrCache.words.push(...await ocrAngle(S.ocrCache.base, deg));
-            S.ocrCache.done.add(deg);
-          }
+          const mp = (p.get("pt") || "").match(/^(-?[0-9.]+),(-?[0-9.]+)$/);
+          const g = await georeferencer(mp ? { X: parseFloat(mp[1]), Y: parseFloat(mp[2]) } : null);
           spin.classList.remove("show");
 
-          // Étiquettes candidates : entiers de 6 à 8 chiffres.
-          const etiquettes = S.ocrCache.words
-            .map((w) => ({ v: parseInt(String(w.text).replace(/[^0-9]/g, ""), 10),
-                           cx: w.cx, cy: w.cy, brut: w.text }))
-            .filter((e) => Number.isFinite(e.v) && e.v >= 100000 && e.v <= 99999999);
-
-          // CLASSEMENT PAR VALEUR, ET NON PAR POSITION.
-          // Le classement par position échouait : les ordonnées de la marge basse
-          // se rangeaient parmi les abscisses et brouillaient la régression.
-          // On regroupe donc par ordre de grandeur — en projection conique
-          // conforme, les abscisses tournent autour de 1,6 million et les
-          // ordonnées autour de 9,2 millions — puis l'on retient les groupes
-          // comptant au moins deux étiquettes. Cela élimine du même coup les
-          // parasites isolés : le « 171000 » qui est le texte « 1/1000 » du
-          // cartouche, et le « 28072026 » qui est la date d'édition.
-          const paquets = new Map();
-          etiquettes.forEach((e) => {
-            const cle = Math.floor(e.v / 100000);
-            if(!paquets.has(cle)) paquets.set(cle, []);
-            paquets.get(cle).push(e);
-          });
-          const groupes = [...paquets.values()].filter((g) => g.length >= 2);
-          const rejetes = etiquettes.filter((e) => (paquets.get(Math.floor(e.v / 100000)) || []).length < 2);
-
-          // Pour chaque groupe, l'axe est celui avec lequel les valeurs varient.
-          const correl = (g, axe) => {
-            const u = g.map((e) => (axe === "x" ? e.cx : e.cy)), v = g.map((e) => e.v);
-            const n = g.length, mu = u.reduce((a, b) => a + b, 0) / n, mv = v.reduce((a, b) => a + b, 0) / n;
-            let num = 0, du = 0, dv = 0;
-            for(let i = 0; i < n; i++){
-              num += (u[i] - mu) * (v[i] - mv); du += (u[i] - mu) ** 2; dv += (v[i] - mv) ** 2;
-            }
-            return (du === 0 || dv === 0) ? 0 : num / Math.sqrt(du * dv);
-          };
-          const ajuste = (g, axe) => {
-            const u = g.map((e) => (axe === "x" ? e.cx : e.cy)), v = g.map((e) => e.v);
-            const n = g.length, mu = u.reduce((a, b) => a + b, 0) / n, mv = v.reduce((a, b) => a + b, 0) / n;
-            let num = 0, den = 0;
-            for(let i = 0; i < n; i++){ num += (u[i] - mu) * (v[i] - mv); den += (u[i] - mu) ** 2; }
-            return den === 0 ? null : { a: num / den, b: mv - (num / den) * mu, n, r: correl(g, axe) };
-          };
-          let fx = null, fy = null;
-          groupes.forEach((g) => {
-            const rx = Math.abs(correl(g, "x")), ry = Math.abs(correl(g, "y"));
-            const f = ajuste(g, rx >= ry ? "x" : "y");
-            if(!f) return;
-            if(rx >= ry){ if(!fx || Math.abs(f.r) > Math.abs(fx.r)) fx = f; }
-            else { if(!fy || Math.abs(f.r) > Math.abs(fy.r)) fy = f; }
-          });
-
-
-          const theo = largeursFeuille[fmt] * ech / W;   // mètres par pixel
+          const theo = largeursFeuille[fmt] * ech / W;   // mètres par pixel attendus
           const l = [];
           l.push("Échelle théorique : " + (1 / theo).toFixed(2) + " px/m ("
-            + theo.toFixed(4) + " m/px), rendu de " + W + "×" + H + " px, "
-            + fmt + " à 1/" + ech + ".");
-          l.push(etiquettes.length + " étiquette(s) numérique(s) lue(s), "
-            + groupes.length + " groupe(s) cohérent(s), " + rejetes.length + " parasite(s) écarté(s)"
-            + (rejetes.length ? " (" + rejetes.map((e) => e.v).join(", ") + ")" : "") + ".");
-          if(fx) l.push("Abscisses : " + Math.abs(fx.a).toFixed(6) + " m/px sur " + fx.n
-            + " points (corrélation " + fx.r.toFixed(4) + "), écart à la théorie "
-            + (100 * Math.abs(Math.abs(fx.a) - theo) / theo).toFixed(2) + " %.");
-          else l.push("Abscisses : aucun groupe exploitable.");
-          if(fy) l.push("Ordonnées : " + Math.abs(fy.a).toFixed(6) + " m/px sur " + fy.n
-            + " points (corrélation " + fy.r.toFixed(4) + "), écart à la théorie "
-            + (100 * Math.abs(Math.abs(fy.a) - theo) / theo).toFixed(2) + " %.");
-          else l.push("Ordonnées : aucun groupe exploitable.");
-          l.push("Valeurs lues : " + etiquettes.slice(0, 12)
+            + theo.toFixed(4) + " m/px), rendu de " + W + "×" + H + " px, " + fmt
+            + " à 1/" + ech + ".");
+          l.push(g.etiquettes.length + " étiquette(s) numérique(s) lue(s), "
+            + g.groupes.length + " groupe(s) cohérent(s), " + g.rejetes.length
+            + " parasite(s) écarté(s)"
+            + (g.rejetes.length ? " (" + g.rejetes.map((e) => e.v).join(", ") + ")" : "") + ".");
+          const rendu = (f, nom) => f
+            ? nom + " : " + Math.abs(f.a).toFixed(6) + " m/px sur " + f.n + " point(s)"
+              + (f.cale ? ", axe CALÉ sur une étiquette unique (échelle reprise de l'autre axe)"
+                        : " (corrélation " + f.r.toFixed(4) + ")")
+              + ", écart à la théorie " + (100 * Math.abs(Math.abs(f.a) - theo) / theo).toFixed(2) + " %."
+            : nom + " : aucun groupe exploitable.";
+          l.push(rendu(g.fx, "Abscisses"));
+          l.push(rendu(g.fy, "Ordonnées"));
+          if(g.fx && g.fy && mp){
+            const px = Math.round((parseFloat(mp[1]) - g.fx.b) / g.fx.a);
+            const py = Math.round((parseFloat(mp[2]) - g.fy.b) / g.fy.a);
+            l.push("Point projeté → pixel (" + px + ", " + py + ").");
+          }
+          l.push("Valeurs lues : " + g.etiquettes.slice(0, 12)
             .map((e) => e.v + "@(" + Math.round(e.cx) + "," + Math.round(e.cy) + ")").join(" · "));
-          console.log("PAINT diag géo :", { theo, fx, fy, etiquettes });
-          setStatus(l.join(" | "), fx && fy ? "ok" : "warn");
+          console.log("PAINT diag géo :", { theo, ...g });
+          setStatus(l.join(" | "), g.fx && g.fy ? "ok" : "warn");
           S.tool = "fill";
           return;
         }catch(e){
@@ -1762,18 +1746,22 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
       if(mPt){
         try{
           spin.classList.add("show"); spinmsg.textContent = "Lecture des coordonnées en marge…";
-          const g = await georeferencer();
-          spin.classList.remove("show");
           const X = parseFloat(mPt[1]), Y = parseFloat(mPt[2]);
-          if(g.fx && g.fy && Math.abs(g.fx.r) > 0.99 && Math.abs(g.fy.r) > 0.99){
+          const g = await georeferencer({ X, Y });
+          spin.classList.remove("show");
+          if(g.fx && g.fy && (g.fx.cale || Math.abs(g.fx.r) > 0.99)
+             && (g.fy.cale || Math.abs(g.fy.r) > 0.99)){
             const px = Math.round((X - g.fx.b) / g.fx.a);
             const py = Math.round((Y - g.fy.b) / g.fy.a);
             // Contrôles de vraisemblance : le point doit tomber dans le rendu, et
             // ses coordonnées dans la plage des étiquettes lues. Un mauvais choix
             // de zone de projection, ou l'outre-mer, échouent ici — et l'on
             // retombe alors sur la détection par taille.
-            const dansPlage = X >= g.fx.min - 500 && X <= g.fx.max + 500
-                           && Y >= g.fy.min - 500 && Y <= g.fy.max + 500;
+            // Marge élargie quand un axe est calé sur une étiquette unique : la
+            // plage lue se réduit alors à un point, et 500 m ne suffiraient pas.
+            const margeX = g.fx.cale ? 400 : 500, margeY = g.fy.cale ? 400 : 500;
+            const dansPlage = X >= g.fx.min - margeX && X <= g.fx.max + margeX
+                           && Y >= g.fy.min - margeY && Y <= g.fy.max + margeY;
             const dansRendu = px >= 0 && py >= 0 && px < W && py < H;
             if(!dansPlage) replPourquoi = "le point projeté (" + Math.round(X) + ", "
               + Math.round(Y) + ") tombe hors de la plage des étiquettes lues ["
@@ -1811,9 +1799,13 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
                 })();
                 const part0 = peints0 / (W * H);
                 const info = "Géoréférencement lu sur le plan : " + Math.abs(g.fx.a).toFixed(6)
-                  + " m/px en X et " + Math.abs(g.fy.a).toFixed(6) + " en Y, corrélations "
-                  + g.fx.r.toFixed(4) + " et " + g.fy.r.toFixed(4) + ". Point projeté ("
-                  + Math.round(X) + ", " + Math.round(Y) + ") → pixel (" + ax + ", " + ay + ").";
+                  + " m/px en X" + (g.fx.cale ? " (axe calé sur une étiquette unique, échelle "
+                    + "reprise de l'autre axe)" : "")
+                  + " et " + Math.abs(g.fy.a).toFixed(6) + " en Y"
+                  + (g.fy.cale ? " (axe calé sur une étiquette unique)" : "")
+                  + ", corrélations " + g.fx.r.toFixed(4) + " et " + g.fy.r.toFixed(4)
+                  + ". Point projeté (" + Math.round(X) + ", " + Math.round(Y)
+                  + ") → pixel (" + ax + ", " + ay + ").";
                 if(part0 > 0.30){
                   oCtx.clearRect(0, 0, W, H); S.legendLabels = {}; rebuildLegend();
                   S.tool = "fill";
