@@ -1643,11 +1643,84 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
         return;
       }
 
-      const cible = retenues[0];
+      // ================== VÉRIFICATION PAR LE NUMÉRO ========================
+      // Deux signaux INDÉPENDANTS doivent s'accorder avant de colorier :
+      //   — la TAILLE ATTENDUE trouve la région (signal géométrique) ;
+      //   — le NUMÉRO imprimé la confirme (signal textuel).
+      // L'OCR revient donc, mais en VÉRIFICATION et non en détection : il n'a
+      // plus à choisir, seulement à valider, ce qui le débarrasse de ses deux
+      // défauts d'origine (ambiguïté des numéros courts, dépendance à findSeed).
+      // Demandé par JFD après trop d'erreurs de colorisation : on préfère refuser
+      // que colorier faux, sur une pièce de dossier.
+      const num = String(parcelle).replace(/^0+/, "") || parcelle;
+      const numEl = document.getElementById("numinput");
+      if(numEl) numEl.value = num;
+
+      let numerosLus = 0, occurrences = [];
+      try{
+        const cle = S.page + "|" + S.rotation;
+        if(!S.ocrCache || S.ocrCache.key !== cle) S.ocrCache = { key: cle, base: null, words: [], done: new Set() };
+        spin.classList.add("show"); spinmsg.textContent = "Vérification du numéro…";
+        if(!S.ocrCache.base) S.ocrCache.base = await renderOcrBase();
+        for(const deg of OCR_ANGLES){
+          if(!S.ocrCache.done.has(deg)){
+            spinmsg.textContent = deg === 0 ? "Vérification du numéro…"
+              : "Numéro non lu à l'endroit, essai à " + deg + "°…";
+            S.ocrCache.words.push(...await ocrAngle(S.ocrCache.base, deg));
+            S.ocrCache.done.add(deg);
+          }
+          if(S.ocrCache.words.some((w) => w.text === num)) break;
+        }
+        numerosLus = S.ocrCache.words.length;
+        occurrences = S.ocrCache.words.filter((w) => w.text === num);
+      }catch(e){
+        console.warn("PAINT : OCR de vérification indisponible", e);
+      }finally{ spin.classList.remove("show"); }
+
+      // Une occurrence tombe-t-elle dans la région ? Marge de 4 px : le chiffre
+      // peut mordre sur le trait de limite.
+      const MARGE = 4;
+      const contientNumero = (g) => occurrences.some((w) =>
+        w.cx >= g.x0 - MARGE && w.cx <= g.x1 + MARGE
+        && w.cy >= g.y0 - MARGE && w.cy <= g.y1 + MARGE);
+
+      const confirmees = retenues.filter(contientNumero);
+      const diag = resume + " Numéros lus : " + numerosLus + ", occurrences de « "
+        + num + " » : " + occurrences.length + ".";
+
+      // ---- Échelle de sécurité ----
+      // On colorie si le numéro confirme. À défaut, seulement si la géométrie est
+      // sans ambiguïté ET que l'OCR n'a rien lu du tout. Dans tous les autres
+      // cas, on refuse : mieux vaut aucune couleur qu'une couleur fausse.
+      let cible = null, confiance = "";
+      if(confirmees.length === 1){
+        cible = confirmees[0];
+        confiance = " Confirmée par le numéro lu sur le plan.";
+      }else if(confirmees.length > 1){
+        cible = confirmees.sort((a, b) => dist(a) - dist(b))[0];
+        confiance = " " + confirmees.length + " régions portaient le numéro : la plus "
+          + "centrale a été retenue, vérifiez le résultat.";
+      }else if(occurrences.length > 0){
+        aLaMain("Colorisation refusée par sécurité : le numéro " + num + " a bien été lu "
+          + "sur le plan, mais hors de la région dont les dimensions correspondaient. "
+          + "Les deux indices se contredisent. " + diag);
+        return;
+      }else if(retenues.length === 1 && numerosLus === 0){
+        cible = retenues[0];
+        confiance = " ⚠ NON CONFIRMÉE : aucun numéro n'a pu être lu sur ce plan, "
+          + "la sélection repose sur les seules dimensions. À vérifier.";
+      }else{
+        aLaMain("Colorisation refusée par sécurité : le numéro " + num + " n'a pas été "
+          + "retrouvé sur le plan et " + (retenues.length > 1
+            ? retenues.length + " régions avaient des dimensions compatibles"
+            : "aucune confirmation n'est possible") + ". " + diag);
+        return;
+      }
+
       const amorce = { x: Math.round(cible.cx), y: Math.round(cible.cy),
                        bw: cible.bw, bh: cible.bh, aire: cible.aire };
       // Le centre de la boîte peut tomber sur un trait ou dans un bâtiment : on
-      // reprend alors un pixel appartenant réellement à la région retenue.
+      // reprend alors un pixel appartenant réellement à la région étiquetée.
       if(etiquette[amorce.y * W + amorce.x] !== cible.id){
         let trouve = false;
         for(let y = cible.y0; y <= cible.y1 && !trouve; y++){
@@ -1674,11 +1747,8 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
         aLaMain("Colorisation automatique écartée : la zone atteinte couvrait "
           + Math.round(part * 100) + " % du plan — c'est la voirie, pas la parcelle.");
       }else{
-        setStatus("Parcelle coloriée automatiquement — boîte retenue " + amorce.bw + "×"
-          + amorce.bh + " px. " + resume
-          + (retenues.length > 1 ? " Plusieurs régions étaient compatibles : la plus "
-             + "centrale a été retenue, vérifiez le résultat." : "")
-          + " Ajustez si nécessaire.", "ok");
+        setStatus("Parcelle " + num + " coloriée — boîte " + amorce.bw + "×" + amorce.bh
+          + " px." + confiance + " " + diag, confiance.indexOf("NON CONFIRMÉE") >= 0 ? "warn" : "ok");
       }
     }catch(err){
       // setStatus et NON setGenStatus : loadPDFData masque le panneau de
