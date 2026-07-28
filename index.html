@@ -1222,13 +1222,40 @@ async function trouverLigneContenant(motif){
   const re = new RegExp(motif, "i");
   const cible = lignes.find(c => re.test(c[11] || ""));
   if(!cible) return null;
-  const memeLigne = lignes.filter(c => c[2] === cible[2] && c[3] === cible[3] && c[4] === cible[4]);
+  // Même bloc, paragraphe et ligne.
+  const memeLigne = lignes
+    .filter(c => c[2] === cible[2] && c[3] === cible[3] && c[4] === cible[4])
+    .sort((a, b) => (+a[6]) - (+b[6]));
+  // NE GARDER QUE LES MOTS CONTIGUS au mot trouvé.
+  // Tesseract regroupe dans une même « ligne » des mots séparés horizontalement
+  // dès qu'ils partagent la même base : sur un extrait cadastral, le titre et le
+  // texte du cartouche de DROITE sont à la même hauteur, et l'étendue calculée
+  // englobait les deux — 636 à 1324 px au lieu de 602 à 1051, soit un axe faux de
+  // 155 px, et un balayage des bords qui démarrait dans le cartouche voisin.
+  // On s'arrête donc dès qu'un écart franc apparaît : plus de trois fois la
+  // hauteur des caractères sépare deux colonnes, jamais deux mots d'une phrase.
+  const iCible = memeLigne.findIndex(c => c === cible);
+  const hMot = Math.max(6, +cible[9]);
+  const ecartMax = hMot * 3;
+  let iG = iCible, iD = iCible;
+  while(iG > 0){
+    const prec = memeLigne[iG - 1];
+    if((+memeLigne[iG][6]) - ((+prec[6]) + (+prec[8])) > ecartMax) break;
+    iG--;
+  }
+  while(iD < memeLigne.length - 1){
+    const suiv = memeLigne[iD + 1];
+    if((+suiv[6]) - ((+memeLigne[iD][6]) + (+memeLigne[iD][8])) > ecartMax) break;
+    iD++;
+  }
+  const groupe = memeLigne.slice(iG, iD + 1);
   return {
-    x0: Math.min(...memeLigne.map(c => +c[6])),
-    x1: Math.max(...memeLigne.map(c => +c[6] + +c[8])),
-    y0: Math.min(...memeLigne.map(c => +c[7])),
-    y1: Math.max(...memeLigne.map(c => +c[7] + +c[9])),
-    mots: memeLigne.length,
+    x0: Math.min(...groupe.map(c => +c[6])),
+    x1: Math.max(...groupe.map(c => +c[6] + +c[8])),
+    y0: Math.min(...groupe.map(c => +c[7])),
+    y1: Math.max(...groupe.map(c => +c[7] + +c[9])),
+    mots: groupe.length,
+    ecartes: memeLigne.length - groupe.length,
   };
 }
 
@@ -1761,9 +1788,11 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
           const plausible = bordG !== null && bordD !== null
             && bordD - bordG > taille * 6 && bordD - bordG < S.W * 0.55;
           if(plausible){
-            annotMethode = "centré entre les bords du cartouche (x=" + bordG + " et x="
-              + bordD + ", largeur disponible " + (bordD - bordG) + " px, TSV "
-              + boite.mots + " mots)";
+            annotMethode = "centré entre les bords de la zone du titre (x=" + bordG
+              + " et x=" + bordD + ", largeur disponible " + (bordD - bordG) + " px, TSV "
+              + boite.mots + " mots contigus"
+              + (boite.ecartes ? ", " + boite.ecartes + " mot(s) d'une autre colonne écarté(s)" : "")
+              + ")";
             return { cx: (bordG + bordD) / 2, y: boite.y1 + taille * 1.6,
                      bordG, bordD };
           }
