@@ -1179,11 +1179,14 @@ async function findCadastreAnchor(){
 // dernier mot de « EXTRAIT DU PLAN CADASTRAL ». Et regrouper les mots par
 // hauteur ne suffisait pas : l'OCR ne lit pas toujours les trois autres, trop
 // petits, si bien qu'il ne restait qu'un mot et donc aucune correction.
-let ligneCache = null;
-async function trouverLigneContenant(motif){
-  const key = S.page + "|" + S.rotation + "|" + motif;
-  if(ligneCache && ligneCache.key === key) return ligneCache.box;
-  let box = null;
+// Reconnaissance du bandeau supérieur, MISE EN CACHE UNE FOIS. Plusieurs
+// recherches — « CADASTRAL » pour l'axe, « Section » pour la hauteur — ne coûtent
+// ainsi qu'une seule passe.
+let tsvCache = null;
+async function lignesTSV(){
+  const key = S.page + "|" + S.rotation;
+  if(tsvCache && tsvCache.key === key) return tsvCache.lignes;
+  let lignes = [];
   try{
     if(typeof Tesseract === "undefined") throw new Error("ocr");
     if(!anchorWorker){
@@ -1192,35 +1195,60 @@ async function trouverLigneContenant(motif){
           "Localisation du titre… " + Math.round(m.progress * 100) + "%"; }
       });
     }
-    // ON NE RECONNAÎT QUE LE BANDEAU SUPÉRIEUR. Faire tourner Tesseract sur les
-    // 1700 × 2406 pixels de la page entière prend des dizaines de secondes, en
-    // plus des passes déjà faites pour les coordonnées : l'attente n'aboutissait
-    // pas et l'annotation ne venait jamais. Le titre se trouve dans le tiers
-    // haut, en portrait comme en paysage.
+    // Seul le tiers haut : la page entière prend des dizaines de secondes, et le
+    // titre comme le cartouche « Section » s'y trouvent, en portrait comme en
+    // paysage. Découpe depuis l'origine, donc coordonnées identiques à la page.
     const hBandeau = Math.round(S.H * 0.30);
     const vignette = document.createElement("canvas");
     vignette.width = S.W; vignette.height = hBandeau;
     vignette.getContext("2d").drawImage(base, 0, 0, S.W, hBandeau, 0, 0, S.W, hBandeau);
-    // Délai maximal : mieux vaut un repli qu'une attente sans fin.
     const reco = anchorWorker.recognize(vignette, {}, { tsv: true });
     const delai = new Promise((_, rej) => setTimeout(() => rej(new Error("délai dépassé")), 20000));
     const { data } = await Promise.race([reco, delai]);
-    const lignes = (data.tsv || "").split("\n").map(l => l.split("\t"))
+    lignes = (data.tsv || "").split("\n").map(l => l.split("\t"))
       .filter(c => c.length >= 12 && c[0] === "5");
-    const re = new RegExp(motif, "i");
-    const cible = lignes.find(c => re.test(c[11] || ""));
-    if(cible){
-      // Mêmes bloc, paragraphe et ligne : c'est la même ligne de texte.
-      const memeLigne = lignes.filter(c => c[2] === cible[2] && c[3] === cible[3] && c[4] === cible[4]);
-      const x0 = Math.min(...memeLigne.map(c => +c[6]));
-      const x1 = Math.max(...memeLigne.map(c => +c[6] + +c[8]));
-      const y0 = Math.min(...memeLigne.map(c => +c[7]));
-      const y1 = Math.max(...memeLigne.map(c => +c[7] + +c[9]));
-      box = { x0, y0, x1, y1, mots: memeLigne.length };   // coordonnées du bandeau = celles de la page
+  }catch(e){ lignes = []; }
+  tsvCache = { key, lignes };
+  return lignes;
+}
+
+// Étendue réelle de la LIGNE contenant un motif. Le mode TSV fournit les vraies
+// boîtes englobantes — left, top, width, height — et le numéro de ligne de chaque
+// mot, ce qui permet de reconstituer une ligne entière. La liste de mots employée
+// pour les coordonnées, elle, ne donne que des centres.
+async function trouverLigneContenant(motif){
+  const lignes = await lignesTSV();
+  if(!lignes.length) return null;
+  const re = new RegExp(motif, "i");
+  const cible = lignes.find(c => re.test(c[11] || ""));
+  if(!cible) return null;
+  const memeLigne = lignes.filter(c => c[2] === cible[2] && c[3] === cible[3] && c[4] === cible[4]);
+  return {
+    x0: Math.min(...memeLigne.map(c => +c[6])),
+    x1: Math.max(...memeLigne.map(c => +c[6] + +c[8])),
+    y0: Math.min(...memeLigne.map(c => +c[7])),
+    y1: Math.max(...memeLigne.map(c => +c[7] + +c[9])),
+    mots: memeLigne.length,
+  };
+}
+
+// Remonte depuis une ligne de texte jusqu'au FILET qui la surmonte : une rangée
+// de pixels sombres traversant l'essentiel de la largeur indiquée. Un trait est un
+// repère au pixel, là où le haut d'un texte dépend de la police et du rendu.
+function filetAuDessus(x0, x1, yTexte, portee){
+  try{
+    const larg = Math.max(8, Math.round(x1 - x0));
+    const haut = Math.max(4, Math.round(portee));
+    const yHaut = Math.max(0, Math.round(yTexte) - haut);
+    const d = baseCtx.getImageData(Math.max(0, Math.round(x0)), yHaut, larg, haut).data;
+    const sombre = (i) => (0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2]) < S.threshold;
+    for(let y = haut - 1; y >= 0; y--){        // du texte vers le haut
+      let n = 0;
+      for(let x = 0; x < larg; x++) if(sombre(y * larg + x)) n++;
+      if(n >= 0.6 * larg) return yHaut + y;
     }
-  }catch(e){ box = null; }
-  ligneCache = { key, box };
-  return box;
+  }catch(e){ /* hors canvas : on renonce silencieusement */ }
+  return null;
 }
 
 function buildExportCanvas(anchor){
@@ -1719,6 +1747,20 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
         if(!rangs.length) return 0;
         const taille = Math.max(13, Math.round(S.W / 95));
         const { cx, y } = await axeDuTitre(taille);
+        // HAUTEUR : alignée sur le filet supérieur du cartouche « Section /
+        // Feuille », à la demande de JFD. C'est un repère franc, mesurable au
+        // pixel, alors que le bas du titre dépend de la police. On repère le
+        // texte « Section » par TSV, puis le trait qui le surmonte.
+        let yHaut = y;
+        const boiteSection = await trouverLigneContenant("Section");
+        if(boiteSection){
+          const filet = filetAuDessus(boiteSection.x0 - taille, boiteSection.x1 + taille * 6,
+                                      boiteSection.y0, taille * 3);
+          yHaut = filet !== null ? filet + 1 : boiteSection.y0 - Math.round(taille * 0.5);
+          annotMethode += filet !== null
+            ? ", haut aligné sur le filet du cartouche (y=" + filet + ")"
+            : ", haut aligné sur le texte « Section » (filet non trouvé)";
+        }
         const entetes = ["Section", "Numéro", "Contenance cadastrale"];
         const corps = rangs.map((r) => [r[0] || "", r[1] || "", r[2] || ""]);
         const toutes = [entetes, ...corps].concat(total ? [["", "Total", total]] : []);
@@ -1734,7 +1776,7 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
         const hauteurLigne = Math.round(taille * 1.55);
         let x0 = Math.round(cx - largeurTotale / 2);
         x0 = Math.max(4, Math.min(x0, S.W - largeurTotale - 4));
-        const y0 = Math.round(y);
+        const y0 = Math.round(yHaut);
 
         // Fond blanc léger : le tableau se pose sur une zone vide du cartouche,
         // mais un fond garantit la lisibilité si la mise en page change.
