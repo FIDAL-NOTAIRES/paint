@@ -1621,7 +1621,15 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
         const taille = Math.max(14, Math.round(S.W / 85));
         let cx, cy;
         if(titre){
-          cx = titre.cx;
+          // CENTRER SUR LA LIGNE ENTIÈRE, et non sur le mot repéré. « CADASTRAL »
+          // est le DERNIER mot de « EXTRAIT DU PLAN CADASTRAL » : s'ancrer sur lui
+          // décalait les annotations d'environ un tiers de la ligne vers la
+          // droite, ce qui se voyait à l'œil. On regroupe donc tous les mots
+          // situés à la même hauteur — à une demi-hauteur de ligne près — et l'on
+          // prend le milieu de leur étendue.
+          const memeLigne = mots.filter((w) => Math.abs(w.cy - titre.cy) < taille * 0.9);
+          const xs = memeLigne.map((w) => w.cx);
+          cx = xs.length > 1 ? (Math.min(...xs) + Math.max(...xs)) / 2 : titre.cx;
           cy = titre.cy + taille * 2.2;      // sous les tirets qui suivent le titre
         }else{
           // Repli proportionnel, calé sur la mise en page du service.
