@@ -1168,6 +1168,49 @@ async function findCadastreAnchor(){
   return box;
 }
 
+// Localise la LIGNE contenant un mot donné, et renvoie son étendue réelle.
+// Calqué sur findCadastreAnchor, dont il réutilise le worker : le mode TSV de
+// Tesseract fournit les VRAIES BOÎTES ENGLOBANTES des mots — left, top, width,
+// height — et le numéro de ligne de chacun. On peut donc reconstituer l'étendue
+// exacte d'une ligne entière, là où la liste de mots employée pour les
+// coordonnées ne donne que des centres.
+// Pourquoi c'est nécessaire : s'ancrer sur le centre du mot « CADASTRAL »
+// décalait les annotations d'un tiers de ligne vers la droite, puisque c'est le
+// dernier mot de « EXTRAIT DU PLAN CADASTRAL ». Et regrouper les mots par
+// hauteur ne suffisait pas : l'OCR ne lit pas toujours les trois autres, trop
+// petits, si bien qu'il ne restait qu'un mot et donc aucune correction.
+let ligneCache = null;
+async function trouverLigneContenant(motif){
+  const key = S.page + "|" + S.rotation + "|" + motif;
+  if(ligneCache && ligneCache.key === key) return ligneCache.box;
+  let box = null;
+  try{
+    if(typeof Tesseract === "undefined") throw new Error("ocr");
+    if(!anchorWorker){
+      anchorWorker = await Tesseract.createWorker("eng", 1, {
+        logger: m => { if(m.status === "recognizing text") spinmsg.textContent =
+          "Localisation du titre… " + Math.round(m.progress * 100) + "%"; }
+      });
+    }
+    const { data } = await anchorWorker.recognize(base, {}, { tsv: true });
+    const lignes = (data.tsv || "").split("\n").map(l => l.split("\t"))
+      .filter(c => c.length >= 12 && c[0] === "5");
+    const re = new RegExp(motif, "i");
+    const cible = lignes.find(c => re.test(c[11] || ""));
+    if(cible){
+      // Mêmes bloc, paragraphe et ligne : c'est la même ligne de texte.
+      const memeLigne = lignes.filter(c => c[2] === cible[2] && c[3] === cible[3] && c[4] === cible[4]);
+      const x0 = Math.min(...memeLigne.map(c => +c[6]));
+      const x1 = Math.max(...memeLigne.map(c => +c[6] + +c[8]));
+      const y0 = Math.min(...memeLigne.map(c => +c[7]));
+      const y1 = Math.max(...memeLigne.map(c => +c[7] + +c[9]));
+      box = { x0, y0, x1, y1, mots: memeLigne.length };
+    }
+  }catch(e){ box = null; }
+  ligneCache = { key, box };
+  return box;
+}
+
 function buildExportCanvas(anchor){
   const c=document.createElement("canvas"); c.width=S.W; c.height=S.H;
   const x=c.getContext("2d");
@@ -1613,28 +1656,24 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
       // position figée, parce que la mise en page diffère entre portrait, où le
       // titre est en haut au centre, et paysage, où le cartouche occupe la
       // colonne de gauche.
-      const annoterSousLeTitre = (lignes) => {
+      const annoterSousLeTitre = async (lignes) => {
         if(!lignes.length) return 0;
-        const mots = (S.ocrCache && S.ocrCache.words) || [];
-        const titre = mots.find((w) => /^CADASTRAL/i.test(String(w.text)))
-                   || mots.find((w) => /^EXTRAIT/i.test(String(w.text)));
         const taille = Math.max(14, Math.round(S.W / 85));
         let cx, cy;
-        if(titre){
+        const boite = await trouverLigneContenant("CADASTRAL");
+        if(boite){
+          cx = (boite.x0 + boite.x1) / 2;      // milieu de la LIGNE, boîtes réelles
+          cy = boite.y1 + taille * 1.9;        // sous les tirets qui suivent le titre
+        }else{
           // CENTRER SUR LA LIGNE ENTIÈRE, et non sur le mot repéré. « CADASTRAL »
           // est le DERNIER mot de « EXTRAIT DU PLAN CADASTRAL » : s'ancrer sur lui
           // décalait les annotations d'environ un tiers de la ligne vers la
           // droite, ce qui se voyait à l'œil. On regroupe donc tous les mots
           // situés à la même hauteur — à une demi-hauteur de ligne près — et l'on
           // prend le milieu de leur étendue.
-          const memeLigne = mots.filter((w) => Math.abs(w.cy - titre.cy) < taille * 0.9);
-          const xs = memeLigne.map((w) => w.cx);
-          cx = xs.length > 1 ? (Math.min(...xs) + Math.max(...xs)) / 2 : titre.cx;
-          cy = titre.cy + taille * 2.2;      // sous les tirets qui suivent le titre
-        }else{
           // Repli proportionnel, calé sur la mise en page du service.
           const paysage = /paysage/.test(fmt);
-          cx = paysage ? S.W * 0.20 : S.W * 0.55;
+          cx = paysage ? S.W * 0.20 : S.W * 0.50;
           cy = paysage ? S.H * 0.16 : S.H * 0.115;
         }
         lignes.forEach((texte, i) => {
@@ -1885,7 +1924,7 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
                 pushUndo();
                 if(!S.legendLabels[S.color]) S.legendLabels[S.color] = "";
                 rebuildLegend();
-                const nbAnnot = annoterSousLeTitre(lignesAnnot);
+                const nbAnnot = await annoterSousLeTitre(lignesAnnot);
                 const xs = sommets.map((q) => q[0]), ys = sommets.map((q) => q[1]);
                 setStatus("Parcelle coloriée par POLYGONE PROJETÉ — contour cadastral "
                   + "projeté puis peint, sans remplissage : insensible aux traits de "
@@ -1943,7 +1982,7 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
                     + "correct — le trait de limite de la parcelle est probablement interrompu. "
                     + info + " Colorisez à la main avec l'outil « Remplir ».", "warn");
                 }else{
-                  const nb2 = annoterSousLeTitre(lignesAnnot);
+                  const nb2 = await annoterSousLeTitre(lignesAnnot);
                   setStatus("Parcelle coloriée par POSITION PROJETÉE, sans estimation ni "
                     + "reconnaissance de numéro. " + info
                     + (nb2 ? " " + nb2 + " ligne(s) d'annotation ajoutée(s)." : ""), "ok");
