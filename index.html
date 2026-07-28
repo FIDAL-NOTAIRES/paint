@@ -1740,15 +1740,27 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
         // VOIE 1 — boîtes englobantes réelles par TSV, la plus précise.
         const boite = await trouverLigneContenant("CADASTRAL");
         if(boite){
-          // MIEUX QUE LE TEXTE : les deux bords du cartouche qui contient le
-          // titre. À la demande de JFD, le tableau se centre entre eux et non sur
-          // l'étendue du texte, qui varie avec la longueur de l'intitulé. On les
-          // cherche en s'éloignant du titre, sur une hauteur de cinq interlignes.
-          const yA = boite.y0 - taille * 2, yB = boite.y1 + taille * 2;
+          // LES DEUX BORDS DE LA ZONE DU TITRE.
+          // Il n'y a PAS de cadre autour du titre : l'en-tête est fait d'un
+          // rectangle extérieur et de deux boîtes, à gauche et à droite, le titre
+          // occupant l'espace vide entre elles. La zone est donc bornée par le
+          // bord DROIT de la boîte de gauche et le bord GAUCHE de la boîte de
+          // droite.
+          // HAUTEUR D'ANALYSE = la ligne du titre SEULE. Un premier essai balayait
+          // deux interlignes de plus de chaque côté : la hauteur dépassait alors le
+          // haut de la boîte de droite, la continuité tombait sous le seuil, et le
+          // balayage filait jusqu'au cadre extérieur — 1 142 px de largeur trouvée
+          // au lieu de 240. Sur la seule hauteur du titre, un bord de boîte est
+          // continu, et l'on part de part et d'autre du texte donc on ne croise
+          // aucune lettre.
           const portee = Math.round(S.W * 0.35);
-          const bordG = filetVertical(boite.x0, -1, yA, yB, portee);
-          const bordD = filetVertical(boite.x1, +1, yA, yB, portee);
-          if(bordG !== null && bordD !== null && bordD - bordG > taille * 6){
+          const bordG = filetVertical(boite.x0, -1, boite.y0, boite.y1, portee);
+          const bordD = filetVertical(boite.x1, +1, boite.y0, boite.y1, portee);
+          // PLAUSIBILITÉ : la zone du titre ne peut pas occuper les deux tiers de
+          // la page. Au-delà, c'est le cadre extérieur qui a été trouvé.
+          const plausible = bordG !== null && bordD !== null
+            && bordD - bordG > taille * 6 && bordD - bordG < S.W * 0.55;
+          if(plausible){
             annotMethode = "centré entre les bords du cartouche (x=" + bordG + " et x="
               + bordD + ", largeur disponible " + (bordD - bordG) + " px, TSV "
               + boite.mots + " mots)";
@@ -1757,8 +1769,11 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
           }
           annotMethode = "titre localisé au pixel (TSV, " + boite.mots + " mots, étendue "
             + Math.round(boite.x0) + "–" + Math.round(boite.x1) + " px)"
-            + (bordG === null && bordD === null ? ", aucun bord de cartouche trouvé"
-               : bordG === null ? ", bord gauche non trouvé" : ", bord droit non trouvé");
+            + (bordG === null && bordD === null ? ", aucun bord trouvé"
+               : bordG === null ? ", bord gauche non trouvé"
+               : bordD === null ? ", bord droit non trouvé"
+               : ", bords trouvés à " + bordG + " et " + bordD + " mais écart de "
+                 + (bordD - bordG) + " px jugé invraisemblable");
           return { cx: (boite.x0 + boite.x1) / 2, y: boite.y1 + taille * 1.6 };
         }
         // VOIE 2 — les mots déjà lus pour les coordonnées, ligne la plus fournie.
@@ -1797,7 +1812,10 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
         let yHaut = y;
         const boiteSection = await trouverLigneContenant("Section");
         if(boiteSection){
-          const filet = filetAuDessus(boiteSection.x0 - taille, boiteSection.x1 + taille * 6,
+          // Seuil de continuité assoupli et balayage restreint à l'aplomb du texte
+          // « Section » : un filet de boîte y est continu, et l'on évite de compter
+          // sur une largeur qui dépasserait la boîte elle-même.
+          const filet = filetAuDessus(boiteSection.x0, boiteSection.x0 + taille * 8,
                                       boiteSection.y0, taille * 3);
           yHaut = filet !== null ? filet + 1 : boiteSection.y0 - Math.round(taille * 0.5);
           annotMethode += filet !== null
