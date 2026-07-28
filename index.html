@@ -2147,20 +2147,31 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
             // 42 % du plan atteint. Or on connaît le contour ET le
             // géoréférencement : peindre le polygone rend la continuité des
             // traits sans objet. C'est exact par construction.
+            // PLUSIEURS POLYGONES, séparés par une barre verticale : c'est ainsi
+            // qu'une UNITÉ FONCIÈRE est transmise — toutes ses parcelles coloriées
+            // sur un même plan, l'extrait ayant été recentré sur l'unité par les
+            // paramètres x et y côté REDPAR.
             const brutPoly = (p.get("poly") || "").trim();
             if(dansPlage && dansRendu && brutPoly){
-              const sommets = brutPoly.split(";").map((c) => {
+              const enPixels = (bloc) => bloc.split(";").map((c) => {
                 const [a, b] = c.split(",").map(parseFloat);
                 return [Math.round((a - g.fx.b) / g.fx.a), Math.round((b - g.fy.b) / g.fy.a)];
               }).filter((q) => Number.isFinite(q[0]) && Number.isFinite(q[1]));
-              if(sommets.length >= 3){
+              const polygones = brutPoly.split("|").map(enPixels).filter((a) => a.length >= 3);
+              const sommets = polygones.flat();
+              if(polygones.length){
                 oCtx.save();
                 oCtx.globalAlpha = S.opacity;
                 oCtx.fillStyle = S.color;
+                // Un seul tracé pour tous les polygones : les recouvrements
+                // éventuels ne se cumulent donc pas en surbrillance, ce qui
+                // arriverait avec un remplissage par polygone.
                 oCtx.beginPath();
-                oCtx.moveTo(sommets[0][0], sommets[0][1]);
-                for(let i = 1; i < sommets.length; i++) oCtx.lineTo(sommets[i][0], sommets[i][1]);
-                oCtx.closePath();
+                polygones.forEach((pts) => {
+                  oCtx.moveTo(pts[0][0], pts[0][1]);
+                  for(let i = 1; i < pts.length; i++) oCtx.lineTo(pts[i][0], pts[i][1]);
+                  oCtx.closePath();
+                });
                 oCtx.fill();
                 oCtx.restore();
                 pushUndo();
@@ -2168,14 +2179,16 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
                 rebuildLegend();
                 const nbAnnot = await dessinerTableau(rangsAnnot, totalAnnot);
                 const xs = sommets.map((q) => q[0]), ys = sommets.map((q) => q[1]);
-                setStatus("Parcelle coloriée par POLYGONE PROJETÉ — contour cadastral "
-                  + "projeté puis peint, sans remplissage : insensible aux traits de "
-                  + "limite interrompus. " + sommets.length + " sommets, emprise "
+                setStatus((polygones.length > 1
+                    ? "UNITÉ FONCIÈRE de " + polygones.length + " parcelles coloriée"
+                    : "Parcelle coloriée")
+                  + " par POLYGONE PROJETÉ — contour cadastral projeté puis peint, sans "
+                  + "remplissage : insensible aux traits de limite interrompus. "
+                  + sommets.length + " sommets, emprise "
                   + (Math.max(...xs) - Math.min(...xs)) + "×" + (Math.max(...ys) - Math.min(...ys))
                   + " px. Géoréférencement " + Math.abs(g.fx.a).toFixed(6) + " m/px, "
                   + "corrélations " + g.fx.r.toFixed(4) + " et " + g.fy.r.toFixed(4) + "."
-                  + (nbAnnot ? " " + nbAnnot + " ligne(s) de tableau ajoutée(s) : "
-                     + annotMethode + ". Déplaçables au glisser, modifiables au double-clic." : ""), "ok");
+                  + (nbAnnot ? " " + nbAnnot + " ligne(s) de tableau : " + annotMethode + "." : ""), "ok");
                 return;
               }
             }
