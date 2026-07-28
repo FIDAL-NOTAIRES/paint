@@ -476,6 +476,7 @@ const PALETTE = ["#A01040","#C2185B","#7a6fd3","#cf6fb0",
                  "#FF982D","#9C6B3F"];
 const S = {
   pdf:null, page:1, pageCount:1, ocrCache:null, anchorCache:null, recentrage:null,
+  couleursAnnot:null,          // teintes du tableau d'annotation, hors légende
   tool:"fill", color:"#A01040", opacity:.45, threshold:100, brush:14, fontSize:36,
   zoom:1, rotation:0, drawing:false, lastPt:null,
   undoStack:[], redoStack:[],
@@ -534,11 +535,32 @@ function rebuildLegend(){
 function usedColors(){
   if(!S.W) return [];
   const d = oCtx.getImageData(0,0,S.W,S.H).data;
-  const set = new Set();
+  // NE RECENSER QUE LES COULEURS DE LA PALETTE, et seulement si elles couvrent
+  // une surface significative.
+  // Deux sources parasitaient la légende : le LISSAGE DES BORDS des polygones
+  // peints, qui crée des dizaines de teintes intermédiaires — le remplissage
+  // scanline, lui, écrivait des pixels exacts —, et le TABLEAU D'ANNOTATION, dont
+  // le fond blanc et le texte bleu nuit sont aussi sur le calque. On obtenait une
+  // quinzaine de champs « Désignation… » au lieu d'un.
+  // Le seuil d'un pixel sur dix mille écarte les traces résiduelles d'une gomme
+  // ou d'un coup de pinceau effacé, sans jamais écarter une parcelle coloriée.
+  const connues = new Set(PALETTE.map((h) => h.toLowerCase()));
+  const perso = document.getElementById("picker");
+  if(perso && perso.value) connues.add(String(perso.value).toLowerCase());
+  // Le tableau d'annotation écrit son texte en bleu nuit, qui appartient à la
+  // palette : sans cette exclusion il produirait une entrée de légende. On ne
+  // l'exclut que si un tableau a effectivement été dessiné, pour ne pas priver
+  // l'utilisateur du bleu nuit s'il en colorie une parcelle.
+  (S.couleursAnnot || []).forEach((h) => connues.delete(String(h).toLowerCase()));
+  const compte = new Map();
   for(let i=0;i<d.length;i+=4){
-    if(d[i+3]>0){ set.add(rgbToHex(d[i],d[i+1],d[i+2])); }
+    if(d[i+3]>0){
+      const h = rgbToHex(d[i],d[i+1],d[i+2]).toLowerCase();
+      if(connues.has(h)) compte.set(h, (compte.get(h)||0)+1);
+    }
   }
-  return [...set];
+  const seuil = Math.max(50, Math.round(S.W*S.H/10000));
+  return [...compte.entries()].filter(([,n])=>n>=seuil).map(([h])=>h);
 }
 
 /* ---------- Outils ---------- */
@@ -897,7 +919,7 @@ async function loadPDFData(buf){
   try{
     S.pdf = await pdfjsLib.getDocument({data:buf}).promise;
     S.pageCount = S.pdf.numPages; S.page=1;
-    S.notes=[]; anno.innerHTML=""; S.legendLabels={};
+    S.notes=[]; anno.innerHTML=""; S.legendLabels={}; S.couleursAnnot=null;
     await renderPage();
     fitToScreen();
     drop.classList.add("hide");
@@ -1978,6 +2000,8 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
           });
         });
         oCtx.restore();
+        // Teintes propres au tableau : elles ne doivent pas peupler la légende.
+        S.couleursAnnot = ["#0F2238"];
         pushUndo();
         annotMethode += ", tableau de " + toutes.length + " ligne(s) en " + nCol
           + " colonne(s), largeur " + Math.round(largeurTotale) + " px, hauteur disponible "
