@@ -1521,7 +1521,9 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
 
   drop.classList.remove("hide");
 
-  const auto = p.get("auto") === "1";
+  // Le diagnostic ne dépend PAS de auto : un oubli de ce paramètre dans un lien
+  // rendait le mode muet, ce qui a coûté deux essais pour rien.
+  const auto = p.get("auto") === "1" || p.get("diaggeo") === "1";
   setGenStatus("Références reçues : " + selectedCommune2.nom + " — section " + section
     + " nº " + parcelle + (auto ? " — génération de l'extrait…" : "."), "");
   if(!auto) return;
@@ -1614,45 +1616,71 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
 
           // Étiquettes candidates : entiers de 6 à 8 chiffres.
           const etiquettes = S.ocrCache.words
-            .map((w) => ({ v: parseInt(String(w.text).replace(/[^0-9]/g, ""), 10), cx: w.cx, cy: w.cy,
-                           brut: w.text }))
+            .map((w) => ({ v: parseInt(String(w.text).replace(/[^0-9]/g, ""), 10),
+                           cx: w.cx, cy: w.cy, brut: w.text }))
             .filter((e) => Number.isFinite(e.v) && e.v >= 100000 && e.v <= 99999999);
 
-          // Abscisses : étiquettes proches du haut ou du bas, valeurs croissant
-          // avec x. Ordonnées : proches de la gauche ou de la droite, valeurs
-          // décroissant avec y (le nord est en haut).
-          const bandeH = 0.12 * H, bandeV = 0.12 * W;
-          const enX = etiquettes.filter((e) => e.cy < bandeH || e.cy > H - bandeH);
-          const enY = etiquettes.filter((e) => e.cx < bandeV || e.cx > W - bandeV);
+          // CLASSEMENT PAR VALEUR, ET NON PAR POSITION.
+          // Le classement par position échouait : les ordonnées de la marge basse
+          // se rangeaient parmi les abscisses et brouillaient la régression.
+          // On regroupe donc par ordre de grandeur — en projection conique
+          // conforme, les abscisses tournent autour de 1,6 million et les
+          // ordonnées autour de 9,2 millions — puis l'on retient les groupes
+          // comptant au moins deux étiquettes. Cela élimine du même coup les
+          // parasites isolés : le « 171000 » qui est le texte « 1/1000 » du
+          // cartouche, et le « 28072026 » qui est la date d'édition.
+          const paquets = new Map();
+          etiquettes.forEach((e) => {
+            const cle = Math.floor(e.v / 100000);
+            if(!paquets.has(cle)) paquets.set(cle, []);
+            paquets.get(cle).push(e);
+          });
+          const groupes = [...paquets.values()].filter((g) => g.length >= 2);
+          const rejetes = etiquettes.filter((e) => (paquets.get(Math.floor(e.v / 100000)) || []).length < 2);
 
-          // Ajustement par moindres carrés sur les paires les plus écartées.
-          const ajuste = (pts, axe) => {
-            const u = pts.map((e) => (axe === "x" ? e.cx : e.cy));
-            const v = pts.map((e) => e.v);
-            const n = pts.length;
-            if(n < 2) return null;
-            const mu = u.reduce((a, b) => a + b, 0) / n, mv = v.reduce((a, b) => a + b, 0) / n;
+          // Pour chaque groupe, l'axe est celui avec lequel les valeurs varient.
+          const correl = (g, axe) => {
+            const u = g.map((e) => (axe === "x" ? e.cx : e.cy)), v = g.map((e) => e.v);
+            const n = g.length, mu = u.reduce((a, b) => a + b, 0) / n, mv = v.reduce((a, b) => a + b, 0) / n;
+            let num = 0, du = 0, dv = 0;
+            for(let i = 0; i < n; i++){
+              num += (u[i] - mu) * (v[i] - mv); du += (u[i] - mu) ** 2; dv += (v[i] - mv) ** 2;
+            }
+            return (du === 0 || dv === 0) ? 0 : num / Math.sqrt(du * dv);
+          };
+          const ajuste = (g, axe) => {
+            const u = g.map((e) => (axe === "x" ? e.cx : e.cy)), v = g.map((e) => e.v);
+            const n = g.length, mu = u.reduce((a, b) => a + b, 0) / n, mv = v.reduce((a, b) => a + b, 0) / n;
             let num = 0, den = 0;
             for(let i = 0; i < n; i++){ num += (u[i] - mu) * (v[i] - mv); den += (u[i] - mu) ** 2; }
-            if(den === 0) return null;
-            const a = num / den;
-            return { a, b: mv - a * mu, n };
+            return den === 0 ? null : { a: num / den, b: mv - (num / den) * mu, n, r: correl(g, axe) };
           };
-          const fx = ajuste(enX, "x"), fy = ajuste(enY, "y");
+          let fx = null, fy = null;
+          groupes.forEach((g) => {
+            const rx = Math.abs(correl(g, "x")), ry = Math.abs(correl(g, "y"));
+            const f = ajuste(g, rx >= ry ? "x" : "y");
+            if(!f) return;
+            if(rx >= ry){ if(!fx || Math.abs(f.r) > Math.abs(fx.r)) fx = f; }
+            else { if(!fy || Math.abs(f.r) > Math.abs(fy.r)) fy = f; }
+          });
+
 
           const theo = largeursFeuille[fmt] * ech / W;   // mètres par pixel
           const l = [];
           l.push("Échelle théorique : " + (1 / theo).toFixed(2) + " px/m ("
             + theo.toFixed(4) + " m/px), rendu de " + W + "×" + H + " px, "
             + fmt + " à 1/" + ech + ".");
-          l.push(etiquettes.length + " étiquette(s) numérique(s) lue(s), dont "
-            + enX.length + " en marge horizontale et " + enY.length + " en marge verticale.");
-          if(fx) l.push("Abscisses : " + Math.abs(fx.a).toFixed(4) + " m/px sur " + fx.n
-            + " points, écart à la théorie " + Math.round(100 * Math.abs(Math.abs(fx.a) - theo) / theo) + " %.");
-          else l.push("Abscisses : ajustement impossible, moins de deux étiquettes exploitables.");
-          if(fy) l.push("Ordonnées : " + Math.abs(fy.a).toFixed(4) + " m/px sur " + fy.n
-            + " points, écart à la théorie " + Math.round(100 * Math.abs(Math.abs(fy.a) - theo) / theo) + " %.");
-          else l.push("Ordonnées : ajustement impossible, moins de deux étiquettes exploitables.");
+          l.push(etiquettes.length + " étiquette(s) numérique(s) lue(s), "
+            + groupes.length + " groupe(s) cohérent(s), " + rejetes.length + " parasite(s) écarté(s)"
+            + (rejetes.length ? " (" + rejetes.map((e) => e.v).join(", ") + ")" : "") + ".");
+          if(fx) l.push("Abscisses : " + Math.abs(fx.a).toFixed(6) + " m/px sur " + fx.n
+            + " points (corrélation " + fx.r.toFixed(4) + "), écart à la théorie "
+            + (100 * Math.abs(Math.abs(fx.a) - theo) / theo).toFixed(2) + " %.");
+          else l.push("Abscisses : aucun groupe exploitable.");
+          if(fy) l.push("Ordonnées : " + Math.abs(fy.a).toFixed(6) + " m/px sur " + fy.n
+            + " points (corrélation " + fy.r.toFixed(4) + "), écart à la théorie "
+            + (100 * Math.abs(Math.abs(fy.a) - theo) / theo).toFixed(2) + " %.");
+          else l.push("Ordonnées : aucun groupe exploitable.");
           l.push("Valeurs lues : " + etiquettes.slice(0, 12)
             .map((e) => e.v + "@(" + Math.round(e.cx) + "," + Math.round(e.cy) + ")").join(" · "));
           console.log("PAINT diag géo :", { theo, fx, fy, etiquettes });
