@@ -1192,7 +1192,19 @@ async function trouverLigneContenant(motif){
           "Localisation du titre… " + Math.round(m.progress * 100) + "%"; }
       });
     }
-    const { data } = await anchorWorker.recognize(base, {}, { tsv: true });
+    // ON NE RECONNAÎT QUE LE BANDEAU SUPÉRIEUR. Faire tourner Tesseract sur les
+    // 1700 × 2406 pixels de la page entière prend des dizaines de secondes, en
+    // plus des passes déjà faites pour les coordonnées : l'attente n'aboutissait
+    // pas et l'annotation ne venait jamais. Le titre se trouve dans le tiers
+    // haut, en portrait comme en paysage.
+    const hBandeau = Math.round(S.H * 0.30);
+    const vignette = document.createElement("canvas");
+    vignette.width = S.W; vignette.height = hBandeau;
+    vignette.getContext("2d").drawImage(base, 0, 0, S.W, hBandeau, 0, 0, S.W, hBandeau);
+    // Délai maximal : mieux vaut un repli qu'une attente sans fin.
+    const reco = anchorWorker.recognize(vignette, {}, { tsv: true });
+    const delai = new Promise((_, rej) => setTimeout(() => rej(new Error("délai dépassé")), 20000));
+    const { data } = await Promise.race([reco, delai]);
     const lignes = (data.tsv || "").split("\n").map(l => l.split("\t"))
       .filter(c => c.length >= 12 && c[0] === "5");
     const re = new RegExp(motif, "i");
@@ -1204,7 +1216,7 @@ async function trouverLigneContenant(motif){
       const x1 = Math.max(...memeLigne.map(c => +c[6] + +c[8]));
       const y0 = Math.min(...memeLigne.map(c => +c[7]));
       const y1 = Math.max(...memeLigne.map(c => +c[7] + +c[9]));
-      box = { x0, y0, x1, y1, mots: memeLigne.length };
+      box = { x0, y0, x1, y1, mots: memeLigne.length };   // coordonnées du bandeau = celles de la page
     }
   }catch(e){ box = null; }
   ligneCache = { key, box };
