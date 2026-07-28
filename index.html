@@ -2172,20 +2172,39 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
           // celle qui a été demandée, et l'on refuse en cas de désaccord.
           // Sans ce contrôle, un plan servi à la mauvaise échelle serait colorié
           // et remis tel quel, avec une emprise fausse.
+          // Le service ne propose que ces dix échelles : une mesure qui n'en
+          // approche aucune n'est pas une substitution, c'est une MESURE FAUSSE.
+          // Sans cette distinction, un géoréférencement mal lu faisait accuser le
+          // service d'avoir servi du 1/315000 — échelle qui n'existe pas — et
+          // refusait un plan probablement correct.
+          const ECHELLES_SERVICE = [200, 500, 650, 1000, 1250, 1500, 2000, 2500, 4000, 5000];
+          let mesureAberrante = false;
           const theoMPx = largeursFeuille[fmt] * ech / W;
           const reelMPx = g.echelle;
           if(reelMPx && Math.abs(reelMPx - theoMPx) / theoMPx > 0.05){
-            const echReelle = Math.round(reelMPx * W / largeursFeuille[fmt]);
-            S.tool = "fill";
-            setStatus("Colorisation refusée : l'échelle délivrée n'est pas celle demandée. "
-              + "Mesurée sur les coordonnées du plan : environ 1/" + echReelle
-              + ", alors que 1/" + ech + " a été demandé. Le service du cadastre a "
-              + "substitué une échelle sans le signaler ; ce plan ne couvre pas "
-              + "l'emprise attendue. Régénérez à une échelle acceptée, ou coloriez à "
-              + "la main en connaissance de cause.", "err");
-            return;
+            const echReelle = reelMPx * W / largeursFeuille[fmt];
+            const proche = ECHELLES_SERVICE.find((e) => Math.abs(echReelle - e) / e < 0.10);
+            if(proche){
+              // Substitution PLAUSIBLE : on refuse, le plan ne couvre pas l'emprise.
+              S.tool = "fill";
+              setStatus("Colorisation refusée : l'échelle délivrée n'est pas celle demandée. "
+                + "Mesurée sur les coordonnées du plan : 1/" + proche + ", alors que 1/" + ech
+                + " a été demandé. Le service du cadastre a substitué une échelle sans le "
+                + "signaler ; ce plan ne couvre pas l'emprise attendue. Régénérez à une "
+                + "échelle acceptée, ou coloriez à la main en connaissance de cause.", "err");
+              return;
+            }
+            // Mesure ABERRANTE : aucune échelle du service n'en approche. On
+            // n'accuse pas le service, on écarte le géoréférencement et l'on
+            // retombe sur la détection par taille attendue.
+            replPourquoi = "géoréférencement écarté, échelle mesurée aberrante ("
+              + "1/" + Math.round(echReelle) + " alors que le service ne propose que "
+              + "de 1/200 à 1/5000) — la lecture des coordonnées en marge a échoué";
+            console.warn("PAINT : échelle mesurée aberrante", { echReelle, ech, g });
+            mesureAberrante = true;
           }
-          if(g.fx && g.fy && (g.fx.cale || Math.abs(g.fx.r) > 0.99)
+          if(!mesureAberrante && g.fx && g.fy
+             && (g.fx.cale || Math.abs(g.fx.r) > 0.99)
              && (g.fy.cale || Math.abs(g.fy.r) > 0.99)){
             const px = Math.round((X - g.fx.b) / g.fx.a);
             const py = Math.round((Y - g.fy.b) / g.fy.a);
