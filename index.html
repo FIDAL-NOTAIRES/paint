@@ -1656,32 +1656,65 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
       // position figée, parce que la mise en page diffère entre portrait, où le
       // titre est en haut au centre, et paysage, où le cartouche occupe la
       // colonne de gauche.
+      // Rend compte de la voie employée : sans cela on ne sait pas si le titre a
+      // été localisé ou si l'on est retombé sur une proportion.
+      let annotMethode = "";
       const annoterSousLeTitre = async (lignes) => {
         if(!lignes.length) return 0;
         const taille = Math.max(14, Math.round(S.W / 85));
-        let cx, cy;
+        let cx = null, cy = null;
+
+        // VOIE 1 — boîtes englobantes réelles par TSV. La plus précise.
         const boite = await trouverLigneContenant("CADASTRAL");
         if(boite){
-          cx = (boite.x0 + boite.x1) / 2;      // milieu de la LIGNE, boîtes réelles
-          cy = boite.y1 + taille * 1.9;        // sous les tirets qui suivent le titre
-        }else{
-          // CENTRER SUR LA LIGNE ENTIÈRE, et non sur le mot repéré. « CADASTRAL »
-          // est le DERNIER mot de « EXTRAIT DU PLAN CADASTRAL » : s'ancrer sur lui
-          // décalait les annotations d'environ un tiers de la ligne vers la
-          // droite, ce qui se voyait à l'œil. On regroupe donc tous les mots
-          // situés à la même hauteur — à une demi-hauteur de ligne près — et l'on
-          // prend le milieu de leur étendue.
-          // Repli proportionnel, calé sur la mise en page du service.
-          const paysage = /paysage/.test(fmt);
-          cx = paysage ? S.W * 0.20 : S.W * 0.50;
-          cy = paysage ? S.H * 0.16 : S.H * 0.115;
+          cx = (boite.x0 + boite.x1) / 2;
+          cy = boite.y1 + taille * 1.9;
+          annotMethode = "titre localisé au pixel (TSV, " + boite.mots + " mots, "
+            + "étendue " + Math.round(boite.x0) + "–" + Math.round(boite.x1) + " px)";
         }
+
+        // VOIE 2 — les mots déjà lus pour les coordonnées. On prend la ligne du
+        // bloc de titre qui compte le PLUS de mots : « DIRECTION GÉNÉRALE DES
+        // FINANCES PUBLIQUES » en compte quatre ou cinq, donc son axe est mieux
+        // estimé que celui de « EXTRAIT DU PLAN CADASTRAL » dont l'OCR ne lit
+        // souvent qu'un mot. Les deux lignes sont centrées sur le même axe.
+        if(cx === null){
+          const vocab = /^(DIRECTION|GENERALE|GÉNÉRALE|DES|FINANCES|PUBLIQUES|EXTRAIT|DU|PLAN|CADASTRAL)$/i;
+          const cands = ((S.ocrCache && S.ocrCache.words) || [])
+            .filter((w) => vocab.test(String(w.text).replace(/[^A-Za-zÀ-ÿ]/g, "")));
+          if(cands.length >= 2){
+            // Regrouper par hauteur, garder la ligne la plus fournie.
+            const paquets = [];
+            cands.forEach((w) => {
+              const q = paquets.find((g) => Math.abs(g[0].cy - w.cy) < taille);
+              if(q) q.push(w); else paquets.push([w]);
+            });
+            paquets.sort((a, b) => b.length - a.length);
+            const ligne = paquets[0];
+            const xs = ligne.map((w) => w.cx);
+            cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+            cy = Math.max(...cands.map((w) => w.cy)) + taille * 2.4;
+            annotMethode = "titre estimé sur " + ligne.length + " mot(s) lus";
+          }
+        }
+
+        // VOIE 3 — proportion, calée sur la mise en page du service. Le titre est
+        // centré dans le cartouche du MILIEU, qui n'est pas au centre de la page :
+        // le cartouche de gauche est plus étroit que celui de droite.
+        if(cx === null){
+          const paysage = /paysage/.test(fmt);
+          cx = paysage ? S.W * 0.20 : S.W * 0.435;
+          cy = paysage ? S.H * 0.16 : S.H * 0.115;
+          annotMethode = "titre non localisé, position proportionnelle";
+        }
+
         lignes.forEach((texte, i) => {
           const note = { id: Date.now() + i, x: cx / S.W, y: (cy + i * taille * 1.5) / S.H,
                          text: texte, color: "#0F2238", size: taille };
           S.notes.push(note);
           renderNote(note);
         });
+        annotMethode += ", axe à x=" + Math.round(cx);
         return lignes.length;
       };
       const lignesAnnot = (p.get("annot") || "").split("|")
@@ -1932,8 +1965,8 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
                   + (Math.max(...xs) - Math.min(...xs)) + "×" + (Math.max(...ys) - Math.min(...ys))
                   + " px. Géoréférencement " + Math.abs(g.fx.a).toFixed(6) + " m/px, "
                   + "corrélations " + g.fx.r.toFixed(4) + " et " + g.fy.r.toFixed(4) + "."
-                  + (nbAnnot ? " " + nbAnnot + " ligne(s) d'annotation ajoutée(s) sous le titre — "
-                     + "déplaçables au glisser, modifiables au double-clic." : ""), "ok");
+                  + (nbAnnot ? " " + nbAnnot + " ligne(s) d'annotation ajoutée(s) : "
+                     + annotMethode + ". Déplaçables au glisser, modifiables au double-clic." : ""), "ok");
                 return;
               }
             }
@@ -1985,7 +2018,7 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
                   const nb2 = await annoterSousLeTitre(lignesAnnot);
                   setStatus("Parcelle coloriée par POSITION PROJETÉE, sans estimation ni "
                     + "reconnaissance de numéro. " + info
-                    + (nb2 ? " " + nb2 + " ligne(s) d'annotation ajoutée(s)." : ""), "ok");
+                    + (nb2 ? " " + nb2 + " ligne(s) d'annotation : " + annotMethode + "." : ""), "ok");
                 }
                 return;
               }
