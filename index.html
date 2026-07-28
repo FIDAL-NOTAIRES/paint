@@ -1628,6 +1628,32 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
           if(!paquets.has(k)) paquets.set(k, []);
           paquets.get(k).push(e);
         });
+        // RÉPARATION DES CHIFFRES DE TÊTE PERDUS PAR L'OCR.
+        // Constaté à Mézilles : « 1711500 » lu « 711500 ». Le contrôle de plage
+        // comparait alors un point à sept chiffres à une étiquette qui n'en avait
+        // plus que six, et refusait à tort. On répare en complétant l'étiquette
+        // avec les chiffres de tête de la coordonnée ATTENDUE, ce qui n'invente
+        // rien : on ne touche qu'au préfixe, et seulement si le résultat tombe à
+        // moins de 2 km de l'attendu. Les différences entre étiquettes, dont on
+        // tire l'échelle, ne sont pas affectées.
+        if(attendus){
+          const reparer = (v) => {
+            for(const cible of [attendus.X, attendus.Y]){
+              const sc = String(Math.round(cible)), sv = String(v);
+              if(sv.length >= sc.length) continue;
+              const candidat = parseInt(sc.slice(0, sc.length - sv.length) + sv, 10);
+              if(Math.abs(candidat - cible) < 2000) return candidat;
+            }
+            return v;
+          };
+          etiquettes.forEach((e) => { e.v = reparer(e.v); });
+          paquets.clear();
+          etiquettes.forEach((e) => {
+            const k = Math.floor(e.v / 100000);
+            if(!paquets.has(k)) paquets.set(k, []);
+            paquets.get(k).push(e);
+          });
+        }
         const groupes = [...paquets.values()].filter((g) => g.length >= 2);
         const rejetes = etiquettes.filter((e) => (paquets.get(Math.floor(e.v / 100000)) || []).length < 2);
         const stats = (g, axe) => {
@@ -1749,6 +1775,27 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
           const X = parseFloat(mPt[1]), Y = parseFloat(mPt[2]);
           const g = await georeferencer({ X, Y });
           spin.classList.remove("show");
+          // CONTRÔLE DE L'ÉCHELLE RÉELLEMENT DÉLIVRÉE.
+          // Constaté le 28/07/2026 : une demande à 1/10000 est SILENCIEUSEMENT
+          // servie à 1/1000 par le service du cadastre — cartouche à 1/1000, plan
+          // couvrant dix fois moins de terrain que demandé, aucun message. Le
+          // géoréférencement mesure l'échelle réelle : on la confronte donc à
+          // celle qui a été demandée, et l'on refuse en cas de désaccord.
+          // Sans ce contrôle, un plan servi à la mauvaise échelle serait colorié
+          // et remis tel quel, avec une emprise fausse.
+          const theoMPx = largeursFeuille[fmt] * ech / W;
+          const reelMPx = g.echelle;
+          if(reelMPx && Math.abs(reelMPx - theoMPx) / theoMPx > 0.05){
+            const echReelle = Math.round(reelMPx * W / largeursFeuille[fmt]);
+            S.tool = "fill";
+            setStatus("Colorisation refusée : l'échelle délivrée n'est pas celle demandée. "
+              + "Mesurée sur les coordonnées du plan : environ 1/" + echReelle
+              + ", alors que 1/" + ech + " a été demandé. Le service du cadastre a "
+              + "substitué une échelle sans le signaler ; ce plan ne couvre pas "
+              + "l'emprise attendue. Régénérez à une échelle acceptée, ou coloriez à "
+              + "la main en connaissance de cause.", "err");
+            return;
+          }
           if(g.fx && g.fy && (g.fx.cale || Math.abs(g.fx.r) > 0.99)
              && (g.fy.cale || Math.abs(g.fy.r) > 0.99)){
             const px = Math.round((X - g.fx.b) / g.fx.a);
@@ -1769,6 +1816,41 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
               + "] : zone de projection probablement différente";
             else if(!dansRendu) replPourquoi = "le point projeté tombe hors du rendu ("
               + px + ", " + py + ") pour un rendu de " + W + "×" + H;
+            // ---- POLYGONE PROJETÉ : on PEINT au lieu de REMPLIR ----------
+            // En rural, les limites sont tracées en traits d'axe interrompus —
+            // tirets et points — qu'un remplissage traverse : observé à Pusey,
+            // 42 % du plan atteint. Or on connaît le contour ET le
+            // géoréférencement : peindre le polygone rend la continuité des
+            // traits sans objet. C'est exact par construction.
+            const brutPoly = (p.get("poly") || "").trim();
+            if(dansPlage && dansRendu && brutPoly){
+              const sommets = brutPoly.split(";").map((c) => {
+                const [a, b] = c.split(",").map(parseFloat);
+                return [Math.round((a - g.fx.b) / g.fx.a), Math.round((b - g.fy.b) / g.fy.a)];
+              }).filter((q) => Number.isFinite(q[0]) && Number.isFinite(q[1]));
+              if(sommets.length >= 3){
+                oCtx.save();
+                oCtx.globalAlpha = S.opacity;
+                oCtx.fillStyle = S.color;
+                oCtx.beginPath();
+                oCtx.moveTo(sommets[0][0], sommets[0][1]);
+                for(let i = 1; i < sommets.length; i++) oCtx.lineTo(sommets[i][0], sommets[i][1]);
+                oCtx.closePath();
+                oCtx.fill();
+                oCtx.restore();
+                pushUndo();
+                if(!S.legendLabels[S.color]) S.legendLabels[S.color] = "";
+                rebuildLegend();
+                const xs = sommets.map((q) => q[0]), ys = sommets.map((q) => q[1]);
+                setStatus("Parcelle coloriée par POLYGONE PROJETÉ — contour cadastral "
+                  + "projeté puis peint, sans remplissage : insensible aux traits de "
+                  + "limite interrompus. " + sommets.length + " sommets, emprise "
+                  + (Math.max(...xs) - Math.min(...xs)) + "×" + (Math.max(...ys) - Math.min(...ys))
+                  + " px. Géoréférencement " + Math.abs(g.fx.a).toFixed(6) + " m/px, "
+                  + "corrélations " + g.fx.r.toFixed(4) + " et " + g.fy.r.toFixed(4) + ".", "ok");
+                return;
+              }
+            }
             if(dansPlage && dansRendu){
               const donnees0 = baseCtx.getImageData(0, 0, W, H).data;
               const clair0 = (i) => (0.299 * donnees0[i * 4] + 0.587 * donnees0[i * 4 + 1]
