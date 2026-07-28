@@ -1753,6 +1753,12 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
       // C'est le troisième signal, et le plus fort : il ne dépend ni de la taille
       // attendue ni de la lecture d'un numéro de parcelle.
       const mPt = (p.get("pt") || "").match(/^(-?[0-9.]+),(-?[0-9.]+)$/);
+      // Raison du repli, TOUJOURS rapportée à l'écran. Retomber en silence sur la
+      // détection par taille a coûté un essai : on ne savait pas si la voie
+      // déterministe avait échoué ou n'avait pas été tentée.
+      let replPourquoi = mPt ? "" : "aucun point projeté transmis (pt absent de l'URL) — "
+        + "réexportez l'Excel après le chargement des contours, ou vérifiez que le "
+        + "dernier App.jsx de REDPAR est déployé";
       if(mPt){
         try{
           spin.classList.add("show"); spinmsg.textContent = "Lecture des coordonnées en marge…";
@@ -1769,6 +1775,12 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
             const dansPlage = X >= g.fx.min - 500 && X <= g.fx.max + 500
                            && Y >= g.fy.min - 500 && Y <= g.fy.max + 500;
             const dansRendu = px >= 0 && py >= 0 && px < W && py < H;
+            if(!dansPlage) replPourquoi = "le point projeté (" + Math.round(X) + ", "
+              + Math.round(Y) + ") tombe hors de la plage des étiquettes lues ["
+              + g.fx.min + "–" + g.fx.max + "] × [" + g.fy.min + "–" + g.fy.max
+              + "] : zone de projection probablement différente";
+            else if(!dansRendu) replPourquoi = "le point projeté tombe hors du rendu ("
+              + px + ", " + py + ") pour un rendu de " + W + "×" + H;
             if(dansPlage && dansRendu){
               const donnees0 = baseCtx.getImageData(0, 0, W, H).data;
               const clair0 = (i) => (0.299 * donnees0[i * 4] + 0.587 * donnees0[i * 4 + 1]
@@ -1818,11 +1830,18 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
             }
             console.warn("PAINT : point projeté hors plage ou hors rendu", { X, Y, px, py, dansPlage, dansRendu });
           }else{
-            console.warn("PAINT : géoréférencement non concluant, repli sur la taille attendue", g);
+            replPourquoi = "géoréférencement non concluant : "
+              + (g.groupes.length < 2
+                ? g.groupes.length + " groupe(s) d'étiquettes cohérent(s) au lieu de 2 attendus"
+                : "corrélations " + (g.fx ? g.fx.r.toFixed(3) : "—") + " et "
+                  + (g.fy ? g.fy.r.toFixed(3) : "—") + ", seuil 0,99")
+              + " sur " + g.etiquettes.length + " étiquette(s) lue(s)";
+            console.warn("PAINT : géoréférencement non concluant", g);
           }
         }catch(e){
           spin.classList.remove("show");
-          console.warn("PAINT : voie déterministe indisponible, repli sur la taille attendue", e);
+          replPourquoi = "voie déterministe interrompue : " + ((e && e.message) || e);
+          console.warn("PAINT : voie déterministe indisponible", e);
         }
       }
 
@@ -1887,7 +1906,11 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
       const proches = [...utiles].sort((a, b) => ecart(a) - ecart(b)).slice(0, 3);
 
       const dims = (g) => g.bw + "×" + g.bh;
-      const resume = "Attendu " + Math.round(attendu.bw) + "×" + Math.round(attendu.bh)
+      const prefixe = replPourquoi
+        ? "Position projetée non utilisée — " + replPourquoi + ". Repli sur la détection "
+          + "par taille. "
+        : "";
+      const resume = prefixe + "Attendu " + Math.round(attendu.bw) + "×" + Math.round(attendu.bh)
         + " px, soit " + mDim[1] + "×" + mDim[2] + " m à 1/" + ech + " ("
         + pxParMetre.toFixed(1) + " px/m)"
         + (airePx ? ", aire au plus " + Math.round(AIRE_FACTEUR_MAX * airePx).toLocaleString("fr-FR")
