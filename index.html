@@ -475,7 +475,7 @@ const PALETTE = ["#A01040","#C2185B","#7a6fd3","#cf6fb0",
                  "#33838B","#2F6FB0","#5fb37a","#6DD5DC","#657D96","#0F2238",
                  "#FF982D","#9C6B3F"];
 const S = {
-  pdf:null, page:1, pageCount:1, ocrCache:null, anchorCache:null,
+  pdf:null, page:1, pageCount:1, ocrCache:null, anchorCache:null, recentrage:null,
   tool:"fill", color:"#A01040", opacity:.45, threshold:100, brush:14, fontSize:36,
   zoom:1, rotation:0, drawing:false, lastPt:null,
   undoStack:[], redoStack:[],
@@ -851,7 +851,18 @@ async function generateExtrait(mode){
     }
     if(!prefixe) prefixe="000";
     setGenStatus(prefixe!=="000" ? ("Préfixe détecté : "+prefixe+" — récupération de l'extrait officiel…") : "Récupération de l'extrait officiel… (quelques secondes)","");
-    const qs=new URLSearchParams({commune:commune.code,prefixe,section,parcelle,echelle,taille,orientation}).toString();
+    // RECENTRAGE. api/extrait.js accepte x et y et les substitue au centre de la
+    // parcelle interrogée. Indispensable pour une UNITÉ FONCIÈRE : le service
+    // centre sinon sur la parcelle demandée, qui peut être au bord de l'unité —
+    // c'est ce qui laissait le groupe colorié en marge du plan.
+    // Ces valeurs viennent de l'URL de PAINT et sont mémorisées dans S.recentrage
+    // par le préremplissage : generateExtrait construisant sa requête à partir des
+    // seuls champs du formulaire, elles ne lui parvenaient pas autrement.
+    const p0={commune:commune.code,prefixe,section,parcelle,echelle,taille,orientation};
+    if(S.recentrage && Number.isFinite(S.recentrage.x) && Number.isFinite(S.recentrage.y)){
+      p0.x=String(S.recentrage.x); p0.y=String(S.recentrage.y);
+    }
+    const qs=new URLSearchParams(p0).toString();
     const r=await fetch("/api/extrait?"+qs);
     if(!r.ok){
       let msg="Erreur "+r.status;
@@ -1674,6 +1685,10 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
       .find(el => (el.dataset.color || "").toLowerCase() === couleur.toLowerCase());
     setColor(couleur, sw || null);
   }
+
+  // Recentrage éventuel, transmis à l'endpoint par generateExtrait.
+  const rx = parseFloat(p.get("x") || ""), ry = parseFloat(p.get("y") || "");
+  S.recentrage = (Number.isFinite(rx) && Number.isFinite(ry)) ? { x: rx, y: ry } : null;
 
   drop.classList.remove("hide");
 
