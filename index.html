@@ -1251,6 +1251,31 @@ function filetAuDessus(x0, x1, yTexte, portee){
   return null;
 }
 
+// Cherche un FILET VERTICAL en s'éloignant d'un point, dans un sens donné : une
+// colonne de pixels sombres continue sur l'essentiel de la hauteur balayée.
+// Sert à trouver les deux bords du cartouche du titre, entre lesquels le tableau
+// doit être centré. Un trait de cadre est continu sur toute la hauteur du
+// cartouche, alors qu'un jambage de lettre ne l'est pas : d'où l'exigence de
+// 80 %, qui écarte le texte sans écarter les traits.
+function filetVertical(xDepart, sens, yA, yB, portee){
+  try{
+    const y0 = Math.max(0, Math.round(yA));
+    const h = Math.max(8, Math.round(yB - yA));
+    if(y0 + h > S.H) return null;
+    for(let i = 1; i <= portee; i++){
+      const x = Math.round(xDepart) + sens * i;
+      if(x < 1 || x >= S.W - 1) return null;
+      const d = baseCtx.getImageData(x, y0, 1, h).data;
+      let n = 0;
+      for(let k = 0; k < h; k++){
+        if((0.299 * d[k * 4] + 0.587 * d[k * 4 + 1] + 0.114 * d[k * 4 + 2]) < S.threshold) n++;
+      }
+      if(n >= 0.8 * h) return x;
+    }
+  }catch(e){ /* hors canvas */ }
+  return null;
+}
+
 function buildExportCanvas(anchor){
   const c=document.createElement("canvas"); c.width=S.W; c.height=S.H;
   const x=c.getContext("2d");
@@ -1715,8 +1740,23 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
         // VOIE 1 — boîtes englobantes réelles par TSV, la plus précise.
         const boite = await trouverLigneContenant("CADASTRAL");
         if(boite){
+          // MIEUX QUE LE TEXTE : les deux bords du cartouche qui contient le
+          // titre. À la demande de JFD, le tableau se centre entre eux et non sur
+          // l'étendue du texte, qui varie avec la longueur de l'intitulé. On les
+          // cherche en s'éloignant du titre, sur une hauteur de cinq interlignes.
+          const yA = boite.y0 - taille * 2, yB = boite.y1 + taille * 2;
+          const portee = Math.round(S.W * 0.35);
+          const bordG = filetVertical(boite.x0, -1, yA, yB, portee);
+          const bordD = filetVertical(boite.x1, +1, yA, yB, portee);
+          if(bordG !== null && bordD !== null && bordD - bordG > taille * 6){
+            annotMethode = "centré entre les bords du cartouche (x=" + bordG + " et x="
+              + bordD + ", TSV " + boite.mots + " mots)";
+            return { cx: (bordG + bordD) / 2, y: boite.y1 + taille * 1.6 };
+          }
           annotMethode = "titre localisé au pixel (TSV, " + boite.mots + " mots, étendue "
-            + Math.round(boite.x0) + "–" + Math.round(boite.x1) + " px)";
+            + Math.round(boite.x0) + "–" + Math.round(boite.x1) + " px)"
+            + (bordG === null && bordD === null ? ", aucun bord de cartouche trouvé"
+               : bordG === null ? ", bord gauche non trouvé" : ", bord droit non trouvé");
           return { cx: (boite.x0 + boite.x1) / 2, y: boite.y1 + taille * 1.6 };
         }
         // VOIE 2 — les mots déjà lus pour les coordonnées, ligne la plus fournie.
