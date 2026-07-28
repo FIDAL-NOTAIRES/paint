@@ -1570,6 +1570,102 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
       const pxParMetre = W / (largeursFeuille[fmt] * ech);
       const attendu = { bw: parseFloat(mDim[1]) * pxParMetre,
                         bh: parseFloat(mDim[2]) * pxParMetre };
+      // TROISIÈME SIGNAL : l'AIRE, indépendante de la boîte englobante. Deux
+      // régions peuvent partager la même boîte et avoir des aires radicalement
+      // différentes — c'est le cas d'une parcelle et d'un fragment de voirie en
+      // diagonale. REDPAR transmet la surface réelle en m² (paramètre surface).
+      // CONTRAINTE ASYMÉTRIQUE, et c'est essentiel : les contours des bâtiments
+      // étant des traits sombres, la région atteinte peut être BEAUCOUP PLUS
+      // PETITE que la parcelle (un liseré autour du bâti), mais elle ne peut pas
+      // être beaucoup plus grande. On plafonne donc sans plancher.
+      const surfM2 = parseFloat(p.get("surface") || "0");
+      const airePx = surfM2 > 0 ? surfM2 * pxParMetre * pxParMetre : null;
+      // Facteur 1,3 et non 1,5 : une région ne peut légitimement pas dépasser
+      // l'aire du polygone, tout au plus le liseré de ses pixels de bordure —
+      // environ 7 % de plus sur une parcelle de 106 m² à 1/1000. À 1,5 une bande
+      // diagonale de la bonne boîte passait encore.
+      const AIRE_FACTEUR_MAX = 1.3;
+
+      // ================== MODE DIAGNOSTIC GÉORÉFÉRENCEMENT ==================
+      // Déclenché par &diaggeo=1. Ne colorie RIEN : lit les étiquettes de
+      // coordonnées portées en marge de l'extrait et affiche le géoréférencement
+      // qu'on en déduit.
+      // L'extrait porte, le long du cadre, des valeurs de la projection conique
+      // conforme (RGF93CC50 sur l'exemple de Saint-Omer) : abscisses en haut et en
+      // bas, ordonnées à gauche et à droite. Deux valeurs sur un axe suffisent à
+      // établir la correspondance pixels ↔ mètres.
+      // CE DIAGNOSTIC SE VÉRIFIE LUI-MÊME : l'échelle théorique est connue
+      // (largeur de feuille × échelle / largeur du rendu). Si l'ajustement calculé
+      // sur les étiquettes lues retombe sur cette valeur, la lecture est juste —
+      // sans avoir besoin d'aucune vérité terrain.
+      if(p.get("diaggeo") === "1"){
+        try{
+          spin.classList.add("show"); spinmsg.textContent = "Lecture des coordonnées en marge…";
+          const cle = "diag|" + S.page + "|" + S.rotation;
+          if(!S.ocrCache || S.ocrCache.key !== cle) S.ocrCache = { key: cle, base: null, words: [], done: new Set() };
+          if(!S.ocrCache.base) S.ocrCache.base = await renderOcrBase();
+          for(const deg of [0, 90, -90]){
+            if(S.ocrCache.done.has(deg)) continue;
+            spinmsg.textContent = "Lecture des coordonnées" + (deg ? " (étiquettes à " + deg + "°)" : "") + "…";
+            S.ocrCache.words.push(...await ocrAngle(S.ocrCache.base, deg));
+            S.ocrCache.done.add(deg);
+          }
+          spin.classList.remove("show");
+
+          // Étiquettes candidates : entiers de 6 à 8 chiffres.
+          const etiquettes = S.ocrCache.words
+            .map((w) => ({ v: parseInt(String(w.text).replace(/[^0-9]/g, ""), 10), cx: w.cx, cy: w.cy,
+                           brut: w.text }))
+            .filter((e) => Number.isFinite(e.v) && e.v >= 100000 && e.v <= 99999999);
+
+          // Abscisses : étiquettes proches du haut ou du bas, valeurs croissant
+          // avec x. Ordonnées : proches de la gauche ou de la droite, valeurs
+          // décroissant avec y (le nord est en haut).
+          const bandeH = 0.12 * H, bandeV = 0.12 * W;
+          const enX = etiquettes.filter((e) => e.cy < bandeH || e.cy > H - bandeH);
+          const enY = etiquettes.filter((e) => e.cx < bandeV || e.cx > W - bandeV);
+
+          // Ajustement par moindres carrés sur les paires les plus écartées.
+          const ajuste = (pts, axe) => {
+            const u = pts.map((e) => (axe === "x" ? e.cx : e.cy));
+            const v = pts.map((e) => e.v);
+            const n = pts.length;
+            if(n < 2) return null;
+            const mu = u.reduce((a, b) => a + b, 0) / n, mv = v.reduce((a, b) => a + b, 0) / n;
+            let num = 0, den = 0;
+            for(let i = 0; i < n; i++){ num += (u[i] - mu) * (v[i] - mv); den += (u[i] - mu) ** 2; }
+            if(den === 0) return null;
+            const a = num / den;
+            return { a, b: mv - a * mu, n };
+          };
+          const fx = ajuste(enX, "x"), fy = ajuste(enY, "y");
+
+          const theo = largeursFeuille[fmt] * ech / W;   // mètres par pixel
+          const l = [];
+          l.push("Échelle théorique : " + (1 / theo).toFixed(2) + " px/m ("
+            + theo.toFixed(4) + " m/px), rendu de " + W + "×" + H + " px, "
+            + fmt + " à 1/" + ech + ".");
+          l.push(etiquettes.length + " étiquette(s) numérique(s) lue(s), dont "
+            + enX.length + " en marge horizontale et " + enY.length + " en marge verticale.");
+          if(fx) l.push("Abscisses : " + Math.abs(fx.a).toFixed(4) + " m/px sur " + fx.n
+            + " points, écart à la théorie " + Math.round(100 * Math.abs(Math.abs(fx.a) - theo) / theo) + " %.");
+          else l.push("Abscisses : ajustement impossible, moins de deux étiquettes exploitables.");
+          if(fy) l.push("Ordonnées : " + Math.abs(fy.a).toFixed(4) + " m/px sur " + fy.n
+            + " points, écart à la théorie " + Math.round(100 * Math.abs(Math.abs(fy.a) - theo) / theo) + " %.");
+          else l.push("Ordonnées : ajustement impossible, moins de deux étiquettes exploitables.");
+          l.push("Valeurs lues : " + etiquettes.slice(0, 12)
+            .map((e) => e.v + "@(" + Math.round(e.cx) + "," + Math.round(e.cy) + ")").join(" · "));
+          console.log("PAINT diag géo :", { theo, fx, fy, etiquettes });
+          setStatus(l.join(" | "), fx && fy ? "ok" : "warn");
+          S.tool = "fill";
+          return;
+        }catch(e){
+          spin.classList.remove("show");
+          console.error("PAINT diag géo :", e);
+          setStatus("Diagnostic de géoréférencement interrompu : " + ((e && e.message) || e), "err");
+          return;
+        }
+      }
 
       // ---- Recensement de toutes les régions claires, en une seule passe ----
       const donnees = baseCtx.getImageData(0, 0, W, H).data;
@@ -1614,7 +1710,8 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
       const ecart = (g) => Math.abs(g.bw - attendu.bw) / attendu.bw
                          + Math.abs(g.bh - attendu.bh) / attendu.bh;
       const compatible = (g) => Math.abs(g.bw - attendu.bw) / attendu.bw <= TOLERANCE
-                             && Math.abs(g.bh - attendu.bh) / attendu.bh <= TOLERANCE;
+                             && Math.abs(g.bh - attendu.bh) / attendu.bh <= TOLERANCE
+                             && (airePx === null || g.aire <= AIRE_FACTEUR_MAX * airePx);
       const dist = (g) => Math.hypot(g.cx - W / 2, g.cy - H / 2);
       // CLASSEMENT EN DEUX TEMPS, et l'ordre compte.
       // La ressemblance de taille d'abord : classer par distance au centre laissait
@@ -1633,8 +1730,11 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
       const dims = (g) => g.bw + "×" + g.bh;
       const resume = "Attendu " + Math.round(attendu.bw) + "×" + Math.round(attendu.bh)
         + " px, soit " + mDim[1] + "×" + mDim[2] + " m à 1/" + ech + " ("
-        + pxParMetre.toFixed(1) + " px/m). " + regions.length + " région(s) recensée(s), "
-        + retenues.length + " compatible(s) à ±" + Math.round(TOLERANCE * 100) + " %.";
+        + pxParMetre.toFixed(1) + " px/m)"
+        + (airePx ? ", aire au plus " + Math.round(AIRE_FACTEUR_MAX * airePx).toLocaleString("fr-FR")
+            + " px pour " + surfM2 + " m²" : "")
+        + ". " + regions.length + " région(s) recensée(s), "
+        + retenues.length + " compatible(s).";
       console.log("PAINT auto :", { attendu, regions: regions.length, retenues, proches });
 
       if(!retenues.length){
