@@ -1670,67 +1670,116 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
       // colonne de gauche.
       // Rend compte de la voie employée : sans cela on ne sait pas si le titre a
       // été localisé ou si l'on est retombé sur une proportion.
+      // ---- TABLEAU D'ANNOTATION SOUS LE TITRE ------------------------------
+      // Trois colonnes — section, numéro, contenance cadastrale — et une ligne de
+      // total. Choix de JFD, pour deux raisons : un tableau a une largeur définie,
+      // donc un centrage vérifiable, là où deux lignes de texte centrées de
+      // longueurs inégales décrochent de part et d'autre ; et il prépare les
+      // UNITÉS FONCIÈRES, où plusieurs parcelles coloriées sur un même plan
+      // demandent une ligne chacune et un total d'ensemble.
+      // DESSINÉ SUR LE CALQUE et non porté par le mécanisme de notes : celui-ci ne
+      // sait afficher qu'une ligne de texte centrée, sans colonnes ni filets. Le
+      // calque part dans les exports PNG et PDF (buildExportCanvas le compose) et
+      // reste couvert par l'annulation.
       let annotMethode = "";
-      const annoterSousLeTitre = async (lignes) => {
-        if(!lignes.length) return 0;
-        const taille = Math.max(14, Math.round(S.W / 85));
-        let cx = null, cy = null;
 
-        // VOIE 1 — boîtes englobantes réelles par TSV. La plus précise.
+      const axeDuTitre = async (taille) => {
+        // VOIE 1 — boîtes englobantes réelles par TSV, la plus précise.
         const boite = await trouverLigneContenant("CADASTRAL");
         if(boite){
-          cx = (boite.x0 + boite.x1) / 2;
-          cy = boite.y1 + taille * 1.9;
-          annotMethode = "titre localisé au pixel (TSV, " + boite.mots + " mots, "
-            + "étendue " + Math.round(boite.x0) + "–" + Math.round(boite.x1) + " px)";
+          annotMethode = "titre localisé au pixel (TSV, " + boite.mots + " mots, étendue "
+            + Math.round(boite.x0) + "–" + Math.round(boite.x1) + " px)";
+          return { cx: (boite.x0 + boite.x1) / 2, y: boite.y1 + taille * 1.6 };
         }
-
-        // VOIE 2 — les mots déjà lus pour les coordonnées. On prend la ligne du
-        // bloc de titre qui compte le PLUS de mots : « DIRECTION GÉNÉRALE DES
-        // FINANCES PUBLIQUES » en compte quatre ou cinq, donc son axe est mieux
-        // estimé que celui de « EXTRAIT DU PLAN CADASTRAL » dont l'OCR ne lit
-        // souvent qu'un mot. Les deux lignes sont centrées sur le même axe.
-        if(cx === null){
-          const vocab = /^(DIRECTION|GENERALE|GÉNÉRALE|DES|FINANCES|PUBLIQUES|EXTRAIT|DU|PLAN|CADASTRAL)$/i;
-          const cands = ((S.ocrCache && S.ocrCache.words) || [])
-            .filter((w) => vocab.test(String(w.text).replace(/[^A-Za-zÀ-ÿ]/g, "")));
-          if(cands.length >= 2){
-            // Regrouper par hauteur, garder la ligne la plus fournie.
-            const paquets = [];
-            cands.forEach((w) => {
-              const q = paquets.find((g) => Math.abs(g[0].cy - w.cy) < taille);
-              if(q) q.push(w); else paquets.push([w]);
-            });
-            paquets.sort((a, b) => b.length - a.length);
-            const ligne = paquets[0];
-            const xs = ligne.map((w) => w.cx);
-            cx = (Math.min(...xs) + Math.max(...xs)) / 2;
-            cy = Math.max(...cands.map((w) => w.cy)) + taille * 2.4;
-            annotMethode = "titre estimé sur " + ligne.length + " mot(s) lus";
-          }
+        // VOIE 2 — les mots déjà lus pour les coordonnées, ligne la plus fournie.
+        const vocab = /^(DIRECTION|GENERALE|GÉNÉRALE|DES|FINANCES|PUBLIQUES|EXTRAIT|DU|PLAN|CADASTRAL)$/i;
+        const cands = ((S.ocrCache && S.ocrCache.words) || [])
+          .filter((w) => vocab.test(String(w.text).replace(/[^A-Za-zÀ-ÿ]/g, "")));
+        if(cands.length >= 2){
+          const paquets = [];
+          cands.forEach((w) => {
+            const q = paquets.find((g) => Math.abs(g[0].cy - w.cy) < taille);
+            if(q) q.push(w); else paquets.push([w]);
+          });
+          paquets.sort((a, b) => b.length - a.length);
+          const xs = paquets[0].map((w) => w.cx);
+          annotMethode = "titre estimé sur " + paquets[0].length + " mot(s) lus";
+          return { cx: (Math.min(...xs) + Math.max(...xs)) / 2,
+                   y: Math.max(...cands.map((w) => w.cy)) + taille * 2.2 };
         }
-
-        // VOIE 3 — proportion, calée sur la mise en page du service. Le titre est
-        // centré dans le cartouche du MILIEU, qui n'est pas au centre de la page :
-        // le cartouche de gauche est plus étroit que celui de droite.
-        if(cx === null){
-          const paysage = /paysage/.test(fmt);
-          cx = paysage ? S.W * 0.20 : S.W * 0.435;
-          cy = paysage ? S.H * 0.16 : S.H * 0.115;
-          annotMethode = "titre non localisé, position proportionnelle";
-        }
-
-        lignes.forEach((texte, i) => {
-          const note = { id: Date.now() + i, x: cx / S.W, y: (cy + i * taille * 1.5) / S.H,
-                         text: texte, color: "#0F2238", size: taille };
-          S.notes.push(note);
-          renderNote(note);
-        });
-        annotMethode += ", axe à x=" + Math.round(cx);
-        return lignes.length;
+        // VOIE 3 — proportion, ajustable par l'appelant avec axe=0.42.
+        const paysage = /paysage/.test(fmt);
+        const impose = parseFloat(p.get("axe") || "");
+        const frac = Number.isFinite(impose) ? impose : (paysage ? 0.20 : 0.435);
+        annotMethode = "titre non localisé, axe proportionnel " + frac.toFixed(3);
+        return { cx: S.W * frac, y: paysage ? S.H * 0.16 : S.H * 0.115 };
       };
-      const lignesAnnot = (p.get("annot") || "").split("|")
-        .map((t) => t.trim()).filter(Boolean).slice(0, 4);
+
+      const dessinerTableau = async (rangs, total) => {
+        if(!rangs.length) return 0;
+        const taille = Math.max(13, Math.round(S.W / 95));
+        const { cx, y } = await axeDuTitre(taille);
+        const entetes = ["Section", "Numéro", "Contenance cadastrale"];
+        const corps = rangs.map((r) => [r[0] || "", r[1] || "", r[2] || ""]);
+        const toutes = [entetes, ...corps].concat(total ? [["", "Total", total]] : []);
+
+        oCtx.save();
+        oCtx.globalAlpha = 1;
+        oCtx.font = "600 " + taille + "px \"Segoe UI\",sans-serif";
+        // Largeur de chaque colonne, mesurée sur son contenu réel.
+        const pad = Math.round(taille * 0.8);
+        const larg = [0, 1, 2].map((c) =>
+          Math.max(...toutes.map((l) => oCtx.measureText(String(l[c])).width)) + pad * 2);
+        const largeurTotale = larg.reduce((a, b) => a + b, 0);
+        const hauteurLigne = Math.round(taille * 1.55);
+        let x0 = Math.round(cx - largeurTotale / 2);
+        x0 = Math.max(4, Math.min(x0, S.W - largeurTotale - 4));
+        const y0 = Math.round(y);
+
+        // Fond blanc léger : le tableau se pose sur une zone vide du cartouche,
+        // mais un fond garantit la lisibilité si la mise en page change.
+        oCtx.fillStyle = "rgba(255,255,255,0.85)";
+        oCtx.fillRect(x0, y0, largeurTotale, hauteurLigne * toutes.length);
+
+        oCtx.textBaseline = "middle";
+        oCtx.strokeStyle = "#0F2238";
+        oCtx.lineWidth = Math.max(1, Math.round(taille / 14));
+        toutes.forEach((ligne, i) => {
+          const yl = y0 + hauteurLigne * i;
+          const entete = i === 0;
+          const totalLigne = total && i === toutes.length - 1;
+          oCtx.fillStyle = "#0F2238";
+          oCtx.font = (entete || totalLigne ? "700 " : "500 ") + taille + "px \"Segoe UI\",sans-serif";
+          let x = x0;
+          ligne.forEach((cel, c) => {
+            // Nombres à droite, textes centrés : la contenance se lit en colonne.
+            oCtx.textAlign = c === 2 ? "right" : "center";
+            const tx = c === 2 ? x + larg[c] - pad : x + larg[c] / 2;
+            oCtx.fillText(String(cel), tx, yl + hauteurLigne / 2);
+            x += larg[c];
+          });
+          // Filet sous l'en-tête et au-dessus du total.
+          if(entete || totalLigne){
+            const yFilet = entete ? yl + hauteurLigne : yl;
+            oCtx.beginPath();
+            oCtx.moveTo(x0, yFilet); oCtx.lineTo(x0 + largeurTotale, yFilet);
+            oCtx.stroke();
+          }
+        });
+        oCtx.restore();
+        pushUndo();
+        annotMethode += ", tableau de " + toutes.length + " ligne(s), largeur "
+          + Math.round(largeurTotale) + " px, axe à x=" + Math.round(x0 + largeurTotale / 2);
+        return toutes.length;
+      };
+
+      // Contrat : tab=SECTION,NUMERO,CONTENANCE;SECTION,NUMERO,CONTENANCE…
+      // et total=… . Le total n'est porté que s'il est transmis, donc absent pour
+      // une parcelle seule où il ferait doublon.
+      const rangsAnnot = (p.get("tab") || "").split(";")
+        .map((r) => r.split(",").map((c) => c.trim()))
+        .filter((r) => r.length >= 2 && (r[0] || r[1]));
+      const totalAnnot = (p.get("total") || "").trim();
 
       // attendus : { X, Y } transmis par l'appelant, sert à classer les groupes
       // d'étiquettes par ordre de grandeur quand la corrélation ne suffit pas.
@@ -1969,7 +2018,7 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
                 pushUndo();
                 if(!S.legendLabels[S.color]) S.legendLabels[S.color] = "";
                 rebuildLegend();
-                const nbAnnot = await annoterSousLeTitre(lignesAnnot);
+                const nbAnnot = await dessinerTableau(rangsAnnot, totalAnnot);
                 const xs = sommets.map((q) => q[0]), ys = sommets.map((q) => q[1]);
                 setStatus("Parcelle coloriée par POLYGONE PROJETÉ — contour cadastral "
                   + "projeté puis peint, sans remplissage : insensible aux traits de "
@@ -1977,7 +2026,7 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
                   + (Math.max(...xs) - Math.min(...xs)) + "×" + (Math.max(...ys) - Math.min(...ys))
                   + " px. Géoréférencement " + Math.abs(g.fx.a).toFixed(6) + " m/px, "
                   + "corrélations " + g.fx.r.toFixed(4) + " et " + g.fy.r.toFixed(4) + "."
-                  + (nbAnnot ? " " + nbAnnot + " ligne(s) d'annotation ajoutée(s) : "
+                  + (nbAnnot ? " " + nbAnnot + " ligne(s) de tableau ajoutée(s) : "
                      + annotMethode + ". Déplaçables au glisser, modifiables au double-clic." : ""), "ok");
                 return;
               }
@@ -2027,7 +2076,7 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
                     + "correct — le trait de limite de la parcelle est probablement interrompu. "
                     + info + " Colorisez à la main avec l'outil « Remplir ».", "warn");
                 }else{
-                  const nb2 = await annoterSousLeTitre(lignesAnnot);
+                  const nb2 = await dessinerTableau(rangsAnnot, totalAnnot);
                   setStatus("Parcelle coloriée par POSITION PROJETÉE, sans estimation ni "
                     + "reconnaissance de numéro. " + info
                     + (nb2 ? " " + nb2 + " ligne(s) d'annotation : " + annotMethode + "." : ""), "ok");
