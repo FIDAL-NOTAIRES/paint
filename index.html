@@ -1600,6 +1600,56 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
       // (largeur de feuille × échelle / largeur du rendu). Si l'ajustement calculé
       // sur les étiquettes lues retombe sur cette valeur, la lecture est juste —
       // sans avoir besoin d'aucune vérité terrain.
+      // ---- Géoréférencement par les étiquettes de marge, réutilisable --------
+      // Lit les valeurs de coordonnées portées le long du cadre et en déduit la
+      // correspondance pixels ↔ mètres projetés. Mesuré sur Saint-Omer :
+      // corrélation 1,0000 sur les deux axes, écart de 0,06 % à la théorie.
+      const georeferencer = async () => {
+        const cle = "geo|" + S.page + "|" + S.rotation;
+        if(!S.ocrCache || S.ocrCache.key !== cle) S.ocrCache = { key: cle, base: null, words: [], done: new Set() };
+        if(!S.ocrCache.base) S.ocrCache.base = await renderOcrBase();
+        for(const deg of [0, 90, -90]){
+          if(S.ocrCache.done.has(deg)) continue;
+          spinmsg.textContent = "Lecture des coordonnées" + (deg ? " (étiquettes à " + deg + "°)" : "") + "…";
+          S.ocrCache.words.push(...await ocrAngle(S.ocrCache.base, deg));
+          S.ocrCache.done.add(deg);
+        }
+        const etiquettes = S.ocrCache.words
+          .map((w) => ({ v: parseInt(String(w.text).replace(/[^0-9]/g, ""), 10),
+                         cx: w.cx, cy: w.cy, brut: w.text }))
+          .filter((e) => Number.isFinite(e.v) && e.v >= 100000 && e.v <= 99999999);
+        // Regroupement par ordre de grandeur : élimine les parasites isolés — le
+        // « 1/1000 » du cartouche lu 171000, la date d'édition lue 28072026.
+        const paquets = new Map();
+        etiquettes.forEach((e) => {
+          const k = Math.floor(e.v / 100000);
+          if(!paquets.has(k)) paquets.set(k, []);
+          paquets.get(k).push(e);
+        });
+        const groupes = [...paquets.values()].filter((g) => g.length >= 2);
+        const rejetes = etiquettes.filter((e) => (paquets.get(Math.floor(e.v / 100000)) || []).length < 2);
+        const stats = (g, axe) => {
+          const u = g.map((e) => (axe === "x" ? e.cx : e.cy)), v = g.map((e) => e.v);
+          const n = g.length, mu = u.reduce((a, b) => a + b, 0) / n, mv = v.reduce((a, b) => a + b, 0) / n;
+          let num = 0, du = 0, dv = 0;
+          for(let i = 0; i < n; i++){
+            num += (u[i] - mu) * (v[i] - mv); du += (u[i] - mu) ** 2; dv += (v[i] - mv) ** 2;
+          }
+          if(du === 0 || dv === 0) return null;
+          const a = num / du;
+          return { a, b: mv - a * mu, n, r: num / Math.sqrt(du * dv),
+                   min: Math.min(...v), max: Math.max(...v) };
+        };
+        let fx = null, fy = null;
+        groupes.forEach((g) => {
+          const sx = stats(g, "x"), sy = stats(g, "y");
+          if(!sx || !sy) return;
+          if(Math.abs(sx.r) >= Math.abs(sy.r)){ if(!fx || Math.abs(sx.r) > Math.abs(fx.r)) fx = sx; }
+          else { if(!fy || Math.abs(sy.r) > Math.abs(fy.r)) fy = sy; }
+        });
+        return { etiquettes, groupes, rejetes, fx, fy };
+      };
+
       if(p.get("diaggeo") === "1"){
         try{
           spin.classList.add("show"); spinmsg.textContent = "Lecture des coordonnées en marge…";
@@ -1692,6 +1742,87 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
           console.error("PAINT diag géo :", e);
           setStatus("Diagnostic de géoréférencement interrompu : " + ((e && e.message) || e), "err");
           return;
+        }
+      }
+
+      // ================== VOIE DÉTERMINISTE : LE POINT PROJETÉ ==============
+      // Si REDPAR transmet pt=X,Y — un point intérieur à la parcelle, exprimé
+      // dans la projection conique conforme du plan — on n'a plus rien à
+      // deviner : on lit le géoréférencement en marge, on convertit ce point en
+      // pixels, et l'on amorce le remplissage exactement là.
+      // C'est le troisième signal, et le plus fort : il ne dépend ni de la taille
+      // attendue ni de la lecture d'un numéro de parcelle.
+      const mPt = (p.get("pt") || "").match(/^(-?[0-9.]+),(-?[0-9.]+)$/);
+      if(mPt){
+        try{
+          spin.classList.add("show"); spinmsg.textContent = "Lecture des coordonnées en marge…";
+          const g = await georeferencer();
+          spin.classList.remove("show");
+          const X = parseFloat(mPt[1]), Y = parseFloat(mPt[2]);
+          if(g.fx && g.fy && Math.abs(g.fx.r) > 0.99 && Math.abs(g.fy.r) > 0.99){
+            const px = Math.round((X - g.fx.b) / g.fx.a);
+            const py = Math.round((Y - g.fy.b) / g.fy.a);
+            // Contrôles de vraisemblance : le point doit tomber dans le rendu, et
+            // ses coordonnées dans la plage des étiquettes lues. Un mauvais choix
+            // de zone de projection, ou l'outre-mer, échouent ici — et l'on
+            // retombe alors sur la détection par taille.
+            const dansPlage = X >= g.fx.min - 500 && X <= g.fx.max + 500
+                           && Y >= g.fy.min - 500 && Y <= g.fy.max + 500;
+            const dansRendu = px >= 0 && py >= 0 && px < W && py < H;
+            if(dansPlage && dansRendu){
+              const donnees0 = baseCtx.getImageData(0, 0, W, H).data;
+              const clair0 = (i) => (0.299 * donnees0[i * 4] + 0.587 * donnees0[i * 4 + 1]
+                + 0.114 * donnees0[i * 4 + 2]) >= thr;
+              // Le point peut tomber sur un trait de limite : on cherche le pixel
+              // clair le plus proche, dans un rayon de 12 px.
+              let ax = px, ay = py;
+              if(!clair0(py * W + px)){
+                let mieux = null;
+                for(let r = 1; r <= 12 && !mieux; r++){
+                  for(let a = 0; a < 8 * r; a++){
+                    const t = 2 * Math.PI * a / (8 * r);
+                    const x = Math.round(px + r * Math.cos(t)), y = Math.round(py + r * Math.sin(t));
+                    if(x >= 0 && y >= 0 && x < W && y < H && clair0(y * W + x)){ mieux = [x, y]; break; }
+                  }
+                }
+                if(mieux){ ax = mieux[0]; ay = mieux[1]; }
+              }
+              if(clair0(ay * W + ax)){
+                floodFill(ax, ay);
+                pushUndo();
+                rebuildLegend();
+                const peints0 = (() => {
+                  const im = oCtx.getImageData(0, 0, W, H).data;
+                  let n = 0;
+                  for(let i = 3; i < im.length; i += 4) if(im[i] > 0) n++;
+                  return n;
+                })();
+                const part0 = peints0 / (W * H);
+                const info = "Géoréférencement lu sur le plan : " + Math.abs(g.fx.a).toFixed(6)
+                  + " m/px en X et " + Math.abs(g.fy.a).toFixed(6) + " en Y, corrélations "
+                  + g.fx.r.toFixed(4) + " et " + g.fy.r.toFixed(4) + ". Point projeté ("
+                  + Math.round(X) + ", " + Math.round(Y) + ") → pixel (" + ax + ", " + ay + ").";
+                if(part0 > 0.30){
+                  oCtx.clearRect(0, 0, W, H); S.legendLabels = {}; rebuildLegend();
+                  S.tool = "fill";
+                  setStatus("Colorisation écartée : la zone atteinte couvrait "
+                    + Math.round(part0 * 100) + " % du plan alors que le point projeté était "
+                    + "correct — le trait de limite de la parcelle est probablement interrompu. "
+                    + info + " Colorisez à la main avec l'outil « Remplir ».", "warn");
+                }else{
+                  setStatus("Parcelle coloriée par POSITION PROJETÉE, sans estimation ni "
+                    + "reconnaissance de numéro. " + info, "ok");
+                }
+                return;
+              }
+            }
+            console.warn("PAINT : point projeté hors plage ou hors rendu", { X, Y, px, py, dansPlage, dansRendu });
+          }else{
+            console.warn("PAINT : géoréférencement non concluant, repli sur la taille attendue", g);
+          }
+        }catch(e){
+          spin.classList.remove("show");
+          console.warn("PAINT : voie déterministe indisponible, repli sur la taille attendue", e);
         }
       }
 
