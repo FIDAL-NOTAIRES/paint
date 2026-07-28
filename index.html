@@ -1604,6 +1604,42 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
       // Lit les valeurs de coordonnées portées le long du cadre et en déduit la
       // correspondance pixels ↔ mètres projetés. Mesuré sur Saint-Omer :
       // corrélation 1,0000 sur les deux axes, écart de 0,06 % à la théorie.
+      // ---- ANNOTATION SOUS LE TITRE DE L'EXTRAIT ---------------------------
+      // Écrit des lignes de texte sous « EXTRAIT DU PLAN CADASTRAL », par le
+      // mécanisme de NOTES déjà en place : elles partent ainsi dans l'export PNG
+      // et PDF (buildExportCanvas les dessine centrées sur leur ancrage), et
+      // restent déplaçables et modifiables à la main par double-clic.
+      // Le titre est repéré par OCR — le mot « CADASTRAL » — et non par une
+      // position figée, parce que la mise en page diffère entre portrait, où le
+      // titre est en haut au centre, et paysage, où le cartouche occupe la
+      // colonne de gauche.
+      const annoterSousLeTitre = (lignes) => {
+        if(!lignes.length) return 0;
+        const mots = (S.ocrCache && S.ocrCache.words) || [];
+        const titre = mots.find((w) => /^CADASTRAL/i.test(String(w.text)))
+                   || mots.find((w) => /^EXTRAIT/i.test(String(w.text)));
+        const taille = Math.max(14, Math.round(S.W / 85));
+        let cx, cy;
+        if(titre){
+          cx = titre.cx;
+          cy = titre.cy + taille * 2.2;      // sous les tirets qui suivent le titre
+        }else{
+          // Repli proportionnel, calé sur la mise en page du service.
+          const paysage = /paysage/.test(fmt);
+          cx = paysage ? S.W * 0.20 : S.W * 0.55;
+          cy = paysage ? S.H * 0.16 : S.H * 0.115;
+        }
+        lignes.forEach((texte, i) => {
+          const note = { id: Date.now() + i, x: cx / S.W, y: (cy + i * taille * 1.5) / S.H,
+                         text: texte, color: "#0F2238", size: taille };
+          S.notes.push(note);
+          renderNote(note);
+        });
+        return lignes.length;
+      };
+      const lignesAnnot = (p.get("annot") || "").split("|")
+        .map((t) => t.trim()).filter(Boolean).slice(0, 4);
+
       // attendus : { X, Y } transmis par l'appelant, sert à classer les groupes
       // d'étiquettes par ordre de grandeur quand la corrélation ne suffit pas.
       const georeferencer = async (attendus) => {
@@ -1841,13 +1877,16 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
                 pushUndo();
                 if(!S.legendLabels[S.color]) S.legendLabels[S.color] = "";
                 rebuildLegend();
+                const nbAnnot = annoterSousLeTitre(lignesAnnot);
                 const xs = sommets.map((q) => q[0]), ys = sommets.map((q) => q[1]);
                 setStatus("Parcelle coloriée par POLYGONE PROJETÉ — contour cadastral "
                   + "projeté puis peint, sans remplissage : insensible aux traits de "
                   + "limite interrompus. " + sommets.length + " sommets, emprise "
                   + (Math.max(...xs) - Math.min(...xs)) + "×" + (Math.max(...ys) - Math.min(...ys))
                   + " px. Géoréférencement " + Math.abs(g.fx.a).toFixed(6) + " m/px, "
-                  + "corrélations " + g.fx.r.toFixed(4) + " et " + g.fy.r.toFixed(4) + ".", "ok");
+                  + "corrélations " + g.fx.r.toFixed(4) + " et " + g.fy.r.toFixed(4) + "."
+                  + (nbAnnot ? " " + nbAnnot + " ligne(s) d'annotation ajoutée(s) sous le titre — "
+                     + "déplaçables au glisser, modifiables au double-clic." : ""), "ok");
                 return;
               }
             }
@@ -1896,8 +1935,10 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
                     + "correct — le trait de limite de la parcelle est probablement interrompu. "
                     + info + " Colorisez à la main avec l'outil « Remplir ».", "warn");
                 }else{
+                  const nb2 = annoterSousLeTitre(lignesAnnot);
                   setStatus("Parcelle coloriée par POSITION PROJETÉE, sans estimation ni "
-                    + "reconnaissance de numéro. " + info, "ok");
+                    + "reconnaissance de numéro. " + info
+                    + (nb2 ? " " + nb2 + " ligne(s) d'annotation ajoutée(s)." : ""), "ok");
                 }
                 return;
               }
