@@ -1340,9 +1340,17 @@ function filetVertical(xDepart, sens, yA, yB, portee){
 // sombres traversant l'essentiel de la largeur de page. C'est le trait qui ferme
 // l'en-tête, ou le bord supérieur du cadre de la carte — dans les deux cas la
 // limite sous laquelle le tableau d'annotation ne doit pas descendre.
-function filetHorizontalSous(yDepart, portee){
+function filetHorizontalSous(yDepart, portee, xa, xb){
   try{
-    const x0 = Math.round(S.W * 0.10), larg = Math.round(S.W * 0.80);
+    // Bornes en abscisse : par défaut la largeur de page, mais on passe celles de
+    // la COLONNE quand on les connaît. En paysage, le trait qui ferme la zone du
+    // titre est celui du cartouche « Département », qui ne traverse que la colonne
+    // de gauche : exiger 60 % de la largeur de PAGE ne le trouvait pas, d'où une
+    // hauteur disponible sous-évaluée et un tableau réparti en trop de colonnes.
+    const bornes = (Number.isFinite(xa) && Number.isFinite(xb) && xb - xa > 40)
+      ? [Math.round(xa) + 2, Math.round(xb) - 2]
+      : [Math.round(S.W * 0.10), Math.round(S.W * 0.90)];
+    const x0 = bornes[0], larg = bornes[1] - bornes[0];
     const y0 = Math.max(0, Math.round(yDepart));
     const h = Math.min(Math.round(portee), S.H - y0);
     if(h < 4) return null;
@@ -1928,7 +1936,8 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
           ? (bordD - bordG) - Math.round(taille * 1.2) : null;
         // Limite basse : le filet qui ferme l'en-tête, ou le bord du cadre de la
         // carte. Repli prudent à 30 % de la hauteur de page si aucun n'est trouvé.
-        const filetBas = filetHorizontalSous(yHaut + taille * 2, Math.round(S.H * 0.45));
+        const filetBas = filetHorizontalSous(yHaut + taille * 2, Math.round(S.H * 0.55),
+                                             bordG, bordD);
         const dispoH = (filetBas !== null ? filetBas : Math.round(S.H * 0.30))
           - Math.round(yHaut) - Math.round(taille * 0.8);
 
@@ -2003,7 +2012,10 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
         // Teintes propres au tableau : elles ne doivent pas peupler la légende.
         S.couleursAnnot = ["#0F2238"];
         pushUndo();
-        annotMethode += ", tableau de " + toutes.length + " ligne(s) en " + nCol
+        annotMethode += (filetBas !== null
+          ? ", limite basse au filet y=" + filetBas
+          : ", limite basse estimée faute de filet")
+          + ", tableau de " + toutes.length + " ligne(s) en " + nCol
           + " colonne(s), largeur " + Math.round(largeurTotale) + " px, hauteur disponible "
           + Math.round(dispoH) + " px, axe à x=" + Math.round(x0 + largeurTotale / 2);
         return toutes.length;
