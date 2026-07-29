@@ -167,8 +167,56 @@ async function fetchExtrait(params, mode = 'pdf') {
     const pt = map.text.match(/new Point\((.*),(.*)\)/);
     if (!pt || !pt[1] || !pt[2]) { const e = new Error('centre de la parcelle introuvable'); e.statusCode = 502; throw e; }
     const centreDuService = { x: parseFloat(pt[1]), y: parseFloat(pt[2]) };
-    const x = params.x ? parseFloat(params.x) : centreDuService.x;
-    const y = params.y ? parseFloat(params.y) : centreDuService.y;
+
+    // ------------------------------------------------------------------------
+    // GARDE-FOU DE ZONE — 29/07/2026, BOUE (Aisne, INSEE 02103, section A 152).
+    // Un centre imposé calculé dans la MAUVAISE ZONE conique conforme place
+    // MAPBBOX à des centaines de kilomètres du bon endroit, et le service ne
+    // renvoie alors AUCUN PDF : échec dur, non transitoire, au libellé trompeur
+    // (« le service n'a pas renvoyé de PDF », qu'on prend pour une limitation de
+    // débit). Mesuré à Boue : y imposé 9 202 457,5 en CC50 contre 8 313 570,5
+    // servi en CC49, soit 888 887 m d'écart — exactement 1 000 000 (les origines
+    // Y sont séparées d'un million pile) moins 111 113 (le déplacement du
+    // parallèle d'origine d'un degré). En X, 110 m seulement : les zones
+    // partagent le méridien central, donc SEUL L'AXE VERTICAL PART EN VRILLE.
+    //
+    // CAUSE DE FOND, NON CORRIGÉE ICI : les zones se RECOUVRENT d'un degré —
+    // CC49 couvre 48–50, CC50 couvre 49–51 — et dans le recouvrement les deux
+    // sont géodésiquement valables. C'est la DGFiP qui tranche, FEUILLE PAR
+    // FEUILLE. Aucune règle sur la latitude ne peut le deviner : Boue est à
+    // 49,93°, donc arrondi à 50, mais le service dit CC49. L'hypothèse « zone
+    // déduite de la latitude arrondie » du mémo REDPAR v5 est donc FAUSSE dans
+    // la bande de recouvrement. À traiter côté REDPAR / PAINT.
+    //
+    // CE GARDE-FOU transforme l'échec dur en plan CORRECT mais NON RECENTRÉ :
+    // mieux vaut un extrait centré par le service qu'aucun extrait. Le repli est
+    // MOTIVÉ ET VISIBLE — en-tête X-Paint-Centre et champ du mode diag —, jamais
+    // silencieux : un recentrage abandonné sans le dire produirait une pièce dont
+    // le cadrage ne serait pas celui demandé.
+    // SEUIL 20 km : très au-dessus de tout décalage légitime (le plus grand
+    // cadre du service couvre 1 580 m, donc un centre d'unité foncière ne peut
+    // s'écarter que de quelques centaines de mètres du centre de la parcelle
+    // interrogée) et très au-dessous des 889 km d'une erreur de zone.
+    // ------------------------------------------------------------------------
+    const SEUIL_ZONE_M = 20000;
+    let centreRefuse = null;
+    let x = params.x ? parseFloat(params.x) : centreDuService.x;
+    let y = params.y ? parseFloat(params.y) : centreDuService.y;
+    if (Number.isFinite(x) && Number.isFinite(y)
+        && (Math.abs(x - centreDuService.x) > SEUIL_ZONE_M
+         || Math.abs(y - centreDuService.y) > SEUIL_ZONE_M)) {
+      centreRefuse = {
+        x, y,
+        ecart_x: Math.round(x - centreDuService.x),
+        ecart_y: Math.round(y - centreDuService.y),
+        raison: 'centre imposé à plus de 20 km du centre servi — zone conique '
+              + 'conforme probablement différente de celle du service ; centre '
+              + 'imposé IGNORÉ, plan centré par le service'
+      };
+      x = centreDuService.x;
+      y = centreDuService.y;
+    }
+    if (!Number.isFinite(x) || !Number.isFinite(y)) { x = centreDuService.x; y = centreDuService.y; }
     const boite = computeBbox({ x, y, taille, orientation, echelle });
     const { xMin, xMax, yMin, yMax } = boite;
 
@@ -186,7 +234,8 @@ async function fetchExtrait(params, mode = 'pdf') {
     if (mode === 'diag') {
       return { __diag: true, voie: { rotation, echelle, taille, orientation },
         centre_du_service: centreDuService, centre_utilise: { x, y },
-        centre_impose: Boolean(params.x && params.y), page_m: boite.page_m,
+        centre_impose: Boolean(params.x && params.y) && !centreRefuse,
+        centre_refuse: centreRefuse, page_m: boite.page_m,
         feuille: feuille[1], parcelle: parc[1],
         formulaire: { ...formulaire, CSRF_TOKEN: '(masqué)' } };
     }
@@ -198,7 +247,7 @@ async function fetchExtrait(params, mode = 'pdf') {
 
     if (pdf.type !== 'application/pdf') { const e = new Error('le service n\'a pas renvoyé de PDF'); e.statusCode = 502; throw e; }
     return { pdf: pdf.body, voie: { rotation, echelle, taille, orientation },
-      bbox: formulaire.MAPBBOX, page_m: boite.page_m };
+      bbox: formulaire.MAPBBOX, page_m: boite.page_m, centreRefuse };
   } catch (e) {
     if (e.statusCode) throw e; // erreur métier déjà formée
     const err = new Error(`étape « ${step} » : ${e.timeout ? 'délai dépassé' : (e.message || 'erreur réseau')}`);
@@ -218,8 +267,13 @@ function tracer(res, v) {
   res.setHeader('X-Paint-Page', `${v.voie.taille}-${v.voie.orientation}`);
   if (v.bbox) res.setHeader('X-Paint-Bbox', v.bbox);
   if (v.page_m) res.setHeader('X-Paint-Page-M', v.page_m.join('x'));
+  // Le repli de zone doit être LISIBLE par l'appelant, sinon il est silencieux.
+  res.setHeader('X-Paint-Centre', v.centreRefuse
+    ? `service (impose ignore, ecart ${v.centreRefuse.ecart_x}x${v.centreRefuse.ecart_y} m)`
+    : 'utilise');
   res.setHeader('Access-Control-Expose-Headers',
-    'X-Paint-Rotation, X-Paint-Echelle, X-Paint-Page, X-Paint-Bbox, X-Paint-Page-M');
+    'X-Paint-Rotation, X-Paint-Echelle, X-Paint-Page, X-Paint-Bbox, X-Paint-Page-M, '
+    + 'X-Paint-Centre');
 }
 
 module.exports = async (req, res) => {
