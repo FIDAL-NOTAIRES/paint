@@ -2045,6 +2045,12 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
           .map((w) => ({ v: parseInt(String(w.text).replace(/[^0-9]/g, ""), 10),
                          cx: w.cx, cy: w.cy, brut: w.text }))
           .filter((e) => Number.isFinite(e.v) && e.v >= 100000 && e.v <= 99999999);
+        // Compte AVANT tout filtrage. Sans lui, un diagnostic affichant sept
+        // étiquettes légitimes est indistinguable selon que le filtre de
+        // vraisemblance a écarté deux parasites ou qu'il n'y en avait aucun —
+        // ce qui a fait conclure à tort, le 29/07/2026, que le défaut ne s'était
+        // pas reproduit.
+        const luesBrutes = etiquettes.length;
         // Regroupement par ordre de grandeur : élimine les parasites isolés — le
         // « 1/1000 » du cartouche lu 171000, la date d'édition lue 28072026.
         const paquets = new Map();
@@ -2159,7 +2165,7 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
           fy = { a: -echelle, b: ancreY.v + echelle * ancreY.u, n: 1, r: -1,
                  min: ancreY.v, max: ancreY.v, cale: true };
         }
-        return { etiquettes, parasites, groupes, rejetes, fx, fy, echelle };
+        return { etiquettes, parasites, luesBrutes, groupes, rejetes, fx, fy, echelle };
       };
 
       if(p.get("diaggeo") === "1"){
@@ -2174,10 +2180,27 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
           l.push("Échelle théorique : " + (1 / theo).toFixed(2) + " px/m ("
             + theo.toFixed(4) + " m/px), rendu de " + W + "×" + H + " px, " + fmt
             + " à 1/" + ech + ".");
-          l.push(g.etiquettes.length + " étiquette(s) numérique(s) lue(s), "
-            + g.groupes.length + " groupe(s) cohérent(s), " + g.rejetes.length
-            + " parasite(s) écarté(s)"
-            + (g.rejetes.length ? " (" + g.rejetes.map((e) => e.v).join(", ") + ")" : "") + ".");
+          // DEUX FAMILLES DE PARASITES, À NE PAS CONFONDRE — 29/07/2026.
+          //  · par VRAISEMBLANCE : valeur trop éloignée de la coordonnée
+          //    attendue. C'est le filtre du 29/07, celui qui tue les mentions
+          //    d'échelle du cartouche lues comme des coordonnées.
+          //  · ISOLÉ : seul de son ordre de grandeur, donc sans pente possible.
+          // Les valeurs sont LISTÉES et POSITIONNÉES : un compte seul ne permet
+          // pas de savoir, après coup, ce que le filtre a effectivement écarté.
+          l.push((g.luesBrutes != null ? g.luesBrutes + " étiquette(s) numérique(s) lue(s), "
+                    + g.etiquettes.length + " retenue(s), "
+                  : g.etiquettes.length + " étiquette(s) numérique(s) lue(s), ")
+            + g.groupes.length + " groupe(s) cohérent(s).");
+          l.push("Parasites écartés par vraisemblance : "
+            + (g.parasites && g.parasites.length
+                ? g.parasites.length + " — " + g.parasites
+                    .map((e) => e.v + "@(" + Math.round(e.cx) + "," + Math.round(e.cy) + ")").join(" · ")
+                : "aucun")
+            + ". Parasites isolés : "
+            + (g.rejetes.length
+                ? g.rejetes.length + " — " + g.rejetes
+                    .map((e) => e.v + "@(" + Math.round(e.cx) + "," + Math.round(e.cy) + ")").join(" · ")
+                : "aucun") + ".");
           const rendu = (f, nom) => f
             ? nom + " : " + Math.abs(f.a).toFixed(6) + " m/px sur " + f.n + " point(s)"
               + (f.cale ? ", axe CALÉ sur une étiquette unique (échelle reprise de l'autre axe)"
