@@ -4,20 +4,28 @@
 //
 // ROTATION DE LA ZONE D'IMPRESSION — ajout du 29/07/2026.
 // Le SCPC accepte un champ MAPROTATION que cette fonction laissait à 0 depuis
-// l'origine. Il est désormais piloté par le paramètre « rotation » (en degrés),
-// pour les parcelles en lanière diagonale : une bande de 300 m orientée à 45°
-// tient dans un cadre bien plus petit si le plan est tourné, donc à une échelle
-// plus fine. En l'ABSENCE du paramètre, le comportement est strictement
-// identique à celui d'avant : rotation = 0 et cadre serré.
+// l'origine. Il est piloté par le paramètre « rotation », en degrés. En
+// l'ABSENCE du paramètre, le comportement est strictement identique à celui
+// d'avant.
 //
-// ⚠ CONVENTION NON ENCORE ÉTABLIE. Deux inconnues subsistent sur le service,
-// qu'aucune documentation ne couvre et qu'il faut trancher par l'expérience :
-//   1. le SENS de rotation (horaire ou trigonométrique) et l'unité ;
-//   2. si MAPBBOX est lu AVANT la rotation (le cadre imprimé est alors la boîte
-//      tournée, et les coins de la parcelle peuvent sortir) ou APRÈS.
-// D'où le paramètre « cadre » : « serre » (défaut, comportement historique) ou
-// « englobant » (la boîte est élargie à l'enveloppe de la page tournée). Le
-// protocole de test est décrit dans le mémo REDPAR, addendum rotation.
+// CONVENTION ÉTABLIE EXPÉRIMENTALEMENT le 29/07/2026, sur cinq extraits de
+// contrôle de la parcelle AV 168 à Saint-Omer, par la direction de la flèche du
+// nord : la valeur est en DEGRÉS et une valeur POSITIVE fait tourner le contenu
+// du plan dans le SENS DES AIGUILLES sur la page — +45° amène la flèche à
+// 1 h 30, −45° à 10 h 30.
+//
+// L'EMPRISE AU SOL EST INVARIANTE, et c'est le second acquis de ces essais :
+// mesuré à la règle sur les extraits imprimés, 100 m de terrain occupent 100 mm
+// de papier au 1/1000 que le plan soit droit ou tourné (et 141 mm entre deux
+// étiquettes lues LE LONG DU BORD sur un plan à 45°, ce qui est la même chose
+// divisée par sin 45°). Le service déduit donc son emprise de RFV_X / RFV_Y,
+// ECHELLE et TAILLEPAGE, et NON de la taille de MAPBBOX. Le cartouche est
+// exact : aucune pièce produite n'est à une autre échelle que celle annoncée.
+// ⚠ NE PAS RÉINTRODUIRE de paramètre destiné à élargir MAPBBOX en fonction de la
+// rotation : une variante « cadre englobant » a été écrite puis retirée le
+// 29/07/2026, les essais ayant montré qu'il n'y a rien à élargir. Un paramètre
+// sans effet est un piège pour le prochain lecteur.
+//
 // RAPPEL DU PIÈGE MAISON : le service sert SILENCIEUSEMENT une valeur de repli
 // quand un paramètre ne lui plaît pas — une demande à 1/10000 revient à 1/1000
 // sans un mot. Ne jamais conclure d'un PDF non tourné que la rotation « ne
@@ -49,11 +57,11 @@ function deburr(s) {
 function codeDepartement(c) { return c.startsWith('97') ? c.slice(0, 3) : c.slice(0, 2); }
 
 /**
- * Angle ramené dans (-90, 90]. Une page tournée de 100° est la même page que
- * tournée de -80° au demi-tour près, et le demi-tour ne change pas l'emprise ;
- * inutile d'envoyer au service des valeurs qu'il pourrait refuser. Les cas
- * dégénérés (chaîne vide, texte, NaN) retombent sur 0, jamais sur une erreur :
- * un lien mal formé doit produire l'extrait droit, pas un échec.
+ * Angle ramené dans (-90, 90]. Un demi-tour ne change ni l'emprise ni la
+ * lisibilité d'un plan cadastral, et le service n'a pas à recevoir de valeurs
+ * qu'il pourrait refuser. Les cas dégénérés — chaîne vide, texte, NaN —
+ * retombent sur 0 et jamais sur une erreur : un lien mal formé doit produire
+ * l'extrait droit, pas un échec.
  */
 function normaliserRotation(v) {
   if (v === undefined || v === null || v === '') return 0;
@@ -65,30 +73,19 @@ function normaliserRotation(v) {
 }
 
 /**
- * Emprise au sol de la page, et boîte à transmettre.
- * MAP_SIZES est en centièmes de millimètre de papier : divisé par 100 000 il
- * donne des mètres de papier, multiplié par l'échelle des mètres de terrain
- * (A4 portrait au 1/1000 = 195,5 × 211,0 m, valeurs relevées sur le service).
- * En cadre « englobant », la boîte est l'enveloppe droite du rectangle tourné :
- * largeur = L·|cos| + H·|sin|, hauteur = L·|sin| + H·|cos|.
+ * Emprise au sol de la page. MAP_SIZES est en centièmes de millimètre de
+ * papier : divisé par 100 000 il donne des mètres de papier, multiplié par
+ * l'échelle des mètres de terrain (A4 portrait au 1/1000 = 195,5 × 211,0 m,
+ * valeurs relevées sur le service). Indépendante de la rotation, voir l'en-tête.
  */
-function computeBbox({ x, y, taille, orientation, echelle, rotation, cadre }) {
+function computeBbox({ x, y, taille, orientation, echelle }) {
   const { width, height } = MAP_SIZES[`${taille}-${orientation}`];
-  const pageL = (width / 100000) * echelle;
-  const pageH = (height / 100000) * echelle;
-  let l = pageL, h = pageH;
-  if (cadre === 'englobant' && rotation) {
-    const a = Math.abs(rotation) * Math.PI / 180;
-    const c = Math.abs(Math.cos(a));
-    const s = Math.abs(Math.sin(a));
-    l = pageL * c + pageH * s;
-    h = pageL * s + pageH * c;
-  }
+  const l = (width / 100000) * echelle;
+  const h = (height / 100000) * echelle;
   return {
     xMin: x - l / 2, xMax: x + l / 2,
     yMin: y - h / 2, yMax: y + h / 2,
-    page_m: [Math.round(pageL * 10) / 10, Math.round(pageH * 10) / 10],
-    boite_m: [Math.round(l * 10) / 10, Math.round(h * 10) / 10]
+    page_m: [Math.round(l * 10) / 10, Math.round(h * 10) / 10]
   };
 }
 
@@ -106,7 +103,8 @@ async function nomCommune(code) {
  *      = 'diag'  : va jusqu'au bord de l'IMPRESSION et renvoie le formulaire
  *                  EXACT qui aurait été posté, sans le poster. C'est la seule
  *                  façon de savoir ce que le programme envoie réellement, sans
- *                  avoir à déduire quoi que ce soit du PDF obtenu.
+ *                  rien avoir à déduire du PDF obtenu. C'est par là qu'a été
+ *                  établie la convention de rotation.
  */
 async function fetchExtrait(params, mode = 'pdf') {
   for (const p of ['commune', 'prefixe', 'section', 'parcelle']) {
@@ -117,7 +115,6 @@ async function fetchExtrait(params, mode = 'pdf') {
   const orientation = params.orientation === 'paysage' ? 'Paysage' : 'Portrait';
   const taille = params.taille === 'A3' ? 'A3' : 'A4';
   const rotation = normaliserRotation(params.rotation);
-  const cadre = params.cadre === 'englobant' ? 'englobant' : 'serre';
   const codeDep = codeDepartement(commune).padStart(3, '0');
 
   let step = 'commune';
@@ -172,12 +169,12 @@ async function fetchExtrait(params, mode = 'pdf') {
     const centreDuService = { x: parseFloat(pt[1]), y: parseFloat(pt[2]) };
     const x = params.x ? parseFloat(params.x) : centreDuService.x;
     const y = params.y ? parseFloat(params.y) : centreDuService.y;
-    const boite = computeBbox({ x, y, taille, orientation, echelle, rotation, cadre });
+    const boite = computeBbox({ x, y, taille, orientation, echelle });
     const { xMin, xMax, yMin, yMax } = boite;
 
     // Formulaire d'impression, monté une fois et réutilisé par ?diag=1 : le
-    // diagnostic doit porter sur l'objet RÉELLEMENT posté, pas sur une copie
-    // reconstituée à côté qui pourrait diverger au premier correctif.
+    // diagnostic doit porter sur l'objet RÉELLEMENT posté, et non sur une copie
+    // reconstituée à côté, qui divergerait au premier correctif.
     const formulaire = {
       MAPBBOX: [xMin, yMin, xMax, yMax].map(c => c.toFixed(3)).join(','),
       MAPROTATION: rotation,
@@ -187,10 +184,9 @@ async function fetchExtrait(params, mode = 'pdf') {
     };
 
     if (mode === 'diag') {
-      return { __diag: true, voie: { rotation, cadre, echelle, taille, orientation },
+      return { __diag: true, voie: { rotation, echelle, taille, orientation },
         centre_du_service: centreDuService, centre_utilise: { x, y },
-        centre_impose: Boolean(params.x && params.y),
-        page_m: boite.page_m, boite_m: boite.boite_m,
+        centre_impose: Boolean(params.x && params.y), page_m: boite.page_m,
         feuille: feuille[1], parcelle: parc[1],
         formulaire: { ...formulaire, CSRF_TOKEN: '(masqué)' } };
     }
@@ -201,8 +197,8 @@ async function fetchExtrait(params, mode = 'pdf') {
       .send(formulaire);
 
     if (pdf.type !== 'application/pdf') { const e = new Error('le service n\'a pas renvoyé de PDF'); e.statusCode = 502; throw e; }
-    return { pdf: pdf.body, voie: { rotation, cadre, echelle, taille, orientation },
-      bbox: formulaire.MAPBBOX, page_m: boite.page_m, boite_m: boite.boite_m };
+    return { pdf: pdf.body, voie: { rotation, echelle, taille, orientation },
+      bbox: formulaire.MAPBBOX, page_m: boite.page_m };
   } catch (e) {
     if (e.statusCode) throw e; // erreur métier déjà formée
     const err = new Error(`étape « ${step} » : ${e.timeout ? 'délai dépassé' : (e.message || 'erreur réseau')}`);
@@ -211,20 +207,19 @@ async function fetchExtrait(params, mode = 'pdf') {
 }
 
 // En-têtes de traçabilité, portés par TOUTE réponse PDF. Le PDF ne dit pas de
-// lui-même à quelle échelle ni sous quelle rotation il a été demandé ; ces
-// en-têtes le disent, et se lisent dans l'onglet Réseau du navigateur.
-// Access-Control-Expose-Headers est nécessaire pour qu'un appel depuis un autre
-// domaine (REDPAR) puisse les lire : sans lui, le navigateur les cache.
+// lui-même sous quelle rotation il a été demandé ; ces en-têtes le disent, et se
+// lisent dans l'onglet Réseau du navigateur. Access-Control-Expose-Headers est
+// nécessaire pour qu'un appel venu d'un autre domaine, REDPAR, puisse les lire :
+// sans lui le navigateur les masque.
 function tracer(res, v) {
-  if (!v) return;
+  if (!v || !v.voie) return;
   res.setHeader('X-Paint-Rotation', String(v.voie.rotation));
-  res.setHeader('X-Paint-Cadre', v.voie.cadre);
   res.setHeader('X-Paint-Echelle', String(v.voie.echelle));
   res.setHeader('X-Paint-Page', `${v.voie.taille}-${v.voie.orientation}`);
   if (v.bbox) res.setHeader('X-Paint-Bbox', v.bbox);
-  if (v.boite_m) res.setHeader('X-Paint-Boite-M', v.boite_m.join('x'));
+  if (v.page_m) res.setHeader('X-Paint-Page-M', v.page_m.join('x'));
   res.setHeader('Access-Control-Expose-Headers',
-    'X-Paint-Rotation, X-Paint-Cadre, X-Paint-Echelle, X-Paint-Page, X-Paint-Bbox, X-Paint-Boite-M');
+    'X-Paint-Rotation, X-Paint-Echelle, X-Paint-Page, X-Paint-Bbox, X-Paint-Page-M');
 }
 
 module.exports = async (req, res) => {
