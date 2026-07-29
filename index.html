@@ -2041,7 +2041,7 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
           S.ocrCache.words.push(...await ocrAngle(S.ocrCache.base, deg));
           S.ocrCache.done.add(deg);
         }
-        const etiquettes = S.ocrCache.words
+        let etiquettes = S.ocrCache.words
           .map((w) => ({ v: parseInt(String(w.text).replace(/[^0-9]/g, ""), 10),
                          cx: w.cx, cy: w.cy, brut: w.text }))
           .filter((e) => Number.isFinite(e.v) && e.v >= 100000 && e.v <= 99999999);
@@ -2061,6 +2061,7 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
         // rien : on ne touche qu'au préfixe, et seulement si le résultat tombe à
         // moins de 2 km de l'attendu. Les différences entre étiquettes, dont on
         // tire l'échelle, ne sont pas affectées.
+        let parasites = [];
         if(attendus){
           const reparer = (v) => {
             for(const cible of [attendus.X, attendus.Y]){
@@ -2072,6 +2073,30 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
             return v;
           };
           etiquettes.forEach((e) => { e.v = reparer(e.v); });
+          // ------------------------------------------------------------------
+          // ÉCARTER LES PARASITES PAR VRAISEMBLANCE — correctif du 29/07/2026.
+          // Le regroupement par ordre de grandeur n'élimine que les parasites
+          // ISOLÉS. Constaté à LA MADELEINE : le cartouche porte « Échelle
+          // d'origine : 1/1000 » et « Échelle d'édition : 1/2500 », dont l'OCR
+          // lit la barre de fraction comme un 7 — d'où 171000 et 172500. Ils
+          // sont DEUX, dans le même ordre de grandeur (1), donc le paquet passe
+          // le seuil de deux éléments ; ils sont empilés verticalement dans le
+          // cartouche, donc la corrélation les affecte aux ORDONNÉES ; et deux
+          // points donnant toujours |r| = 1, ils gagnent le départage. L'axe
+          // vertical était ainsi construit sur deux lignes du cartouche, et le
+          // point projeté — exact — rejeté au nom de cette lecture.
+          // CORRECTION : une étiquette de coordonnée est nécessairement PROCHE
+          // de la coordonnée attendue, que REDPAR transmet. Le plan le plus
+          // large du service couvre 1 580 m ; 5 km laissent donc une marge
+          // confortable tout en tuant les parasites, qui en sont à des
+          // millions. Ce filtre ne s'applique QUE si l'attendu est connu : sans
+          // lui — cas d'un PDF glissé — rien n'est écarté.
+          // ------------------------------------------------------------------
+          const PLAGE_VRAISEMBLABLE = 5000;
+          const vraisemblable = (v) => Math.abs(v - attendus.X) <= PLAGE_VRAISEMBLABLE
+                                    || Math.abs(v - attendus.Y) <= PLAGE_VRAISEMBLABLE;
+          parasites = etiquettes.filter((e) => !vraisemblable(e.v));
+          etiquettes = etiquettes.filter((e) => vraisemblable(e.v));
           paquets.clear();
           etiquettes.forEach((e) => {
             const k = Math.floor(e.v / 100000);
@@ -2134,7 +2159,7 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
           fy = { a: -echelle, b: ancreY.v + echelle * ancreY.u, n: 1, r: -1,
                  min: ancreY.v, max: ancreY.v, cale: true };
         }
-        return { etiquettes, groupes, rejetes, fx, fy, echelle };
+        return { etiquettes, parasites, groupes, rejetes, fx, fy, echelle };
       };
 
       if(p.get("diaggeo") === "1"){
@@ -2254,11 +2279,26 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
             const dansPlage = X >= g.fx.min - margeX && X <= g.fx.max + margeX
                            && Y >= g.fy.min - margeY && Y <= g.fy.max + margeY;
             const dansRendu = px >= 0 && py >= 0 && px < W && py < H;
-            if(!dansPlage) replPourquoi = "le point projeté (" + Math.round(X) + ", "
-              + Math.round(Y) + ") tombe hors de la plage des étiquettes lues ["
-              + g.fx.min + "–" + g.fx.max + "] × [" + g.fy.min + "–" + g.fy.max
-              + "] : zone de projection probablement différente";
-            else if(!dansRendu) replPourquoi = "le point projeté tombe hors du rendu ("
+            // L'OCR AVERTIT, IL NE TRANCHE PAS — correctif du 29/07/2026.
+            // La plage des étiquettes servait à INVALIDER le point projeté. Or
+            // ce point vient d'une projection validée à 4 cm contre la source,
+            // tandis que la plage vient d'une lecture d'image. La hiérarchie de
+            // confiance était inversée : une lecture fausse faisait échouer un
+            // calcul exact. Le hors-plage n'est donc plus qu'un AVERTISSEMENT.
+            // Ce que l'on ne perd pas : une erreur de zone de projection ne
+            // produit plus aucune étiquette vraisemblable, faute de quoi elles
+            // sont toutes écartées par le filtre ci-dessus — fx et fy restent
+            // alors nuls et l'on retombe sur la détection par taille, avec un
+            // motif explicite. La détection survit, ailleurs.
+            // Le HORS RENDU, lui, reste bloquant : un pixel hors de l'image
+            // n'est pas peignable, ce n'est pas une affaire de confiance.
+            let avertissement = "";
+            if(!dansPlage) avertissement = " ⚠ Le point projeté tombe hors de la plage des "
+              + "étiquettes lues [" + g.fx.min + "–" + g.fx.max + "] × [" + g.fy.min + "–"
+              + g.fy.max + "]" + (g.parasites && g.parasites.length
+                ? ", " + g.parasites.length + " étiquette(s) écartée(s) comme parasite(s)" : "")
+              + " : à vérifier à l'œil avant de verser la pièce au dossier.";
+            if(!dansRendu) replPourquoi = "le point projeté tombe hors du rendu ("
               + px + ", " + py + ") pour un rendu de " + W + "×" + H;
             // ---- POLYGONE PROJETÉ : on PEINT au lieu de REMPLIR ----------
             // En rural, les limites sont tracées en traits d'axe interrompus —
@@ -2271,7 +2311,7 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
             // sur un même plan, l'extrait ayant été recentré sur l'unité par les
             // paramètres x et y côté REDPAR.
             const brutPoly = (p.get("poly") || "").trim();
-            if(dansPlage && dansRendu && brutPoly){
+            if(dansRendu && brutPoly){
               const enPixels = (bloc) => bloc.split(";").map((c) => {
                 const [a, b] = c.split(",").map(parseFloat);
                 return [Math.round((a - g.fx.b) / g.fx.a), Math.round((b - g.fy.b) / g.fy.a)];
@@ -2347,7 +2387,7 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
                   + (g.fy.cale ? " (axe calé sur une étiquette unique)" : "")
                   + ", corrélations " + g.fx.r.toFixed(4) + " et " + g.fy.r.toFixed(4)
                   + ". Point projeté (" + Math.round(X) + ", " + Math.round(Y)
-                  + ") → pixel (" + ax + ", " + ay + ").";
+                  + ") → pixel (" + ax + ", " + ay + ")." + avertissement;
                 if(part0 > 0.30){
                   oCtx.clearRect(0, 0, W, H); S.legendLabels = {}; rebuildLegend();
                   S.tool = "fill";
