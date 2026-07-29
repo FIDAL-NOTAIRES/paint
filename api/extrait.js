@@ -1,6 +1,28 @@
 // Fonction serverless Vercel — génère un extrait de plan cadastral officiel
 // en pilotant le Service de Consultation du Plan Cadastral (cadastre.gouv.fr).
 // Logique adaptée de @etalab/api-scpc (MIT). Aucune donnée n'est stockée.
+//
+// ROTATION DE LA ZONE D'IMPRESSION — ajout du 29/07/2026.
+// Le SCPC accepte un champ MAPROTATION que cette fonction laissait à 0 depuis
+// l'origine. Il est désormais piloté par le paramètre « rotation » (en degrés),
+// pour les parcelles en lanière diagonale : une bande de 300 m orientée à 45°
+// tient dans un cadre bien plus petit si le plan est tourné, donc à une échelle
+// plus fine. En l'ABSENCE du paramètre, le comportement est strictement
+// identique à celui d'avant : rotation = 0 et cadre serré.
+//
+// ⚠ CONVENTION NON ENCORE ÉTABLIE. Deux inconnues subsistent sur le service,
+// qu'aucune documentation ne couvre et qu'il faut trancher par l'expérience :
+//   1. le SENS de rotation (horaire ou trigonométrique) et l'unité ;
+//   2. si MAPBBOX est lu AVANT la rotation (le cadre imprimé est alors la boîte
+//      tournée, et les coins de la parcelle peuvent sortir) ou APRÈS.
+// D'où le paramètre « cadre » : « serre » (défaut, comportement historique) ou
+// « englobant » (la boîte est élargie à l'enveloppe de la page tournée). Le
+// protocole de test est décrit dans le mémo REDPAR, addendum rotation.
+// RAPPEL DU PIÈGE MAISON : le service sert SILENCIEUSEMENT une valeur de repli
+// quand un paramètre ne lui plaît pas — une demande à 1/10000 revient à 1/1000
+// sans un mot. Ne jamais conclure d'un PDF non tourné que la rotation « ne
+// marche pas » : vérifier d'abord, par les en-têtes de réponse ou par ?diag=1,
+// ce qui a réellement été envoyé.
 
 const request = require('superagent');
 
@@ -25,11 +47,48 @@ function deburr(s) {
     .replace(/Æ/g, 'AE').replace(/æ/g, 'ae');
 }
 function codeDepartement(c) { return c.startsWith('97') ? c.slice(0, 3) : c.slice(0, 2); }
-function computeBbox({ x, y, taille, orientation, echelle }) {
+
+/**
+ * Angle ramené dans (-90, 90]. Une page tournée de 100° est la même page que
+ * tournée de -80° au demi-tour près, et le demi-tour ne change pas l'emprise ;
+ * inutile d'envoyer au service des valeurs qu'il pourrait refuser. Les cas
+ * dégénérés (chaîne vide, texte, NaN) retombent sur 0, jamais sur une erreur :
+ * un lien mal formé doit produire l'extrait droit, pas un échec.
+ */
+function normaliserRotation(v) {
+  if (v === undefined || v === null || v === '') return 0;
+  let a = parseFloat(String(v).replace(',', '.'));
+  if (!Number.isFinite(a)) return 0;
+  a = ((a % 180) + 180) % 180;          // dans [0, 180)
+  if (a > 90) a -= 180;                 // dans (-90, 90]
+  return Math.round(a * 100) / 100;     // le centième de degré suffit
+}
+
+/**
+ * Emprise au sol de la page, et boîte à transmettre.
+ * MAP_SIZES est en centièmes de millimètre de papier : divisé par 100 000 il
+ * donne des mètres de papier, multiplié par l'échelle des mètres de terrain
+ * (A4 portrait au 1/1000 = 195,5 × 211,0 m, valeurs relevées sur le service).
+ * En cadre « englobant », la boîte est l'enveloppe droite du rectangle tourné :
+ * largeur = L·|cos| + H·|sin|, hauteur = L·|sin| + H·|cos|.
+ */
+function computeBbox({ x, y, taille, orientation, echelle, rotation, cadre }) {
   const { width, height } = MAP_SIZES[`${taille}-${orientation}`];
+  const pageL = (width / 100000) * echelle;
+  const pageH = (height / 100000) * echelle;
+  let l = pageL, h = pageH;
+  if (cadre === 'englobant' && rotation) {
+    const a = Math.abs(rotation) * Math.PI / 180;
+    const c = Math.abs(Math.cos(a));
+    const s = Math.abs(Math.sin(a));
+    l = pageL * c + pageH * s;
+    h = pageL * s + pageH * c;
+  }
   return {
-    xMin: x - (width / 100000) * echelle / 2, xMax: x + (width / 100000) * echelle / 2,
-    yMin: y - (height / 100000) * echelle / 2, yMax: y + (height / 100000) * echelle / 2
+    xMin: x - l / 2, xMax: x + l / 2,
+    yMin: y - h / 2, yMax: y + h / 2,
+    page_m: [Math.round(pageL * 10) / 10, Math.round(pageH * 10) / 10],
+    boite_m: [Math.round(l * 10) / 10, Math.round(h * 10) / 10]
   };
 }
 
@@ -40,7 +99,16 @@ async function nomCommune(code) {
   return r.body.nom;
 }
 
-async function fetchExtrait(params, debug) {
+/**
+ * mode = 'pdf'   : chaîne complète, renvoie le buffer PDF (usage normal)
+ *      = 'debug' : s'arrête après la RECHERCHE, renvoie le repérage feuille /
+ *                  parcelle et un extrait de la page (diagnostic historique)
+ *      = 'diag'  : va jusqu'au bord de l'IMPRESSION et renvoie le formulaire
+ *                  EXACT qui aurait été posté, sans le poster. C'est la seule
+ *                  façon de savoir ce que le programme envoie réellement, sans
+ *                  avoir à déduire quoi que ce soit du PDF obtenu.
+ */
+async function fetchExtrait(params, mode = 'pdf') {
   for (const p of ['commune', 'prefixe', 'section', 'parcelle']) {
     if (!params[p]) { const e = new Error(`Paramètre '${p}' obligatoire`); e.statusCode = 400; throw e; }
   }
@@ -48,6 +116,8 @@ async function fetchExtrait(params, debug) {
   const echelle = params.echelle ? parseInt(params.echelle, 10) : 1000;
   const orientation = params.orientation === 'paysage' ? 'Paysage' : 'Portrait';
   const taille = params.taille === 'A3' ? 'A3' : 'A4';
+  const rotation = normaliserRotation(params.rotation);
+  const cadre = params.cadre === 'englobant' ? 'englobant' : 'serre';
   const codeDep = codeDepartement(commune).padStart(3, '0');
 
   let step = 'commune';
@@ -87,7 +157,7 @@ async function fetchExtrait(params, debug) {
       if (feuille && parc) break;
     }
 
-    if (debug) {
+    if (mode === 'debug') {
       return { __debug: true, commune, codeDep, variantes, feuille: feuille ? feuille[1] : null,
         parcelle: parc ? parc[1] : null, searchLen: search ? search.text.length : 0,
         extrait: search ? search.text.slice(0, 4000) : null };
@@ -99,19 +169,40 @@ async function fetchExtrait(params, debug) {
       .set('User-Agent', UA).timeout(T);
     const pt = map.text.match(/new Point\((.*),(.*)\)/);
     if (!pt || !pt[1] || !pt[2]) { const e = new Error('centre de la parcelle introuvable'); e.statusCode = 502; throw e; }
-    const x = params.x ? parseFloat(params.x) : parseFloat(pt[1]);
-    const y = params.y ? parseFloat(params.y) : parseFloat(pt[2]);
-    const { xMin, xMax, yMin, yMax } = computeBbox({ x, y, taille, orientation, echelle });
+    const centreDuService = { x: parseFloat(pt[1]), y: parseFloat(pt[2]) };
+    const x = params.x ? parseFloat(params.x) : centreDuService.x;
+    const y = params.y ? parseFloat(params.y) : centreDuService.y;
+    const boite = computeBbox({ x, y, taille, orientation, echelle, rotation, cadre });
+    const { xMin, xMax, yMin, yMax } = boite;
+
+    // Formulaire d'impression, monté une fois et réutilisé par ?diag=1 : le
+    // diagnostic doit porter sur l'objet RÉELLEMENT posté, pas sur une copie
+    // reconstituée à côté qui pourrait diverger au premier correctif.
+    const formulaire = {
+      MAPBBOX: [xMin, yMin, xMax, yMax].map(c => c.toFixed(3)).join(','),
+      MAPROTATION: rotation,
+      TAILLEPAGE: taille, ORIENTPAGE: orientation, RFV_REF: '',
+      RFV_X: x.toFixed(3), RFV_Y: y.toFixed(3),
+      ECHELLE: echelle, NATURE: 'V', RESOLUTION: '', DRAPEAU: 'false', CSRF_TOKEN: csrf
+    };
+
+    if (mode === 'diag') {
+      return { __diag: true, voie: { rotation, cadre, echelle, taille, orientation },
+        centre_du_service: centreDuService, centre_utilise: { x, y },
+        centre_impose: Boolean(params.x && params.y),
+        page_m: boite.page_m, boite_m: boite.boite_m,
+        feuille: feuille[1], parcelle: parc[1],
+        formulaire: { ...formulaire, CSRF_TOKEN: '(masqué)' } };
+    }
 
     step = 'impression';
     const pdf = await agent.post(`${SCPC}/imprimerExtraitCadastral.do?CSRF_TOKEN=${csrf}`)
       .set('User-Agent', UA).type('form').timeout(T).buffer(true)
-      .send({ MAPBBOX: [xMin, yMin, xMax, yMax].map(c => c.toFixed(3)).join(','), MAPROTATION: 0,
-        TAILLEPAGE: taille, ORIENTPAGE: orientation, RFV_REF: '', RFV_X: x.toFixed(3), RFV_Y: y.toFixed(3),
-        ECHELLE: echelle, NATURE: 'V', RESOLUTION: '', DRAPEAU: 'false', CSRF_TOKEN: csrf });
+      .send(formulaire);
 
     if (pdf.type !== 'application/pdf') { const e = new Error('le service n\'a pas renvoyé de PDF'); e.statusCode = 502; throw e; }
-    return pdf.body;
+    return { pdf: pdf.body, voie: { rotation, cadre, echelle, taille, orientation },
+      bbox: formulaire.MAPBBOX, page_m: boite.page_m, boite_m: boite.boite_m };
   } catch (e) {
     if (e.statusCode) throw e; // erreur métier déjà formée
     const err = new Error(`étape « ${step} » : ${e.timeout ? 'délai dépassé' : (e.message || 'erreur réseau')}`);
@@ -119,18 +210,36 @@ async function fetchExtrait(params, debug) {
   }
 }
 
+// En-têtes de traçabilité, portés par TOUTE réponse PDF. Le PDF ne dit pas de
+// lui-même à quelle échelle ni sous quelle rotation il a été demandé ; ces
+// en-têtes le disent, et se lisent dans l'onglet Réseau du navigateur.
+// Access-Control-Expose-Headers est nécessaire pour qu'un appel depuis un autre
+// domaine (REDPAR) puisse les lire : sans lui, le navigateur les cache.
+function tracer(res, v) {
+  if (!v) return;
+  res.setHeader('X-Paint-Rotation', String(v.voie.rotation));
+  res.setHeader('X-Paint-Cadre', v.voie.cadre);
+  res.setHeader('X-Paint-Echelle', String(v.voie.echelle));
+  res.setHeader('X-Paint-Page', `${v.voie.taille}-${v.voie.orientation}`);
+  if (v.bbox) res.setHeader('X-Paint-Bbox', v.bbox);
+  if (v.boite_m) res.setHeader('X-Paint-Boite-M', v.boite_m.join('x'));
+  res.setHeader('Access-Control-Expose-Headers',
+    'X-Paint-Rotation, X-Paint-Cadre, X-Paint-Echelle, X-Paint-Page, X-Paint-Bbox, X-Paint-Boite-M');
+}
+
 module.exports = async (req, res) => {
   const q = req.query || {};
   try {
-    if (q.debug) {
-      const d = await fetchExtrait(q, true);
+    if (q.debug || q.diag) {
+      const d = await fetchExtrait(q, q.diag ? 'diag' : 'debug');
       res.setHeader('Cache-Control', 'no-store');
       res.status(200).json(d); return;
     }
-    const buf = await fetchExtrait(q);
+    const r = await fetchExtrait(q);
+    tracer(res, r);
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Cache-Control', 'no-store');
-    res.status(200).send(buf);
+    res.status(200).send(r.pdf);
   } catch (err) {
     res.status(err.statusCode || 500).json({ message: err.message || 'Erreur interne' });
   }
