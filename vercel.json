@@ -1,4 +1,5 @@
 {
+  "regions": ["cdg1"],
   "functions": {
     "api/extrait.js": {
       "maxDuration": 60
