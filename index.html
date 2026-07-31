@@ -1536,12 +1536,22 @@ function anneauxGeo(g){
 
 /* Rend un canvas, ou null. Ne jette jamais : la carte est un agrément, son
    absence ne doit pas empêcher la production du document. */
-async function carteCommune(codeInsee, zz, centresCC, aspectCible){
+/* UN SEUL APPEL pour la commune, partagé par la carte et par la désignation :
+   le contour cadre la carte, le département et le code postal nourrissent
+   l'attaque de la désignation. Deux appels pour la même commune seraient un
+   gaspillage, et surtout un risque de divergence entre les deux blocs. */
+async function infoCommune(codeInsee){
   try{
-    const rep = await fetch("https://geo.api.gouv.fr/communes/" + encodeURIComponent(codeInsee)
-      + "?fields=nom,centre,contour,surface");
-    if(!rep.ok) return null;
-    const c = await rep.json();
+    const rep = await fetch("https://geo.api.gouv.fr/communes/"
+      + encodeURIComponent(codeInsee)
+      + "?fields=nom,centre,contour,surface,codesPostaux,departement");
+    return rep.ok ? await rep.json() : null;
+  }catch(e){ return null; }
+}
+
+async function carteCommune(c, zz, centresCC, aspectCible){
+  try{
+    if(!c) return null;
     const anneaux = anneauxGeo(c.contour).map((r) => r.map(([lo, la]) => projeterCC(lo, la, zz)));
     let x0, y0, x1, y1, voie;
     if(anneaux.length){
@@ -1636,6 +1646,18 @@ async function carteCommune(codeInsee, zz, centresCC, aspectCible){
     // Tracée deux fois, liseré blanc dessous, comme le contour communal : sans
     // lui, un trait fin disparaît sur les aplats clairs du Plan IGN.
     const bras = mmPxDe(cv.width, 2.6);        // demi-longueur des branches
+    const rayon = mmPxDe(cv.width, 3.2);       // cercle AUTOUR de la croix
+    // ---- le cercle, rétabli le 31/07 à la demande de JFD ---------------
+    // Retiré au tour précédent en même temps que le disque, alors qu'il n'en
+    // faisait pas partie : il cerne la croix sans rien affirmer sur l'étendue,
+    // un anneau ne se lisant pas comme une emprise. Tracé SOUS la croix, pour
+    // que celle-ci reste nette au croisement.
+    const anneau = (couleur, ep) => {
+      g.strokeStyle = couleur; g.lineWidth = ep;
+      (centresCC || []).forEach(([X, Y]) => {
+        g.beginPath(); g.arc(px(X), py(Y), rayon, 0, 2 * Math.PI); g.stroke();
+      });
+    };
     const croix = (couleur, ep) => {
       g.strokeStyle = couleur; g.lineWidth = ep; g.lineCap = "butt";
       (centresCC || []).forEach(([X, Y]) => {
@@ -1647,13 +1669,15 @@ async function carteCommune(codeInsee, zz, centresCC, aspectCible){
       });
     };
     g.save();
+    anneau("rgba(255,255,255,0.9)", mmPxDe(cv.width, 1.4));
+    anneau("rgba(160,16,64,0.35)", mmPxDe(cv.width, 0.9));
     croix("rgba(255,255,255,0.9)", mmPxDe(cv.width, 1.5));
     croix("#A01040", mmPxDe(cv.width, 0.7));
     g.restore();
     // attribution GRAVÉE, comme sur l'ortho : elle doit suivre l'image
     const t = mmPxDe(cv.width, 1.9);
     g.font = t + "px Georgia, 'Times New Roman', serif"; g.textBaseline = "bottom";
-    const src = "Plan IGN — Géoplateforme (licence ouverte)";
+    const src = "Plan IGN — Géoplateforme";
     const w = g.measureText(src).width;
     g.fillStyle = "rgba(255,255,255,0.85)";
     g.fillRect(4, cv.height - t * 1.5 - 4, w + 10, t * 1.5);
@@ -1689,7 +1713,7 @@ async function carteCommune(codeInsee, zz, centresCC, aspectCible){
    à six parcelles allonge le tableau du dessus. C'est la place réelle qui
    décide, jamais un compte.
    ================================================================== */
-function composerBasDePage(pdf, y0, p){
+function composerBasDePage(pdf, y0, p, infoCom){
   const M = 42;                                  // marge, alignée sur les images
   const pw = pdf.internal.pageSize.getWidth();
   const ph = pdf.internal.pageSize.getHeight();
@@ -1709,9 +1733,27 @@ function composerBasDePage(pdf, y0, p){
     pdf.setLineWidth(0.6); pdf.line(M, y, M + L, y); y += 16;
 
     pdf.setFont("times", "normal"); pdf.setFontSize(10.5);
-    const attaque = (rangs.length > 1)
-      ? `Dans un ensemble immobilier situé à ${commune},`
-      : `Un actif immobilier situé à ${commune},`;   // formule retenue par JFD le 31/07
+    // ---- ATTAQUE, forme arrêtée par JFD le 31/07 sur pièce ---------------
+    //   « Un actif immobilier situé à COMMUNE (DÉPARTEMENT) (CODE POSTAL) ADRESSE. »
+    // au singulier, « Dans un ensemble immobilier … » au pluriel.
+    // ⚠ CODE POSTAL OMIS SI LA COMMUNE EN A PLUSIEURS — règle reprise de TRENTE :
+    // en imprimer un seul désignerait un quartier plutôt que la commune, ce qui
+    // serait faux et non pas seulement imprécis.
+    // ⚠ ADRESSE DANS L'ATTAQUE UNIQUEMENT POUR UNE PARCELLE : à plusieurs, les
+    // adresses diffèrent et figurent déjà au tableau ; en hisser une seule dans
+    // la phrase donnerait à l'ensemble l'adresse de l'une d'elles.
+    const dept = (infoCom && infoCom.departement && infoCom.departement.nom)
+      ? infoCom.departement.nom.toUpperCase() : "";
+    const cps = (infoCom && Array.isArray(infoCom.codesPostaux)) ? infoCom.codesPostaux : [];
+    const cp = (cps.length === 1) ? cps[0] : "";
+    const adr = (rangs.length === 1) ? (rangs[0][3] || "").trim() : "";
+    const attaque = ((rangs.length > 1)
+        ? "Dans un ensemble immobilier situé à "
+        : "Un actif immobilier situé à ")
+      + commune
+      + (dept ? ` (${dept})` : "")
+      + (cp ? ` (${cp})` : "")
+      + (adr ? ` ${adr}` : "") + ".";
     pdf.splitTextToSize(attaque, L).forEach((ligne) => { pdf.text(ligne, M, y); y += 13; });
     y += 4;
     pdf.text("Figurant ainsi au cadastre :", M, y); y += 16;
@@ -1719,42 +1761,51 @@ function composerBasDePage(pdf, y0, p){
     // ⚠ UNE COLONNE SANS DONNÉE DISPARAÎT, ET LE TABLEAU SE RESSERRE.
     // Défaut corrigé le 31/07 : « Lieudit » s'imprimait vide au milieu de la
     // page avec « Surface » rejetée à l'autre bout — cela se lisait comme une
-    // donnée manquante alors que c'était une colonne inutile. Et un tableau de
-    // quatre valeurs étalé sur 170 mm ne se lit pas, l'œil perd la ligne.
+    // donnée manquante alors que c'était une colonne inutile.
+    //
+    // TABLEAU ENCADRÉ, forme arrêtée par JFD sur pièce le 31/07 : une grille
+    // complète, en-têtes en gras, tout aligné à gauche — et non des filets
+    // horizontaux avec la surface fuyant au bord droit de la page.
+    //
+    // Largeurs FIXES en points, et non en fractions de la page : une colonne
+    // « Section » n'a pas besoin de s'étirer parce que la page est large, et le
+    // tableau doit garder la même allure d'un dossier à l'autre. Seul le lieudit
+    // absorbe le reste, puisque lui seul est de longueur imprévisible.
     const aLieudit = rangs.some((r) => (r[3] || "").trim() !== "");
-    const Ltab = L * (aLieudit ? 0.80 : 0.52);
-    const col = [M, M + 52, M + 104];
-    const xS = M + Ltab;                            // bord droit, surfaces alignées
-    pdf.setFont("times", "bold"); pdf.setFontSize(9.5);
-    pdf.text("Section", col[0], y);
-    pdf.text("N°", col[1], y);
-    if(aLieudit) pdf.text("Lieudit", col[2], y);
-    pdf.text("Surface", xS, y, { align: "right" });
-    y += 4; pdf.setLineWidth(0.4); pdf.line(M, y, xS, y); y += 12;
+    const wSec = 58, wNum = 46, wSurf = 112;
+    const wLieu = aLieudit ? Math.max(130, L * 0.80 - wSec - wNum - wSurf) : 0;
+    const cols = aLieudit ? [wSec, wNum, wLieu, wSurf] : [wSec, wNum, wSurf];
+    const bord = (i) => M + cols.slice(0, i).reduce((a, b) => a + b, 0);
+    const pad = 4, hL = 14, iLieu = 2;
+    pdf.setLineWidth(0.5); pdf.setFontSize(9.5);
 
-    pdf.setFont("times", "normal");
+    const rangee = (cells, gras, hauteur, lignesLieu) => {
+      pdf.setFont("times", gras ? "bold" : "normal");
+      cells.forEach((txt, i) => {
+        pdf.rect(bord(i), y, cols[i], hauteur);
+        if(!(lignesLieu && aLieudit && i === iLieu))
+          pdf.text(String(txt || ""), bord(i) + pad, y + 10);
+      });
+      if(lignesLieu && aLieudit)
+        lignesLieu.forEach((L2, k) => pdf.text(L2, bord(iLieu) + pad, y + 10 + k * 12));
+      y += hauteur;
+    };
+
+    rangee(aLieudit ? ["Section", "N°", "Lieudit", "Surface"]
+                    : ["Section", "N°", "Surface"], true, hL, null);
     rangs.forEach((r) => {
-      pdf.text(String(r[0] || ""), col[0], y);
-      pdf.text(String(r[1] || ""), col[1], y);
-      pdf.text(String(r[2] || ""), xS, y, { align: "right" });
-      let sup = 0;
+      let h = hL, lignes = null;
       if(aLieudit){
-        const lignes = pdf.splitTextToSize((r[3] || "").trim(), xS - col[2] - 90);
-        lignes.forEach((L2, i) => pdf.text(L2, col[2], y + i * 12));
-        sup = Math.max(0, lignes.length - 1) * 12;
+        lignes = pdf.splitTextToSize((r[3] || "").trim(), wLieu - pad * 2);
+        h = Math.max(hL, lignes.length * 12 + 4);
       }
-      y += 12 + sup;
+      rangee(aLieudit ? [r[0], r[1], "", r[2]] : [r[0], r[1], r[2]], false, h, lignes);
     });
-    // Total UNIQUEMENT à partir de deux parcelles, et pris du paramètre
-    // « total » plutôt que recalculé : c'est REDPAR qui somme, à partir des
-    // contenances en mètres carrés, pas moi à partir de chaînes déjà formatées.
-    if(rangs.length > 1 && total){
-      pdf.setLineWidth(0.4); pdf.line(xS - 96, y - 8, xS, y - 8);
-      pdf.setFont("times", "bold");
-      pdf.text("Total", aLieudit ? col[2] : col[1], y);
-      pdf.text(total, xS, y, { align: "right" });
-      y += 12;
-    }
+    // Total UNIQUEMENT à partir de deux parcelles, et pris du paramètre « total »
+    // plutôt que recalculé : c'est REDPAR qui somme, à partir des contenances en
+    // mètres carrés, pas moi à partir de chaînes déjà mises en forme.
+    if(rangs.length > 1 && total)
+      rangee(aLieudit ? ["", "", "Total", total] : ["", "Total", total], true, hL, null);
     y += 14;
   }
 
@@ -1867,12 +1918,12 @@ async function doExportDocument(){
     // CARTE DE SITUATION, à côté de la vue aérienne. Si elle échoue — service
     // indisponible, commune inconnue —, on retombe sur la vue aérienne seule à
     // mi-largeur : le document sort quand même.
-    let carte = null;
+    let carte = null, infoCom = null;
     if(S.ortho){
       spin.classList.add("show"); spinmsg.textContent = "Carte de situation…";
       const centres = ellipsesDe(p.get("poly") || "", "ronds").map((e) => [e.cx, e.cy]);
-      carte = await carteCommune(p.get("commune") || "", S.ortho.zz, centres,
-                                 c2.width / c2.height);
+      infoCom = await infoCommune(p.get("commune") || "");
+      carte = await carteCommune(infoCom, S.ortho.zz, centres, c2.width / c2.height);
       spin.classList.remove("show");
     }
     let basImage;
@@ -1898,7 +1949,7 @@ async function doExportDocument(){
       basImage = poserMiLargeur(c2);
     }
     // Le bas de page se compose SOUS les images, avec un blanc de respiration.
-    composerBasDePage(pdf, basImage + 34, p);
+    composerBasDePage(pdf, basImage + 34, p, infoCom);
     if(carte && carte.voie.indexOf("carré") === 0) alerteCarte = carte.voie;
     const ref = [p.get("section") || "", p.get("parcelle") || ""].join("-");
     const blob = pdf.output("blob");
@@ -2583,6 +2634,13 @@ function palierLisible(v){
    du PDF, afin de suivre l'image partout : export PNG, vue aérienne isolée,
    réemploi dans une fiche.
 
+   ⚠ LE NOM DE LA LICENCE A ÉTÉ RETIRÉ le 31/07/2026 sur instruction de JFD, et
+   cela NE FRAGILISE PAS l'obligation : la licence ouverte impose la MENTION DE
+   LA PATERNITÉ — nommer la source et sa date de mise à jour —, non de citer la
+   licence elle-même. « Source : IGN — Géoplateforme » y suffit.
+   ⚠ EN REVANCHE, NE PAS RETIRER LA SOURCE. C'est elle, et elle seule, qui
+   distingue cette pièce d'une capture d'écran non reproductible.
+
    ÉCHELLE GRAPHIQUE PLUTÔT QUE NUMÉRIQUE : une échelle graphique reste juste
    après agrandissement ou réduction de la page, un « 1/1000 » écrit devient faux
    dès la première photocopie. Et elle est ici EXACTE, non estimée : le
@@ -2604,7 +2662,7 @@ function cartoucheOrtho(){
 
   const metres = palierLisible(0.22 * S.W * m);
   const barre = metres / m;
-  const source = "Source : IGN — Géoplateforme (licence ouverte)";
+  const source = "Source : IGN — Géoplateforme";
   const wSrc = oCtx.measureText(source).width;
   const lblG = "0", lblD = metres + " m";
   const padd = t * 0.7, hB = t * 0.5;
