@@ -476,6 +476,7 @@ const PALETTE = ["#A01040","#C2185B","#7a6fd3","#cf6fb0",
                  "#FF982D","#9C6B3F"];
 const S = {
   pdf:null, page:1, pageCount:1, ocrCache:null, anchorCache:null, recentrage:null,
+  ortho:null,                  // vue aérienne : { epsg, zz, bbox, cadre, mParPx }
   couleursAnnot:null,          // teintes du tableau d'annotation, hors légende
   tool:"fill", color:"#A01040", opacity:.45, threshold:100, brush:14, fontSize:36,
   zoom:1, rotation:0, drawing:false, lastPt:null,
@@ -1687,6 +1688,295 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
    l'extrait. C'est le chantier « contours » commun à PAINT et MARTEAU.
    D'ici là : on tente, et l'on REFUSE plutôt que de se tromper.
 */
+/* ==================================================================
+   VUE AÉRIENNE — ORTHOPHOTOGRAPHIE IGN                (30/07/2026)
+   ------------------------------------------------------------------
+   Chemin ENTIÈREMENT DISTINCT de celui du plan cadastral, et beaucoup
+   plus court, pour une raison de fond : ici PAINT ne REÇOIT pas la page
+   d'un tiers, il COMMANDE l'image. Il fixe lui-même la bbox, donc la
+   correspondance pixels ↔ mètres projetés est EXACTE PAR CONSTRUCTION.
+   Tombent en conséquence : Tesseract, la lecture des étiquettes de
+   coordonnées, le filtre de vraisemblance, le contrôle des 5 % contre la
+   substitution silencieuse d'échelle. Rien de tout cela n'a de sens quand
+   c'est nous qui écrivons l'emprise dans la requête.
+
+   Le § 7 b) de l'addendum v2 avait écarté le géoréférencement analytique
+   pour le plan cadastral, faute de connaître la POSITION EN PIXELS du
+   cadre sur une page qui porte en-tête et cartouches. Le WMS, lui, rend
+   une image NUE : le cadre EST l'image. L'objection ne porte pas ici.
+
+   Service : data.geopf.fr/wms-r/wms, WMS 1.3.0, public et sans clé.
+   Mesuré le 30/07/2026 sur La Madeleine : EPSG:3950 accepté, 5000×5000
+   px servis, en-têtes CORS présents — donc appel direct depuis le
+   navigateur, aucun endpoint proxy, vercel.json inchangé.
+
+   ⚠ CONTREPARTIE ASSUMÉE : ce chemin n'a AUCUN AUTO-CONTRÔLE. Le plan
+   cadastral recoupe l'échelle mesurée contre l'échelle théorique à 5 % ;
+   ici il n'y a rien à recouper. Si la bbox part fausse, l'image est
+   fausse EN SILENCE. Seuls garde-fous disponibles, tous deux appliqués :
+   les sommets doivent tomber DANS le rendu, et l'emprise du contour doit
+   occuper une fraction plausible de l'image.
+
+   ⚠ MILLÉSIMES POSSIBLEMENT DISTINCTS : le plan cadastral et l'ortho ne
+   datent pas du même jour. Une parcelle divisée récemment se colorie
+   juste sur le cadastre et de travers sur une photo antérieure. Le
+   millésime servi est porté à l'écran quand le service le déclare.
+   ================================================================== */
+const ORTHO = {
+  service: "https://data.geopf.fr/wms-r/wms",
+  couche:  "ORTHOIMAGERY.ORTHOPHOTOS",
+  natifM:  0.20,     // finesse native de l'ortho, en mètres au sol par pixel
+  pxMin:   1700,     // résolution interne de renderBase : on ne descend pas dessous
+  pxMax:   4000      // 5000 passe, mesuré — on garde de la marge
+};
+
+/* Zone Lambert conique conforme DÉDUITE DE L'ORDONNÉE ELLE-MÊME.
+   Y0 de la zone zz vaut (zz − 41) × 10⁶ + 200 000, et l'ordonnée d'une
+   zone ne s'écarte de son million que de 89 000 à 311 000 m, quand la
+   bascule d'arrondi est à 700 000. Vérifié sur les NEUF zones : la
+   déduction est sans ambiguïté, avec 389 km de marge. C'est pourquoi le
+   contrat d'URL n'a PAS besoin d'un paramètre de zone — REDPAR n'a rien
+   à apprendre, ses coordonnées portent déjà l'information. */
+function zoneCC(Y){
+  const zz = Math.round((Y - 200000) / 1e6) + 41;
+  return (zz >= 42 && zz <= 50) ? { zz, epsg: 3900 + zz } : null;
+}
+
+/* Sommets projetés transmis par REDPAR, tous polygones confondus. */
+function sommetsProjetes(brut){
+  return (brut || "").trim().split("|")
+    .flatMap(b => b.split(";").map(c => c.split(",").map(parseFloat)))
+    .filter(q => q.length === 2 && Number.isFinite(q[0]) && Number.isFinite(q[1]));
+}
+
+async function chargerOrtho(p){
+  const brut = (p.get("poly") || "").trim();
+  const mPt  = (p.get("pt") || "").match(/^(-?[0-9.]+),(-?[0-9.]+)$/);
+  const som  = sommetsProjetes(brut);
+  if(!som.length && !mPt){
+    setGenStatus("Vue aérienne impossible : ni contour (poly) ni point projeté (pt) "
+      + "dans le lien. Réexportez depuis REDPAR après le chargement des contours.", "err");
+    return false;
+  }
+
+  // ---- emprise au sol demandée -----------------------------------------
+  const cadre = (p.get("cadre") || "plan").toLowerCase();
+  const mEmp  = (p.get("emp") || "").trim().match(/^([0-9.]+)x([0-9.]+)$/);
+  let cx, cy, largeur, hauteur, cadreRetenu = cadre, motifRepli = "";
+
+  if(som.length){
+    const xs = som.map(q => q[0]), ys = som.map(q => q[1]);
+    const x0 = Math.min(...xs), x1 = Math.max(...xs);
+    const y0 = Math.min(...ys), y1 = Math.max(...ys);
+    cx = (x0 + x1) / 2; cy = (y0 + y1) / 2;
+    // marge : un dixième de la plus grande dimension, au moins 10 m — sans
+    // quoi une parcelle bâtie affleurerait le bord et l'on ne verrait pas
+    // ce qui la borde, qui est justement l'intérêt d'une vue du ciel.
+    const marge = Math.max((x1 - x0), (y1 - y0)) * 0.10;
+    largeur = (x1 - x0) + 2 * Math.max(marge, 10);
+    hauteur = (y1 - y0) + 2 * Math.max(marge, 10);
+  }else{
+    cx = parseFloat(mPt[1]); cy = parseFloat(mPt[2]);
+    largeur = hauteur = 200;
+    cadreRetenu = "serre";
+    motifRepli = "aucun contour transmis, cadrage de 200 m autour du point projeté";
+  }
+
+  if(cadre === "plan"){
+    if(mEmp){
+      // Emprise au sol du CADRE du plan cadastral, calculée par REDPAR qui a
+      // choisi l'échelle et le format. C'est elle qui rend les deux pièces
+      // SUPERPOSABLES — même centre, même emprise, donc même échelle.
+      largeur = parseFloat(mEmp[1]); hauteur = parseFloat(mEmp[2]);
+      if(mPt){ cx = parseFloat(mPt[1]); cy = parseFloat(mPt[2]); }
+    }else{
+      // ON AVERTIT, ON NE SORT PAS FAUX. Sans emp, l'emprise du cadre
+      // cadastral est inconnue de PAINT : la deviner produirait une pièce
+      // qui a l'air superposable sans l'être, ce qui est pire que le repli.
+      cadreRetenu = "serre";
+      motifRepli = "paramètre « emp » absent du lien : l'emprise du cadre "
+        + "cadastral est inconnue, cadrage serré sur le contour — les deux "
+        + "plans NE SONT PAS superposables";
+    }
+  }
+
+  // ---- zone de projection ----------------------------------------------
+  const z = zoneCC(cy);
+  if(!z){
+    setGenStatus("Vue aérienne impossible : l'ordonnée " + Math.round(cy) + " ne "
+      + "correspond à aucune zone conique conforme métropolitaine (CC42 à CC50). "
+      + "L'outre-mer n'est pas couvert par ce chemin.", "err");
+    return false;
+  }
+
+  // ---- résolution ------------------------------------------------------
+  // ARBITRAGE ASSUMÉ, et il n'est pas neutre. Deux exigences s'opposent :
+  //   — ne pas demander plus fin que le natif, le suréchantillonnage créant
+  //     l'apparence du détail et non le détail ;
+  //   — ne pas descendre sous la résolution interne de renderBase, faute de
+  //     quoi le tracé du contour et l'impression se dégradent.
+  // Sur une petite parcelle les deux sont INCONCILIABLES : 80 m au natif ne
+  // font que 400 px, inexploitables. Le plancher gagne donc, et l'on
+  // SURÉCHANTILLONNE — mais on le DIT, à l'écran, avec le facteur. Taire un
+  // suréchantillonnage sur une pièce annexée à un acte serait laisser croire
+  // à une finesse qui n'existe pas ; l'annoncer laisse le rédacteur juger,
+  // comme pour les parcelles sous 2 mm du plan cadastral.
+  let W = Math.round(largeur / ORTHO.natifM);
+  W = Math.max(ORTHO.pxMin, Math.min(ORTHO.pxMax, W));
+  let H = Math.round(W * hauteur / largeur);
+  if(H > ORTHO.pxMax){ W = Math.round(W * ORTHO.pxMax / H); H = ORTHO.pxMax; }
+  if(H < 1) H = 1;
+  // Facteur de suréchantillonnage : > 1 signifie qu'on demande plus fin que
+  // ce que l'ortho contient réellement.
+  const surech = ORTHO.natifM / (largeur / W);
+
+  const x0 = cx - largeur / 2, x1 = cx + largeur / 2;
+  const y0 = cy - hauteur / 2, y1 = cy + hauteur / 2;
+  // EPSG:39xx : l'ordre d'axes du registre est (E, N), donc minx,miny,maxx,maxy.
+  // C'est EPSG:4326 qui inverse — d'où l'usage de CRS:84 partout ailleurs.
+  // Ici la question ne se pose pas : on reste dans le système de REDPAR.
+  const url = ORTHO.service + "?" + new URLSearchParams({
+    SERVICE: "WMS", VERSION: "1.3.0", REQUEST: "GetMap",
+    LAYERS: ORTHO.couche, STYLES: "", FORMAT: "image/jpeg",
+    CRS: "EPSG:" + z.epsg,
+    BBOX: [x0.toFixed(2), y0.toFixed(2), x1.toFixed(2), y1.toFixed(2)].join(","),
+    WIDTH: String(W), HEIGHT: String(H)
+  }).toString();
+
+  spin.classList.add("show");
+  spinmsg.textContent = "Vue aérienne IGN — " + W + "×" + H + " px…";
+  try{
+    const img = await new Promise((ok, ko) => {
+      const i = new Image();
+      i.crossOrigin = "anonymous";   // CORS mesuré présent : canvas exportable
+      i.onload  = () => ok(i);
+      i.onerror = () => ko(new Error("le service n'a pas rendu d'image"));
+      i.src = url;
+    });
+    // Le service peut servir une taille différente de celle demandée : c'est
+    // la taille RENDUE qui fait foi pour le géoréférencement, jamais celle
+    // qu'on a demandée.
+    S.W = img.naturalWidth || W;
+    S.H = img.naturalHeight || H;
+    [base, overlay].forEach(c => { c.width = S.W; c.height = S.H; });
+    cwrap.style.width = S.W + "px"; cwrap.style.height = S.H + "px";
+    anno.style.width  = S.W + "px"; anno.style.height  = S.H + "px";
+    baseCtx.fillStyle = "#fff"; baseCtx.fillRect(0, 0, S.W, S.H);
+    baseCtx.drawImage(img, 0, 0, S.W, S.H);
+
+    S.pdf = null; S.pageCount = 1; S.page = 1; S.rotation = 0;
+    S.ocrCache = null; S.anchorCache = null;
+    S.notes = []; anno.innerHTML = ""; S.legendLabels = {}; S.couleursAnnot = null;
+    S.ortho = { epsg: z.epsg, zz: z.zz, bbox: [x0, y0, x1, y1],
+                cadre: cadreRetenu, motifRepli, url,
+                mParPx: largeur / S.W,
+                surech: ORTHO.natifM / (largeur / S.W) };
+    oCtx.clearRect(0, 0, S.W, S.H);
+    S.undoStack = []; S.redoStack = []; pushUndo();
+    applyZoom(); fitToScreen(); rebuildLegend();
+    drop.classList.add("hide");
+    document.getElementById("pagenav").style.display = "none";
+    ["genbtn", "rotate", "zoomout", "zoomlbl", "zoomin"]
+      .forEach(id => document.getElementById(id).style.display = "inline-flex");
+    document.getElementById("pngbtn").disabled = false;
+    document.getElementById("pdfbtn").disabled = false;
+    setGenStatus("", "");
+    return true;
+  }catch(err){
+    setGenStatus("Vue aérienne — échec : " + err.message + ".", "err");
+    return false;
+  }finally{ spin.classList.remove("show"); }
+}
+
+/* Géoréférencement ANALYTIQUE, de même forme que celui rendu par
+   georeferencer() afin que la conversion des sommets soit identique :
+   pixel = (coordonnée − b) / a. L'ordonnée décroît vers le bas de
+   l'image, d'où le pas négatif en Y. Corrélations à ±1 non par mesure
+   mais par construction — ce ne sont pas des mesures. */
+function geoOrtho(){
+  const [x0, y0, x1, y1] = S.ortho.bbox;
+  return { fx: { a: (x1 - x0) / S.W, b: x0, r: 1 },
+           fy: { a: -(y1 - y0) / S.H, b: y1, r: -1 } };
+}
+
+/* CONTOUR SEUL, NON REMPLI — décision JFD du 30/07/2026. Sur une
+   photographie, un aplat masque précisément ce qu'on est venu voir : le
+   bâti, la végétation, les accès. Le trait délimite sans cacher. */
+async function contourOrtho(p, dessinerTableau, rangs, total){
+  const g   = geoOrtho();
+  const brut = (p.get("poly") || "").trim();
+  const enPixels = bloc => bloc.split(";").map(c => {
+      const [a, b] = c.split(",").map(parseFloat);
+      return [Math.round((a - g.fx.b) / g.fx.a), Math.round((b - g.fy.b) / g.fy.a)];
+    }).filter(q => Number.isFinite(q[0]) && Number.isFinite(q[1]));
+  const polygones = brut.split("|").map(enPixels).filter(a => a.length >= 3);
+
+  const desc = "Vue aérienne IGN, zone CC" + S.ortho.zz + " (EPSG:" + S.ortho.epsg
+    + "), " + S.ortho.mParPx.toFixed(3) + " m/px, rendu " + S.W + "×" + S.H + " px, "
+    + "cadrage " + (S.ortho.cadre === "plan" ? "identique au plan cadastral" : "serré")
+    + ". Géoréférencement ANALYTIQUE — emprise commandée, non lue : aucun OCR."
+    + (S.ortho.surech > 1.5
+        ? " ⚠ Image suréchantillonnée ×" + S.ortho.surech.toFixed(1) + " : la finesse "
+          + "réelle reste celle de l'ortho (" + ORTHO.natifM.toFixed(2) + " m au sol par "
+          + "pixel), l'agrandissement n'ajoute aucun détail."
+        : "");
+  const repli = S.ortho.motifRepli ? " ⚠ " + S.ortho.motifRepli + "." : "";
+
+  if(!polygones.length){
+    setStatus("Vue aérienne chargée, sans contour à tracer (paramètre « poly » "
+      + "absent ou trop court). " + desc + repli, "warn");
+    return;
+  }
+
+  // ---- garde-fous, les seuls disponibles sur ce chemin ------------------
+  const som = polygones.flat();
+  const xs = som.map(q => q[0]), ys = som.map(q => q[1]);
+  const bx = Math.max(...xs) - Math.min(...xs), by = Math.max(...ys) - Math.min(...ys);
+  const dehors = som.filter(q => q[0] < 0 || q[1] < 0 || q[0] >= S.W || q[1] >= S.H).length;
+  const part = (bx * by) / (S.W * S.H);
+  if(dehors === som.length){
+    setStatus("Contour NON tracé : la totalité de ses " + som.length + " sommets tombe "
+      + "hors du rendu. Le lien et l'emprise ne concordent pas — ne versez pas cette "
+      + "pièce au dossier. " + desc, "err");
+    return;
+  }
+
+  oCtx.save();
+  oCtx.globalAlpha = 1;                       // un contour ne se dilue pas
+  oCtx.strokeStyle = S.color;
+  oCtx.lineWidth = Math.max(2, Math.round(S.W / 500));
+  oCtx.lineJoin = "round";
+  oCtx.beginPath();
+  polygones.forEach(pts => {
+    oCtx.moveTo(pts[0][0], pts[0][1]);
+    for(let i = 1; i < pts.length; i++) oCtx.lineTo(pts[i][0], pts[i][1]);
+    oCtx.closePath();
+  });
+  oCtx.stroke();
+  oCtx.restore();
+  pushUndo();
+  if(!S.legendLabels[S.color]) S.legendLabels[S.color] = "";
+  rebuildLegend();
+  const nb = await dessinerTableau(rangs, total);
+
+  let alerte = "";
+  if(dehors) alerte += " ⚠ " + dehors + " sommet(s) sur " + som.length + " hors du rendu : "
+    + "le contour est tronqué au bord de l'image.";
+  if(part > 0.98) alerte += " ⚠ Le contour occupe la quasi-totalité du rendu : "
+    + "l'emprise est probablement trop serrée pour situer le bien.";
+  if(part < 0.005) alerte += " ⚠ Le contour n'occupe que "
+    + (part * 100).toFixed(2) + " % du rendu : à cette taille il est illisible, "
+    + "préférez le cadrage serré.";
+
+  setStatus((polygones.length > 1
+      ? "UNITÉ FONCIÈRE de " + polygones.length + " parcelles cernée"
+      : "Parcelle cernée")
+    + " en contour seul, sans aplat — " + som.length + " sommets, emprise "
+    + bx + "×" + by + " px. " + desc
+    + (nb ? " " + nb + " ligne(s) de tableau." : "") + repli + alerte,
+    (alerte || repli) ? "warn" : "ok");
+}
+
 (function preremplirDepuisURL(){
   const p = new URLSearchParams(location.search);
   const commune  = (p.get("commune")  || "").trim();
@@ -1731,8 +2021,19 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
 
   (async () => {
     try{
-      await generateExtrait("ref");
-      if(!S.pdf) return;                 // génération échouée : message déjà affiché
+      // BASCULE VUE AÉRIENNE. Le chargement doit avoir lieu ICI, et non plus
+      // bas : les constantes W et H sont capturées quelques lignes après, et
+      // dessinerTableau les retient dans sa fermeture. Charger l'ortho plus
+      // tard donnerait un tableau dessiné sur des dimensions nulles.
+      const modeOrtho = (p.get("fond") || "").toLowerCase() === "ortho";
+      if(modeOrtho){
+        S.ortho = null;
+        if(!await chargerOrtho(p)) return;   // motif déjà affiché
+      }else{
+        S.ortho = null;
+        await generateExtrait("ref");
+        if(!S.pdf) return;                 // génération échouée : message déjà affiché
+      }
 
       // ================== COLORISATION AUTOMATIQUE ==========================
       // MÉTHODE : recensement exhaustif, puis sélection par TAILLE ATTENDUE.
@@ -2028,6 +2329,16 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
         .map((r) => r.split(",").map((c) => c.trim()))
         .filter((r) => r.length >= 2 && (r[0] || r[1]));
       const totalAnnot = (p.get("total") || "").trim();
+
+      // ---- VUE AÉRIENNE : chemin court, et l'on sort ----------------------
+      // On NE TRAVERSE PAS le géoréférencement par étiquettes : il n'y a pas
+      // d'étiquette sur une orthophotographie, et son portillon d'échelle
+      // aberrante — calibré sur les échelles du service cadastral — n'a aucun
+      // sens pour une emprise que nous avons nous-mêmes écrite.
+      if(modeOrtho){
+        await contourOrtho(p, dessinerTableau, rangsAnnot, totalAnnot);
+        return;
+      }
 
       // attendus : { X, Y } transmis par l'appelant, sert à classer les groupes
       // d'étiquettes par ordre de grandeur quand la corrélation ne suffit pas.
