@@ -1626,18 +1626,30 @@ async function carteCommune(codeInsee, zz, centresCC, aspectCible){
       g.restore();
     }
     // marqueurs : disque carmin cerné de blanc, lisible sur n'importe quel fond
-    const rM = mmPxDe(cv.width, 1.7);
-    (centresCC || []).forEach(([X, Y]) => {
-      const a = px(X), b = py(Y);
-      // HALO carmin translucide : accroche l'œil de loin sans alourdir le point,
-      // et se distingue du contour orange de la commune.
-      g.beginPath(); g.arc(a, b, rM * 2.1, 0, 2 * Math.PI);
-      g.strokeStyle = "rgba(160,16,64,0.35)"; g.lineWidth = mmPxDe(cv.width, 0.9);
-      g.stroke();
-      g.beginPath(); g.arc(a, b, rM, 0, 2 * Math.PI);
-      g.fillStyle = "#A01040"; g.fill();
-      g.strokeStyle = "#ffffff"; g.lineWidth = mmPxDe(cv.width, 0.45); g.stroke();
-    });
+    // ---- CROIX DE REPÉRAGE, et non disque ------------------------------
+    // Décision JFD du 31/07. Le motif n'est pas décoratif : à l'échelle d'une
+    // commune — environ 1/34 500 pour Tilques sur 87 mm —, un disque de 1,7 mm
+    // de rayon couvrait près de 120 m de terrain. Il AFFIRMAIT donc une étendue
+    // que la parcelle n'a pas. Une croix marque une POSITION sans rien dire de
+    // la taille : c'est « désigner sans délimiter », appliqué à l'autre bout de
+    // l'échelle. Ne pas la remplacer par une forme pleine.
+    // Tracée deux fois, liseré blanc dessous, comme le contour communal : sans
+    // lui, un trait fin disparaît sur les aplats clairs du Plan IGN.
+    const bras = mmPxDe(cv.width, 2.6);        // demi-longueur des branches
+    const croix = (couleur, ep) => {
+      g.strokeStyle = couleur; g.lineWidth = ep; g.lineCap = "butt";
+      (centresCC || []).forEach(([X, Y]) => {
+        const a = px(X), b = py(Y);
+        g.beginPath();
+        g.moveTo(a - bras, b); g.lineTo(a + bras, b);
+        g.moveTo(a, b - bras); g.lineTo(a, b + bras);
+        g.stroke();
+      });
+    };
+    g.save();
+    croix("rgba(255,255,255,0.9)", mmPxDe(cv.width, 1.5));
+    croix("#A01040", mmPxDe(cv.width, 0.7));
+    g.restore();
     // attribution GRAVÉE, comme sur l'ortho : elle doit suivre l'image
     const t = mmPxDe(cv.width, 1.9);
     g.font = t + "px Georgia, 'Times New Roman', serif"; g.textBaseline = "bottom";
