@@ -1731,6 +1731,7 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
    juste sur le cadastre et de travers sur une photo antérieure. Le
    millésime servi est porté à l'écran quand le service le déclare.
    ================================================================== */
+const FACTEUR_CONTEXTE = 3;   // voir le raisonnement chiffré dans chargerOrtho
 const ORTHO = {
   service: "https://data.geopf.fr/wms-r/wms",
   couche:  "ORTHOIMAGERY.ORTHOPHOTOS",
@@ -1829,7 +1830,9 @@ async function chargerOrtho(p){
   }
 
   // ---- emprise au sol demandée -----------------------------------------
-  const cadre = (p.get("cadre") || "plan").toLowerCase();
+  // DÉFAUT = « contexte », décision JFD du 31/07/2026 après comparaison à l'écran
+  // de trois cadrages. Voir FACTEUR_CONTEXTE ci-dessous pour le raisonnement.
+  const cadre = (p.get("cadre") || "contexte").toLowerCase();
   const mEmp  = (p.get("emp") || "").trim().match(/^([0-9.]+)x([0-9.]+)$/);
   let cx, cy, largeur, hauteur, cadreRetenu = cadre, motifRepli = "";
 
@@ -1852,10 +1855,25 @@ async function chargerOrtho(p){
       y0 = Math.min(...ys); y1 = Math.max(...ys);
     }
     cx = (x0 + x1) / 2; cy = (y0 + y1) / 2;
-    // marge : un dixième de la plus grande dimension, au moins 10 m — sans
-    // quoi le repère affleurerait le bord et l'on ne verrait pas ce qui
-    // borde le bien, qui est justement l'intérêt d'une vue du ciel.
-    const marge = Math.max((x1 - x0), (y1 - y0)) * 0.10;
+    // CADRAGE « CONTEXTE » : le cadre vaut FACTEUR_CONTEXTE fois le repère, soit
+    // une marge égale à la moitié de cet écart appliquée à la plus grande
+    // dimension. Le facteur de 3 n'est pas un goût, il résulte d'un arbitrage
+    // CHIFFRÉ entre deux exigences qui tirent en sens OPPOSÉ, et qu'aucun
+    // réglage ne réconcilie :
+    //   — plus le cadre est large, plus le repère est petit dans l'image ;
+    //   — plus le cadre est serré, moins l'ortho a d'information à donner, donc
+    //     plus l'impression est molle.
+    // Mesuré sur une parcelle de 30 m, en pixels RÉELLEMENT porteurs
+    // (emprise ÷ 0,20) rapportés à la largeur d'insertion :
+    //   ×2 → repère à 50 % de la largeur, mais 120 dpi en demi-page
+    //   ×3 → repère à 33 %,                   180 dpi en demi-page
+    //   cadre cadastral → repère à 22 %,      276 dpi
+    // JFD insère en DEMI-PAGE et a retenu ×3 : le repère reste franc et
+    // l'impression confortable. À PLEINE LARGEUR A4 ce choix tomberait à 83 dpi
+    // et il faudrait revenir au cadrage cadastral — la largeur d'insertion
+    // commande donc le facteur, ne pas la perdre de vue en le modifiant.
+    const facteur = (cadre === "contexte") ? FACTEUR_CONTEXTE : 1.20;
+    const marge = Math.max((x1 - x0), (y1 - y0)) * (facteur - 1) / 2;
     largeur = (x1 - x0) + 2 * Math.max(marge, 10);
     hauteur = (y1 - y0) + 2 * Math.max(marge, 10);
   }else{
@@ -2042,7 +2060,9 @@ async function contourOrtho(p, rangs, total){
 
   const desc = "Vue aérienne IGN, zone CC" + S.ortho.zz + " (EPSG:" + S.ortho.epsg
     + "), " + S.ortho.mParPx.toFixed(3) + " m/px, rendu " + S.W + "×" + S.H + " px, "
-    + "cadrage " + (S.ortho.cadre === "plan" ? "identique au plan cadastral" : "serré")
+    + "cadrage " + (S.ortho.cadre === "plan" ? "identique au plan cadastral"
+        : S.ortho.cadre === "contexte" ? "de contexte (×" + FACTEUR_CONTEXTE + " le repère)"
+        : "serré")
     + ". Géoréférencement ANALYTIQUE — emprise commandée, non lue : aucun OCR."
     + (S.ortho.surech > 1.5
         ? " ⚠ Image suréchantillonnée ×" + S.ortho.surech.toFixed(1) + " : la finesse "
