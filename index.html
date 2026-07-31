@@ -1460,6 +1460,15 @@ function setStatus(msg,cls){
   if(!msg){statusEl.className="status";statusEl.textContent="";return;}
   statusEl.className="status show "+(cls||"ok");
   statusEl.textContent=msg;
+  // LE STATUT SE REND VISIBLE DE LUI-MÊME. Il siège dans le panneau de gauche,
+  // sous le bouton « Trouver et coloriser », donc SOUS LA LIGNE DE FLOTTAISON
+  // sur un écran d'ordinateur portable : quatre essais de la vue aérienne ont
+  // été jugés sur la seule apparence de l'image, faute d'avoir vu le message.
+  // C'est le défaut du § 9 (« quatre mises au point perdues faute de pouvoir
+  // lire les messages ») reparu à un autre endroit. Il pèse plus lourd sur le
+  // chemin ortho que sur le plan cadastral : le géoréférencement analytique
+  // n'ayant AUCUN auto-contrôle, ces messages sont son unique garde-fou.
+  try{ statusEl.scrollIntoView({ block:"nearest", behavior:"smooth" }); }catch(e){}
 }
 
 const OCR_TARGET=2800;                  // largeur de rendu pour l'OCR (chiffres nets)
@@ -1726,7 +1735,17 @@ const ORTHO = {
   service: "https://data.geopf.fr/wms-r/wms",
   couche:  "ORTHOIMAGERY.ORTHOPHOTOS",
   natifM:  0.20,     // finesse native de l'ortho, en mètres au sol par pixel
-  pxMin:   1700,     // résolution interne de renderBase : on ne descend pas dessous
+  // PLANCHER À 1 200 px, abaissé de 1 700 le 30/07/2026 après mesure.
+  // Raison : TRENTE réduit DE TOUTE FAÇON chaque image à 1 100 px avant
+  // insertion dans la fiche, donc les pixels au-delà sont jetés. À emprise
+  // égale la netteté est identique — l'information n'est pas dans l'ortho et
+  // aucun réglage ne l'y mettra —, seuls le poids du JPEG et le temps de
+  // réponse changent. Gain sans contrepartie.
+  // ⚠ NE PAS CROIRE qu'un « plafond de suréchantillonnage » ferait mieux :
+  // plancher de pixels et plafond de suréchantillonnage sont LE MÊME BOUTON
+  // tourné en sens inverse, le plancher gagnant toujours. Le choix est binaire —
+  // ou des petites parcelles molles mais imprimables, ou 200 px inexploitables.
+  pxMin:   1200,
   pxMax:   4000      // 5000 passe, mesuré — on garde de la marge
 };
 
@@ -1749,6 +1768,56 @@ function sommetsProjetes(brut){
     .filter(q => q.length === 2 && Number.isFinite(q[0]) && Number.isFinite(q[1]));
 }
 
+/* REPÈRES D'ILLUSTRATION. Décision JFD du 30/07/2026 : sur une vue aérienne
+   le contour exact de la parcelle n'est PAS souhaitable. Deux motifs, et le
+   second est le plus fort :
+     — avec plusieurs parcelles, une dentelle de contours exacts égare
+       l'interlocuteur au lieu de le renseigner ;
+     — la pièce est ILLUSTRATIVE. Un contour au cordeau sur une photographie
+       invite à mesurer ce qui n'est pas mesurable à cette échelle, et donne à
+       une illustration l'autorité d'un plan. Le repère doit DÉSIGNER, pas
+       DÉLIMITER — c'est le plan cadastral qui délimite.
+
+   ELLIPSE CIRCONSCRITE À LA BOÎTE ENGLOBANTE, et non cercle : sur une parcelle
+   compacte l'ellipse EST un rond, mais sur une lanière un cercle circonscrit
+   aurait un rayon égal à la moitié de la longueur et engloberait tout le
+   voisinage. Une lanière de 200 × 10 m donnerait un cercle de 100 m de rayon.
+   Une seule règle couvre les deux formes, sans cas particulier à maintenir.
+
+   Demi-axes en w/√2 et h/√2 : c'est l'ellipse qui passe par les quatre coins
+   de la boîte. Plancher de 6 m pour qu'une parcelle de 10 ca reste visible. */
+function ellipsesDe(brut, mode){
+  const blocs = (brut || "").trim().split("|")
+    .map(b => b.split(";").map(c => c.split(",").map(parseFloat))
+                .filter(q => q.length === 2 && Number.isFinite(q[0]) && Number.isFinite(q[1])))
+    .filter(a => a.length >= 3);
+  if(!blocs.length) return [];
+  const boite = pts => {
+    const xs = pts.map(q => q[0]), ys = pts.map(q => q[1]);
+    const x0 = Math.min(...xs), x1 = Math.max(...xs);
+    const y0 = Math.min(...ys), y1 = Math.max(...ys);
+    return { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2,
+             a: Math.max((x1 - x0) / Math.SQRT2, 6),
+             b: Math.max((y1 - y0) / Math.SQRT2, 6),
+             aireBoite: (x1 - x0) * (y1 - y0) };
+  };
+  // « ronds » : un repère par parcelle. « rond » : un seul, sur l'ensemble —
+  // c'est une propriété, pas une collection.
+  return mode === "ronds" ? blocs.map(boite) : [boite(blocs.flat())];
+}
+
+/* DISPERSION : part de la boîte d'ensemble réellement occupée par les
+   parcelles. Un repère unique sur des parcelles éparpillées cerne surtout du
+   terrain d'autrui — on le dit, et l'on suggère un repère par parcelle. */
+function dispersion(brut){
+  const es = ellipsesDe(brut, "ronds");
+  if(es.length < 2) return 1;
+  const un = ellipsesDe(brut, "rond")[0];
+  const somme = es.reduce((t, e) => t + e.aireBoite, 0);
+  const ens = un.aireBoite;
+  return ens > 0 ? somme / ens : 1;
+}
+
 async function chargerOrtho(p){
   const brut = (p.get("poly") || "").trim();
   const mPt  = (p.get("pt") || "").match(/^(-?[0-9.]+),(-?[0-9.]+)$/);
@@ -1764,14 +1833,28 @@ async function chargerOrtho(p){
   const mEmp  = (p.get("emp") || "").trim().match(/^([0-9.]+)x([0-9.]+)$/);
   let cx, cy, largeur, hauteur, cadreRetenu = cadre, motifRepli = "";
 
+  const trace = (p.get("trace") || "rond").toLowerCase();
   if(som.length){
-    const xs = som.map(q => q[0]), ys = som.map(q => q[1]);
-    const x0 = Math.min(...xs), x1 = Math.max(...xs);
-    const y0 = Math.min(...ys), y1 = Math.max(...ys);
+    // ⚠ LE CADRE SE CALCULE SUR LE REPÈRE, NON SUR LA PARCELLE. Une ellipse
+    // circonscrite dépasse la boîte englobante d'un facteur √2 : cadrer sur la
+    // parcelle rognerait le rond sur les grandes emprises — un rond tronqué
+    // ne désigne plus rien.
+    const reperes = (trace === "contour") ? [] : ellipsesDe(brut, trace);
+    let x0, x1, y0, y1;
+    if(reperes.length){
+      x0 = Math.min(...reperes.map(e => e.cx - e.a));
+      x1 = Math.max(...reperes.map(e => e.cx + e.a));
+      y0 = Math.min(...reperes.map(e => e.cy - e.b));
+      y1 = Math.max(...reperes.map(e => e.cy + e.b));
+    }else{
+      const xs = som.map(q => q[0]), ys = som.map(q => q[1]);
+      x0 = Math.min(...xs); x1 = Math.max(...xs);
+      y0 = Math.min(...ys); y1 = Math.max(...ys);
+    }
     cx = (x0 + x1) / 2; cy = (y0 + y1) / 2;
     // marge : un dixième de la plus grande dimension, au moins 10 m — sans
-    // quoi une parcelle bâtie affleurerait le bord et l'on ne verrait pas
-    // ce qui la borde, qui est justement l'intérêt d'une vue du ciel.
+    // quoi le repère affleurerait le bord et l'on ne verrait pas ce qui
+    // borde le bien, qui est justement l'intérêt d'une vue du ciel.
     const marge = Math.max((x1 - x0), (y1 - y0)) * 0.10;
     largeur = (x1 - x0) + 2 * Math.max(marge, 10);
     hauteur = (y1 - y0) + 2 * Math.max(marge, 10);
@@ -1867,7 +1950,7 @@ async function chargerOrtho(p){
     S.pdf = null; S.pageCount = 1; S.page = 1; S.rotation = 0;
     S.ocrCache = null; S.anchorCache = null;
     S.notes = []; anno.innerHTML = ""; S.legendLabels = {}; S.couleursAnnot = null;
-    S.ortho = { epsg: z.epsg, zz: z.zz, bbox: [x0, y0, x1, y1],
+    S.ortho = { epsg: z.epsg, zz: z.zz, bbox: [x0, y0, x1, y1], trace,
                 cadre: cadreRetenu, motifRepli, url,
                 mParPx: largeur / S.W,
                 surech: ORTHO.natifM / (largeur / S.W) };
@@ -1988,18 +2071,33 @@ async function contourOrtho(p, rangs, total){
     return;
   }
 
+  const trace = S.ortho.trace;
   oCtx.save();
-  oCtx.globalAlpha = 1;                       // un contour ne se dilue pas
+  oCtx.globalAlpha = 1;                       // un repère ne se dilue pas
   oCtx.strokeStyle = S.color;
-  oCtx.lineWidth = Math.max(2, Math.round(S.W / 500));
   oCtx.lineJoin = "round";
-  oCtx.beginPath();
-  polygones.forEach(pts => {
-    oCtx.moveTo(pts[0][0], pts[0][1]);
-    for(let i = 1; i < pts.length; i++) oCtx.lineTo(pts[i][0], pts[i][1]);
-    oCtx.closePath();
-  });
-  oCtx.stroke();
+  if(trace === "contour"){
+    oCtx.lineWidth = Math.max(2, Math.round(S.W / 500));
+    oCtx.beginPath();
+    polygones.forEach(pts => {
+      oCtx.moveTo(pts[0][0], pts[0][1]);
+      for(let i = 1; i < pts.length; i++) oCtx.lineTo(pts[i][0], pts[i][1]);
+      oCtx.closePath();
+    });
+    oCtx.stroke();
+  }else{
+    // Trait plus épais que pour un contour : un repère doit se voir d'emblée
+    // sur une photographie chargée, là où un contour se suit du regard.
+    oCtx.lineWidth = Math.max(3, Math.round(S.W / 320));
+    // Les demi-axes se convertissent séparément : rien ne garantit que les deux
+    // pas soient rigoureusement égaux, la hauteur en pixels étant arrondie.
+    ellipsesDe(brut, trace).forEach(e => {
+      const px = (e.cx - g.fx.b) / g.fx.a, py = (e.cy - g.fy.b) / g.fy.a;
+      oCtx.beginPath();
+      oCtx.ellipse(px, py, e.a / Math.abs(g.fx.a), e.b / Math.abs(g.fy.a), 0, 0, 2 * Math.PI);
+      oCtx.stroke();
+    });
+  }
   oCtx.restore();
   pushUndo();
   if(!S.legendLabels[S.color]) S.legendLabels[S.color] = "";
@@ -2007,18 +2105,37 @@ async function contourOrtho(p, rangs, total){
   const nb = tableauOrtho(rangs, total);
 
   let alerte = "";
+  // DISPERSION : un repère unique posé sur des parcelles éparpillées cerne
+  // surtout du terrain qui n'est pas celui du dossier. On avertit sans bloquer,
+  // la lisibilité d'une illustration appartenant au rédacteur.
+  if(trace === "rond" && polygones.length > 1){
+    const occ = dispersion(brut);
+    if(occ < 0.30) alerte += " ⚠ Les " + polygones.length + " parcelles n'occupent que "
+      + Math.round(occ * 100) + " % de la zone cernée : le rond englobe surtout du terrain "
+      + "étranger au dossier. Préférez « trace=ronds », un repère par parcelle.";
+  }
   if(dehors) alerte += " ⚠ " + dehors + " sommet(s) sur " + som.length + " hors du rendu : "
-    + "le contour est tronqué au bord de l'image.";
+    + "le repère est tronqué au bord de l'image.";
   if(part > 0.98) alerte += " ⚠ Le contour occupe la quasi-totalité du rendu : "
     + "l'emprise est probablement trop serrée pour situer le bien.";
   if(part < 0.005) alerte += " ⚠ Le contour n'occupe que "
     + (part * 100).toFixed(2) + " % du rendu : à cette taille il est illisible, "
     + "préférez le cadrage serré.";
 
-  setStatus((polygones.length > 1
-      ? "UNITÉ FONCIÈRE de " + polygones.length + " parcelles cernée"
-      : "Parcelle cernée")
-    + " en contour seul, sans aplat — " + som.length + " sommets, emprise "
+  // Le bandeau du canvas s'efface au bout de 2,6 s : il ne PORTE pas
+  // l'avertissement, il signale qu'il y en a un à lire.
+  if(alerte || repli) showHint("⚠ Vue aérienne : un avertissement vous attend dans le statut, "
+    + "en bas du panneau de gauche.");
+  const libelle = trace === "contour"
+    ? ((polygones.length > 1 ? "UNITÉ FONCIÈRE de " + polygones.length + " parcelles" : "Parcelle")
+       + " cernée par son CONTOUR EXACT, sans aplat")
+    : ((polygones.length > 1 && trace === "ronds"
+          ? polygones.length + " parcelles désignées chacune par un repère"
+          : (polygones.length > 1 ? "Ensemble de " + polygones.length + " parcelles" : "Parcelle")
+            + " désignée par un repère")
+       + " — ellipse circonscrite, pièce ILLUSTRATIVE qui désigne sans délimiter");
+  setStatus(libelle
+    + " — " + som.length + " sommets, emprise "
     + bx + "×" + by + " px. " + desc
     + (nb ? " " + nb + " ligne(s) de tableau." : "") + repli + alerte,
     (alerte || repli) ? "warn" : "ok");
