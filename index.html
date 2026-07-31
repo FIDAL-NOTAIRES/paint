@@ -1902,7 +1902,53 @@ function geoOrtho(){
 /* CONTOUR SEUL, NON REMPLI — décision JFD du 30/07/2026. Sur une
    photographie, un aplat masque précisément ce qu'on est venu voir : le
    bâti, la végétation, les accès. Le trait délimite sans cacher. */
-async function contourOrtho(p, dessinerTableau, rangs, total){
+/* TABLEAU D'ANNOTATION SUR PHOTOGRAPHIE. Aucun OCR : il n'y a ni titre ni
+   cartouche à repérer, donc rien à mesurer sur l'image. Le tableau se pose
+   en bas à gauche, sur un fond blanc translucide — sans fond, un texte est
+   illisible sur une vue aérienne, quelle que soit sa couleur. Le contour
+   étant centré, ce coin ne le masque pas. */
+function tableauOrtho(rangs, total){
+  if(!rangs.length) return 0;
+  const lignes = [["Section", "N°", "Contenance"]].concat(rangs.map(r => r.slice(0, 3)));
+  if(total) lignes.push(["", "Total", total]);
+  const t = Math.max(13, Math.round(S.W / 95));
+  oCtx.save();
+  oCtx.font = t + "px Georgia, 'Times New Roman', serif";
+  oCtx.textBaseline = "top";
+  const nbCol = Math.max(...lignes.map(l => l.length));
+  const larg = [];
+  for(let c = 0; c < nbCol; c++)
+    larg[c] = Math.max(...lignes.map(l => oCtx.measureText(String(l[c] || "")).width));
+  const espace = t * 0.9, padd = t * 0.7, hLigne = t * 1.45;
+  const W = larg.reduce((a, b) => a + b, 0) + espace * (nbCol - 1) + padd * 2;
+  const H = hLigne * lignes.length + padd * 2;
+  const x = padd, y = S.H - H - padd;
+  oCtx.fillStyle = "rgba(255,255,255,0.88)";
+  oCtx.fillRect(x, y, W, H);
+  oCtx.strokeStyle = "#0F2238"; oCtx.lineWidth = Math.max(1, Math.round(S.W / 1400));
+  oCtx.strokeRect(x, y, W, H);
+  lignes.forEach((l, i) => {
+    const yy = y + padd + i * hLigne;
+    const gras = (i === 0) || (total && i === lignes.length - 1);
+    oCtx.font = (gras ? "bold " : "") + t + "px Georgia, 'Times New Roman', serif";
+    oCtx.fillStyle = "#0F2238";
+    let xx = x + padd;
+    for(let c = 0; c < nbCol; c++){
+      oCtx.fillText(String(l[c] || ""), xx, yy);
+      xx += larg[c] + espace;
+    }
+    if(i === 0 || (total && i === lignes.length - 2)){
+      oCtx.beginPath();
+      oCtx.moveTo(x + padd * 0.5, yy + hLigne - t * 0.22);
+      oCtx.lineTo(x + W - padd * 0.5, yy + hLigne - t * 0.22);
+      oCtx.stroke();
+    }
+  });
+  oCtx.restore();
+  return lignes.length;
+}
+
+async function contourOrtho(p, rangs, total){
   const g   = geoOrtho();
   const brut = (p.get("poly") || "").trim();
   const enPixels = bloc => bloc.split(";").map(c => {
@@ -1923,6 +1969,7 @@ async function contourOrtho(p, dessinerTableau, rangs, total){
   const repli = S.ortho.motifRepli ? " ⚠ " + S.ortho.motifRepli + "." : "";
 
   if(!polygones.length){
+    tableauOrtho(rangs, total);
     setStatus("Vue aérienne chargée, sans contour à tracer (paramètre « poly » "
       + "absent ou trop court). " + desc + repli, "warn");
     return;
@@ -1957,7 +2004,7 @@ async function contourOrtho(p, dessinerTableau, rangs, total){
   pushUndo();
   if(!S.legendLabels[S.color]) S.legendLabels[S.color] = "";
   rebuildLegend();
-  const nb = await dessinerTableau(rangs, total);
+  const nb = tableauOrtho(rangs, total);
 
   let alerte = "";
   if(dehors) alerte += " ⚠ " + dehors + " sommet(s) sur " + som.length + " hors du rendu : "
@@ -2066,14 +2113,22 @@ async function contourOrtho(p, dessinerTableau, rangs, total){
       const fmt = p.get("format") || "A4|portrait";
       const ech = parseFloat(p.get("echelle") || "1000");
       const mDim = (p.get("dim") || "").trim().match(/^([0-9.]+)x([0-9.]+)$/);
-      if(!mDim || !largeursFeuille[fmt] || !(ech > 0)){
+      // ⚠ CE PORTILLON NE CONCERNE PAS LA VUE AÉRIENNE. Il garde la détection
+      // par TAILLE ATTENDUE, qui a besoin de dim pour comparer des pixels à des
+      // mètres. Le chemin ortho, lui, ne compare rien : il commande l'emprise.
+      // Sortir ici en mode ortho chargeait la photo puis renonçait au contour,
+      // sans un mot — c'est le piège du § 4 d) de l'addendum REDPAR v5, reproduit
+      // cette fois DANS LE CODE et non dans un lien de test.
+      if(!modeOrtho && (!mDim || !largeursFeuille[fmt] || !(ech > 0))){
         aLaMain("Dimensions de la parcelle non transmises : la colorisation automatique "
           + "a besoin du paramètre « dim », que REDPAR fournit une fois les contours chargés.");
         return;
       }
       const pxParMetre = W / (largeursFeuille[fmt] * ech);
-      const attendu = { bw: parseFloat(mDim[1]) * pxParMetre,
-                        bh: parseFloat(mDim[2]) * pxParMetre };
+      // mDim peut être nul en mode ortho : le déstructurer sans garde jetterait.
+      const attendu = mDim
+        ? { bw: parseFloat(mDim[1]) * pxParMetre, bh: parseFloat(mDim[2]) * pxParMetre }
+        : { bw: 0, bh: 0 };
       // TROISIÈME SIGNAL : l'AIRE, indépendante de la boîte englobante. Deux
       // régions peuvent partager la même boîte et avoir des aires radicalement
       // différentes — c'est le cas d'une parcelle et d'un fragment de voirie en
@@ -2336,7 +2391,10 @@ async function contourOrtho(p, dessinerTableau, rangs, total){
       // aberrante — calibré sur les échelles du service cadastral — n'a aucun
       // sens pour une emprise que nous avons nous-mêmes écrite.
       if(modeOrtho){
-        await contourOrtho(p, dessinerTableau, rangsAnnot, totalAnnot);
+        // On NE passe PAS par dessinerTableau : il repère le titre par Tesseract,
+        // or une orthophotographie n'a pas de titre. Tableau dessiné
+        // géométriquement, avec son propre fond.
+        await contourOrtho(p, rangsAnnot, totalAnnot);
         return;
       }
 
