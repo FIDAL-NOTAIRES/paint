@@ -248,6 +248,7 @@
     <button class="hbtn" id="genbtn" title="Générer un extrait depuis des références" style="display:none">🗺 Références</button>
     <button class="hbtn" id="pngbtn" disabled>⬇ PNG</button>
     <button class="hbtn primary" id="pdfbtn" disabled>⬇ PDF</button>
+    <button class="hbtn primary" id="docbtn" title="Un seul PDF : le plan cadastral colorié puis la vue aérienne" style="display:none">⬇ Document 2 pages</button>
   </div>
 </header>
 
@@ -1449,6 +1450,99 @@ async function doExport(kind){
     showHint("PDF généré : "+(blob.size/1e6).toFixed(1)+" Mo (qualité "+Math.round(quality*100)+" %).");
   }
 }
+/* ==================================================================
+   DOCUMENT À DEUX PAGES — plan cadastral colorié, puis vue aérienne
+   ------------------------------------------------------------------
+   Demandé par JFD le 31/07/2026 : un seul fichier au lieu de deux.
+
+   ⚠ POURQUOI L'EXPORT N'EST PAS DÉCLENCHÉ PAR LE LIEN DE REDPAR, mais par un
+   bouton que l'on presse APRÈS avoir vu la page 1. Les deux pages n'ont pas la
+   même fiabilité, et c'est structurant :
+     — la vue aérienne est DÉTERMINISTE (emprise commandée, aucun OCR) ;
+     — la colorisation cadastrale est SEMI-AUTOMATIQUE PAR CONCEPTION : lecture
+       des numéros au Tesseract, filtre de vraisemblance, sept approches
+       écartées, repli manuel documenté quand les numéros sont trop inclinés.
+   Un bouton « génère le document » parti sans regard produirait donc, de temps
+   en temps, un document dont la PREMIÈRE PAGE est mal coloriée — et cette page
+   part au dossier. Le contrôle humain est ici une pièce du dispositif, pas une
+   précaution facultative.
+
+   ⚠ L'AFFICHAGE EST REMPLACÉ, ET NON RESTAURÉ. Fabriquer la page 2 hors écran
+   aurait demandé de refondre le repère, le tableau et le compositage autour
+   d'un contexte paramétrable, au lieu des variables globales oCtx / S.W / S.H.
+   Arbitrage assumé le 31/07 : moins de code réécrit, donc moins de risque
+   d'erreur, contre la perte de l'état modifiable après export. Elle est
+   tolérable parce que la page 1 est DÉJÀ définitive au moment du clic — et elle
+   est ANNONCÉE au statut. Recharger le lien la reprend depuis le début.
+
+   ⚠ AUCUNE ANCRE OCR SUR LA PAGE 2 : buildExportCanvas est appelé avec un
+   anchor nul, findCadastreAnchor n'ayant rien à trouver sur une photographie.
+   Sans cela on rappellerait Tesseract dans la seule chaîne qui s'en est libérée.
+
+   Budget de taille INCHANGÉ PAR PAGE : chaque page garde la qualité de l'export
+   simple d'aujourd'hui, plutôt que d'être dégradée pour tenir un total. Le
+   document pèse donc environ le double — la taille réelle est annoncée.
+   ================================================================== */
+async function doExportDocument(){
+  const btn = document.getElementById("docbtn");
+  if(btn.disabled) return;                       // garde contre le double clic
+  if(!S.pdf){
+    setStatus("Document impossible : aucun plan cadastral chargé. Ce bouton "
+      + "assemble le plan colorié ET la vue aérienne ; il lui faut le premier.", "err");
+    return;
+  }
+  btn.disabled = true;
+  try{
+    const p = new URLSearchParams(location.search);
+    // ---- page 1 : le plan cadastral tel qu'il est à l'écran -------------
+    let anchor = null;
+    if(document.getElementById("inclegend").checked
+       && document.getElementById("legendpos").value === "auto"){
+      spin.classList.add("show"); spinmsg.textContent = "Localisation de la légende…";
+      anchor = await findCadastreAnchor();
+      spin.classList.remove("show");
+    }
+    const c1 = buildExportCanvas(anchor);
+    const rangs = (p.get("tab") || "").split(";")
+      .map((r) => r.split(",").map((c) => c.trim()))
+      .filter((r) => r.length >= 2 && (r[0] || r[1]));
+    const total = (p.get("total") || "").trim();
+    // ---- page 2 : la vue aérienne, qui REMPLACE l'affichage -------------
+    if(!await chargerOrtho(p)) return;           // motif déjà affiché
+    await contourOrtho(p, rangs, total);
+    const c2 = buildExportCanvas(null);
+    // ---- assemblage -----------------------------------------------------
+    const { jsPDF } = window.jspdf;
+    const sens = (c) => (c.width >= c.height) ? "landscape" : "portrait";
+    const pdf = new jsPDF({ orientation: sens(c1), unit: "pt", format: "a4", compress: true });
+    const poser = (c) => {
+      const pw = pdf.internal.pageSize.getWidth(), ph = pdf.internal.pageSize.getHeight();
+      const m = 24, r = Math.min((pw - 2 * m) / c.width, (ph - 2 * m) / c.height);
+      const w = c.width * r, h = c.height * r;
+      pdf.addImage(jpegUnderSize(c, PDF_MAX_BYTES).data, "JPEG",
+                   (pw - w) / 2, (ph - h) / 2, w, h);
+    };
+    poser(c1);
+    pdf.addPage("a4", sens(c2));
+    poser(c2);
+    const ref = [p.get("section") || "", p.get("parcelle") || ""].join("-");
+    const blob = pdf.output("blob");
+    const a = document.createElement("a");
+    a.download = `plan-et-vue-aerienne-${p.get("commune") || ""}-${ref}.pdf`;
+    a.href = URL.createObjectURL(blob); a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    showHint("Document 2 pages : " + (blob.size / 1e6).toFixed(1) + " Mo.");
+    setStatus("DOCUMENT À DEUX PAGES généré (" + (blob.size / 1e6).toFixed(1) + " Mo) — "
+      + "page 1 le plan cadastral colorié, page 2 la vue aérienne. ⚠ L'écran affiche "
+      + "désormais la vue aérienne : la colorisation du plan N'EST PLUS MODIFIABLE, "
+      + "elle n'existe que dans le PDF que vous venez d'enregistrer. Rechargez le "
+      + "lien pour la reprendre depuis le début.", "warn");
+  }finally{
+    btn.disabled = false;
+    spin.classList.remove("show");
+  }
+}
+document.getElementById("docbtn").onclick = doExportDocument;
 document.getElementById("pngbtn").onclick=()=>doExport("png");
 document.getElementById("pdfbtn").onclick=()=>doExport("pdf");
 
@@ -2010,8 +2104,18 @@ function geoOrtho(){
    étant centré, ce coin ne le masque pas. */
 function tableauOrtho(rangs, total){
   if(!rangs.length) return 0;
-  const lignes = [["Section", "N°", "Contenance"]].concat(rangs.map(r => r.slice(0, 3)));
-  if(total) lignes.push(["", "Total", total]);
+  // ⚠ SECTION ET NUMÉRO SEULEMENT, PAS DE CONTENANCE. Décision JFD du 31/07/2026.
+  // La pièce désigne sans délimiter : afficher une contenance au centiare dans le
+  // coin rétablirait, sous forme de chiffre, la précision qu'on a délibérément
+  // retirée au milieu en remplaçant le contour par un repère. Un tiers recevant
+  // la photo seule pourrait y lire une autorité qu'elle n'a pas.
+  // L'objection contraire — la contenance vient de la MATRICE, pas de la photo,
+  // donc ne promet rien de faux — a été pesée et écartée : sur une pièce
+  // illustrative, mieux vaut identifier le bien que le quantifier.
+  // Le paramètre « total » est donc REÇU MAIS IGNORÉ, et « tab » n'est lu que
+  // sur ses deux premières colonnes. REDPAR continue de les émettre : rien à
+  // redéployer de son côté, et le retour en arrière ne coûte qu'une ligne ici.
+  const lignes = [["Section", "N°"]].concat(rangs.map(r => r.slice(0, 2)));
   const t = Math.max(13, Math.round(S.W / 95));
   oCtx.save();
   oCtx.font = t + "px Georgia, 'Times New Roman', serif";
@@ -2030,7 +2134,7 @@ function tableauOrtho(rangs, total){
   oCtx.strokeRect(x, y, W, H);
   lignes.forEach((l, i) => {
     const yy = y + padd + i * hLigne;
-    const gras = (i === 0) || (total && i === lignes.length - 1);
+    const gras = (i === 0);
     oCtx.font = (gras ? "bold " : "") + t + "px Georgia, 'Times New Roman', serif";
     oCtx.fillStyle = "#0F2238";
     let xx = x + padd;
@@ -2038,7 +2142,7 @@ function tableauOrtho(rangs, total){
       oCtx.fillText(String(l[c] || ""), xx, yy);
       xx += larg[c] + espace;
     }
-    if(i === 0 || (total && i === lignes.length - 2)){
+    if(i === 0){
       oCtx.beginPath();
       oCtx.moveTo(x + padd * 0.5, yy + hLigne - t * 0.22);
       oCtx.lineTo(x + W - padd * 0.5, yy + hLigne - t * 0.22);
@@ -2217,6 +2321,10 @@ async function contourOrtho(p, rangs, total){
         S.ortho = null;
         await generateExtrait("ref");
         if(!S.pdf) return;                 // génération échouée : message déjà affiché
+        // Mode document : le bouton n'apparaît QUE si le plan cadastral est
+        // chargé, puisque c'est lui qui fait la page 1.
+        if((p.get("doc") || "") === "1")
+          document.getElementById("docbtn").style.display = "inline-flex";
       }
 
       // ================== COLORISATION AUTOMATIQUE ==========================
