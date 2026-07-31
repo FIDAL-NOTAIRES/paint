@@ -1645,26 +1645,48 @@ async function carteCommune(c, zz, centresCC, aspectCible){
     // l'échelle. Ne pas la remplacer par une forme pleine.
     // Tracée deux fois, liseré blanc dessous, comme le contour communal : sans
     // lui, un trait fin disparaît sur les aplats clairs du Plan IGN.
-    const bras = mmPxDe(cv.width, 2.6);        // demi-longueur des branches
-    const rayon = mmPxDe(cv.width, 3.2);       // cercle AUTOUR de la croix
+    // ⚠ LA CROIX NE DOIT PAS TOUCHER L'ANNEAU. Le calcul est à faire sur les
+    // BORDS des traits, non sur leurs axes — c'est ce que j'avais négligé :
+    // avec des branches de 2,6 mm et un anneau de rayon 3,2 mm, le LISERÉ BLANC
+    // de l'anneau (1,4 mm d'épaisseur, donc bord intérieur à 3,2 − 0,7 = 2,5 mm)
+    // mordait sur des pointes situées à 2,6 mm.
+    // Réglage retenu : branches 1,9 mm, anneau 3,4 mm → bord intérieur du liseré
+    // à 2,7 mm, soit 0,8 mm de jeu franc. À REFAIRE si l'une des épaisseurs change.
+    const bras = mmPxDe(cv.width, 1.9);        // demi-longueur des branches
+    const rayon = mmPxDe(cv.width, 3.4);       // cercle AUTOUR de la croix, sans contact
     // ---- le cercle, rétabli le 31/07 à la demande de JFD ---------------
     // Retiré au tour précédent en même temps que le disque, alors qu'il n'en
     // faisait pas partie : il cerne la croix sans rien affirmer sur l'étendue,
     // un anneau ne se lisant pas comme une emprise. Tracé SOUS la croix, pour
     // que celle-ci reste nette au croisement.
+    // ⚠ FUSION DES REPÈRES TROP PROCHES. Sur l'ortho, trace=rond pose UN repère
+    // sur l'ensemble ; ici je dessinais une croix PAR PARCELLE, ce qui donnait un
+    // pâté pour une unité foncière contiguë — à l'échelle d'une commune, quelques
+    // dizaines de mètres séparent des centres que rien ne distingue.
+    // On ne se rabat pas pour autant sur un repère unique : des parcelles
+    // réellement dispersées, dans deux hameaux, MÉRITENT deux croix, et une
+    // croix unique tomberait alors entre les deux, sur du terrain d'autrui.
+    // D'où un regroupement par distance : au-delà, les croix restent distinctes.
+    const seuil = rayon * 2.2;
+    const groupes = [];
+    (centresCC || []).forEach(([X, Y]) => {
+      const a = px(X), b = py(Y);
+      const g0 = groupes.find((q) => Math.hypot(q.x - a, q.y - b) < seuil);
+      if(g0){ g0.sx += a; g0.sy += b; g0.n += 1; g0.x = g0.sx / g0.n; g0.y = g0.sy / g0.n; }
+      else groupes.push({ x: a, y: b, sx: a, sy: b, n: 1 });
+    });
     const anneau = (couleur, ep) => {
       g.strokeStyle = couleur; g.lineWidth = ep;
-      (centresCC || []).forEach(([X, Y]) => {
-        g.beginPath(); g.arc(px(X), py(Y), rayon, 0, 2 * Math.PI); g.stroke();
+      groupes.forEach((q) => {
+        g.beginPath(); g.arc(q.x, q.y, rayon, 0, 2 * Math.PI); g.stroke();
       });
     };
     const croix = (couleur, ep) => {
       g.strokeStyle = couleur; g.lineWidth = ep; g.lineCap = "butt";
-      (centresCC || []).forEach(([X, Y]) => {
-        const a = px(X), b = py(Y);
+      groupes.forEach((q) => {
         g.beginPath();
-        g.moveTo(a - bras, b); g.lineTo(a + bras, b);
-        g.moveTo(a, b - bras); g.lineTo(a, b + bras);
+        g.moveTo(q.x - bras, q.y); g.lineTo(q.x + bras, q.y);
+        g.moveTo(q.x, q.y - bras); g.lineTo(q.x, q.y + bras);
         g.stroke();
       });
     };
@@ -1832,22 +1854,49 @@ function composerBasDePage(pdf, y0, p, infoCom){
     .filter((r) => r.length >= 1 && r[0] !== "");
   if(!lots.length) return y;
 
-  // LA PLACE DÉCIDE, PAS LE NOMBRE. On garde 48 pt de pied de page.
-  const hLigne = 12, besoin = 16 + hLigne * (lots.length + 1);
-  if(y + besoin > ph - 48){
-    pdf.setFont("times", "italic"); pdf.setFontSize(9);
-    pdf.text("Le détail des lots n'est pas reproduit ici, faute de place sur la page.",
-             M, y);
-    return y + 12;
-  }
-  const cl = [M, M + 90, M + 180, M + 270];
-  pdf.setFont("times", "bold"); pdf.setFontSize(9.5);
-  ["Bâtiment", "Entrée", "Niveau", "Porte"].forEach((t, i) => pdf.text(t, cl[i], y));
-  y += 4; pdf.setLineWidth(0.4); pdf.line(M, y, M + L, y); y += 12;
-  pdf.setFont("times", "normal");
+  // ---- GRILLE DES LOTS, AVEC PAGES DE CONTINUATION -------------------
+  // Décision JFD du 31/07 : on ne tronque plus, on continue sur autant de pages
+  // qu'il faut. Le repli « faute de place » de la première version reposait sur
+  // un plafond de 40 imposé par la longueur d'URL — une limite TECHNIQUE déguisée
+  // en limite éditoriale, ce qui était un mauvais raisonnement.
+  //
+  // ⚠ CE QUE CES COLONNES SONT, ET NE SONT PAS. Bâtiment, entrée, niveau, porte
+  // sont des REPÈRES DE POSITION CADASTRALE issus du fichier des locaux. Ce ne
+  // sont PAS des numéros de lot d'état descriptif de division : le fichier MAJIC
+  // n'en porte aucun, et les colonnes « PDL » et « N° du lot » d'un M1 restent
+  // vides. Le mot « lots » est conservé à la demande de JFD pour l'intitulé, mais
+  // NE PAS tenter de rapprocher ces valeurs d'un EDD, elles ne s'y réfèrent pas.
+  const cw = [110, 90, 90, 90];
+  const bordL = (i) => M + cw.slice(0, i).reduce((a, b) => a + b, 0);
+  const hL2 = 14, pad2 = 4;
+  const enTeteLots = () => {
+    pdf.setFont("times", "bold"); pdf.setFontSize(9.5);
+    ["Bâtiment", "Entrée", "Niveau", "Porte"].forEach((t, i) => {
+      pdf.rect(bordL(i), y, cw[i], hL2);
+      pdf.text(t, bordL(i) + pad2, y + 10);
+    });
+    y += hL2;
+  };
+  // L'en-tête est REPRIS sur chaque page : une grille de quatre colonnes sans
+  // intitulé, en page 4, ne se lit pas.
+  const pageSuivante = () => {
+    pdf.addPage("a4", "portrait");
+    y = M;
+    pdf.setFont("times", "bold"); pdf.setFontSize(11);
+    pdf.text("LOCAUX BÂTIS (suite)", M, y); y += 6;
+    pdf.setLineWidth(0.6); pdf.line(M, y, M + L, y); y += 16;
+    enTeteLots();
+  };
+  pdf.setLineWidth(0.5);
+  enTeteLots();
   lots.forEach((r) => {
-    for(let i = 0; i < 4; i++) pdf.text(String(r[i] || "—"), cl[i], y);
-    y += hLigne;
+    if(y + hL2 > ph - 48) pageSuivante();
+    pdf.setFont("times", "normal"); pdf.setFontSize(9.5);
+    for(let i = 0; i < 4; i++){
+      pdf.rect(bordL(i), y, cw[i], hL2);
+      pdf.text(String(r[i] || "—"), bordL(i) + pad2, y + 10);
+    }
+    y += hL2;
   });
   return y;
 }
