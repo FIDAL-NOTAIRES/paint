@@ -1513,18 +1513,38 @@ async function doExportDocument(){
     const c2 = buildExportCanvas(null);
     // ---- assemblage -----------------------------------------------------
     const { jsPDF } = window.jspdf;
-    const sens = (c) => (c.width >= c.height) ? "landscape" : "portrait";
+    const sens = (c) => (c.width >= c.height) ? "landscape" : "portrait";  // page 1 seule
     const pdf = new jsPDF({ orientation: sens(c1), unit: "pt", format: "a4", compress: true });
-    const poser = (c) => {
+    // PAGE 1 — le plan cadastral OCCUPE LA PAGE : c'est la pièce qui délimite,
+    // elle doit se lire à la loupe si besoin.
+    const poserPleinePage = (c) => {
       const pw = pdf.internal.pageSize.getWidth(), ph = pdf.internal.pageSize.getHeight();
       const m = 24, r = Math.min((pw - 2 * m) / c.width, (ph - 2 * m) / c.height);
       const w = c.width * r, h = c.height * r;
       pdf.addImage(jpegUnderSize(c, PDF_MAX_BYTES).data, "JPEG",
                    (pw - w) / 2, (ph - h) / 2, w, h);
     };
-    poser(c1);
-    pdf.addPage("a4", sens(c2));
-    poser(c2);
+    // PAGE 2 — la vue aérienne à MI-LARGEUR, et ce n'est pas une question de goût.
+    // Le facteur de cadrage de contexte (×3) est CALIBRÉ sur une insertion en
+    // demi-page : c'est ce calcul qui avait fait écarter le ×2. Placer la même
+    // image en pleine largeur A4 la ramènerait à 84 dpi sur une petite parcelle
+    // urbaine, et condamnerait donc le cadrage retenu par la mise en page.
+    // À 90 mm, la même image rend 179 dpi. Les deux réglages sont LIÉS : changer
+    // l'un sans l'autre casse l'arbitrage.
+    // Image calée en haut, centrée horizontalement : le bas de page reste libre
+    // pour une mention manuscrite ou une légende ajoutée après coup.
+    const poserMiLargeur = (c) => {
+      const pw = pdf.internal.pageSize.getWidth();
+      const w = DOC_LARGEUR_VUE_MM * 72 / 25.4;
+      const h = c.height * w / c.width;
+      pdf.addImage(jpegUnderSize(c, PDF_MAX_BYTES).data, "JPEG",
+                   (pw - w) / 2, 56, w, h);
+    };
+    poserPleinePage(c1);
+    // Page 2 TOUJOURS EN PORTRAIT : l'image n'occupant plus la page, son
+    // orientation propre n'a plus à commander celle du feuillet.
+    pdf.addPage("a4", "portrait");
+    poserMiLargeur(c2);
     const ref = [p.get("section") || "", p.get("parcelle") || ""].join("-");
     const blob = pdf.output("blob");
     const a = document.createElement("a");
@@ -1533,7 +1553,8 @@ async function doExportDocument(){
     setTimeout(() => URL.revokeObjectURL(a.href), 4000);
     showHint("Document 2 pages : " + (blob.size / 1e6).toFixed(1) + " Mo.");
     setStatus("DOCUMENT À DEUX PAGES généré (" + (blob.size / 1e6).toFixed(1) + " Mo) — "
-      + "page 1 le plan cadastral colorié, page 2 la vue aérienne. ⚠ L'écran affiche "
+      + "page 1 le plan cadastral pleine page, page 2 la vue aérienne à "
+      + DOC_LARGEUR_VUE_MM + " mm de large. ⚠ L'écran affiche "
       + "désormais la vue aérienne : la colorisation du plan N'EST PLUS MODIFIABLE, "
       + "elle n'existe que dans le PDF que vous venez d'enregistrer. Rechargez le "
       + "lien pour la reprendre depuis le début.", "warn");
@@ -1826,6 +1847,11 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
    millésime servi est porté à l'écran quand le service le déclare.
    ================================================================== */
 const FACTEUR_CONTEXTE = 3;   // voir le raisonnement chiffré dans chargerOrtho
+// ⚠ LIÉ À FACTEUR_CONTEXTE : largeur de placement de la vue aérienne dans le
+// document à deux pages. C'est l'hypothèse sur laquelle le facteur ci-dessus a
+// été calibré (179 dpi à 90 mm contre 84 dpi en pleine largeur A4, sur une
+// parcelle urbaine de 30 m). Modifier l'un OBLIGE à revoir l'autre.
+const DOC_LARGEUR_VUE_MM = 90;
 const ORTHO = {
   service: "https://data.geopf.fr/wms-r/wms",
   couche:  "ORTHOIMAGERY.ORTHOPHOTOS",
