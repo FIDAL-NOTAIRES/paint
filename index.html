@@ -1619,22 +1619,27 @@ async function carteCommune(codeInsee, zz, centresCC, aspectCible){
           g.closePath(); g.stroke();
         });
       };
-      const ep = Math.max(2.5, cv.width / 320);
+      const ep = mmPxDe(cv.width, 0.9);      // épaissi le 31/07 à la demande de JFD
       g.save(); g.lineJoin = "round";
       tr("rgba(255,255,255,0.9)", ep * 2.1);
       tr("#FF982D", ep);
       g.restore();
     }
     // marqueurs : disque carmin cerné de blanc, lisible sur n'importe quel fond
-    const rM = Math.max(6, cv.width / 70);
+    const rM = mmPxDe(cv.width, 1.7);
     (centresCC || []).forEach(([X, Y]) => {
       const a = px(X), b = py(Y);
+      // HALO carmin translucide : accroche l'œil de loin sans alourdir le point,
+      // et se distingue du contour orange de la commune.
+      g.beginPath(); g.arc(a, b, rM * 2.1, 0, 2 * Math.PI);
+      g.strokeStyle = "rgba(160,16,64,0.35)"; g.lineWidth = mmPxDe(cv.width, 0.9);
+      g.stroke();
       g.beginPath(); g.arc(a, b, rM, 0, 2 * Math.PI);
       g.fillStyle = "#A01040"; g.fill();
-      g.lineWidth = Math.max(2, rM / 3); g.strokeStyle = "#ffffff"; g.stroke();
+      g.strokeStyle = "#ffffff"; g.lineWidth = mmPxDe(cv.width, 0.45); g.stroke();
     });
     // attribution GRAVÉE, comme sur l'ortho : elle doit suivre l'image
-    const t = Math.max(11, Math.round(cv.width / 90));
+    const t = mmPxDe(cv.width, 1.9);
     g.font = t + "px Georgia, 'Times New Roman', serif"; g.textBaseline = "bottom";
     const src = "Plan IGN — Géoplateforme (licence ouverte)";
     const w = g.measureText(src).width;
@@ -1673,7 +1678,7 @@ async function carteCommune(codeInsee, zz, centresCC, aspectCible){
    décide, jamais un compte.
    ================================================================== */
 function composerBasDePage(pdf, y0, p){
-  const M = 56;                                  // marge, alignée sur l'image
+  const M = 42;                                  // marge, alignée sur les images
   const pw = pdf.internal.pageSize.getWidth();
   const ph = pdf.internal.pageSize.getHeight();
   const L = pw - 2 * M;
@@ -1699,36 +1704,43 @@ function composerBasDePage(pdf, y0, p){
     y += 4;
     pdf.text("Figurant ainsi au cadastre :", M, y); y += 16;
 
-    // tableau : Section · N° · Lieudit · Surface
-    const col = [M, M + 52, M + 104, M + L - 96];
+    // ⚠ UNE COLONNE SANS DONNÉE DISPARAÎT, ET LE TABLEAU SE RESSERRE.
+    // Défaut corrigé le 31/07 : « Lieudit » s'imprimait vide au milieu de la
+    // page avec « Surface » rejetée à l'autre bout — cela se lisait comme une
+    // donnée manquante alors que c'était une colonne inutile. Et un tableau de
+    // quatre valeurs étalé sur 170 mm ne se lit pas, l'œil perd la ligne.
+    const aLieudit = rangs.some((r) => (r[3] || "").trim() !== "");
+    const Ltab = L * (aLieudit ? 0.80 : 0.52);
+    const col = [M, M + 52, M + 104];
+    const xS = M + Ltab;                            // bord droit, surfaces alignées
     pdf.setFont("times", "bold"); pdf.setFontSize(9.5);
     pdf.text("Section", col[0], y);
     pdf.text("N°", col[1], y);
-    pdf.text("Lieudit", col[2], y);
-    pdf.text("Surface", M + L, y, { align: "right" });
-    y += 4; pdf.setLineWidth(0.4); pdf.line(M, y, M + L, y); y += 12;
+    if(aLieudit) pdf.text("Lieudit", col[2], y);
+    pdf.text("Surface", xS, y, { align: "right" });
+    y += 4; pdf.setLineWidth(0.4); pdf.line(M, y, xS, y); y += 12;
 
     pdf.setFont("times", "normal");
     rangs.forEach((r) => {
-      const lieu = (r[3] || "").trim();
       pdf.text(String(r[0] || ""), col[0], y);
       pdf.text(String(r[1] || ""), col[1], y);
-      // le lieudit peut être long : on le coupe à la largeur disponible
-      const larg = col[3] - col[2] - 8;
-      const lignes = lieu ? pdf.splitTextToSize(lieu, larg) : [""];
-      pdf.text(lignes[0] || "", col[2], y);
-      pdf.text(String(r[2] || ""), M + L, y, { align: "right" });
-      y += 12;
-      for(let i = 1; i < lignes.length; i++){ pdf.text(lignes[i], col[2], y); y += 12; }
+      pdf.text(String(r[2] || ""), xS, y, { align: "right" });
+      let sup = 0;
+      if(aLieudit){
+        const lignes = pdf.splitTextToSize((r[3] || "").trim(), xS - col[2] - 90);
+        lignes.forEach((L2, i) => pdf.text(L2, col[2], y + i * 12));
+        sup = Math.max(0, lignes.length - 1) * 12;
+      }
+      y += 12 + sup;
     });
     // Total UNIQUEMENT à partir de deux parcelles, et pris du paramètre
     // « total » plutôt que recalculé : c'est REDPAR qui somme, à partir des
     // contenances en mètres carrés, pas moi à partir de chaînes déjà formatées.
     if(rangs.length > 1 && total){
-      pdf.setLineWidth(0.4); pdf.line(col[3] - 8, y - 8, M + L, y - 8);
+      pdf.setLineWidth(0.4); pdf.line(xS - 96, y - 8, xS, y - 8);
       pdf.setFont("times", "bold");
-      pdf.text("Total", col[2], y);
-      pdf.text(total, M + L, y, { align: "right" });
+      pdf.text("Total", aLieudit ? col[2] : col[1], y);
+      pdf.text(total, xS, y, { align: "right" });
       y += 12;
     }
     y += 14;
@@ -1833,8 +1845,8 @@ async function doExportDocument(){
       const w = DOC_LARGEUR_VUE_MM * 72 / 25.4;
       const h = c.height * w / c.width;
       pdf.addImage(jpegUnderSize(c, PDF_MAX_BYTES).data, "JPEG",
-                   (pw - w) / 2, 56, w, h);
-      return 56 + h;                    // ordonnée du bas de l'image
+                   (pw - w) / 2, 42, w, h);
+      return 42 + h;                    // ordonnée du bas de l'image
     };
     poserPleinePage(c1);
     // Page 2 TOUJOURS EN PORTRAIT : l'image n'occupant plus la page, son
@@ -1856,7 +1868,9 @@ async function doExportDocument(){
       // DEUX DE FRONT. Chaque image passe de 90 à environ 82 mm — et la
       // résolution réelle MONTE, une image plus étroite concentrant les mêmes
       // pixels : l'ortho passe de 179 à 197 dpi sur une petite parcelle.
-      const M = 56, ecart = 16;
+      // MARGES RAMENÉES DE 56 À 42 pt le 31/07 : le bas de page restait vide, la
+      // place a été rendue aux images, qui passent de 82,4 à 87,4 mm.
+      const M = 42, ecart = 16;
       const L = pdf.internal.pageSize.getWidth() - 2 * M;
       const w = (L - ecart) / 2;
       // HAUTEUR COMMUNE, imposée aux deux. L'emprise de la carte a été conformée
@@ -1864,10 +1878,10 @@ async function doExportDocument(){
       // néanmoins la même valeur pour absorber l'arrondi au pixel de la hauteur
       // rendue par le service. La déformation résiduelle est inférieure au pixel.
       const h = c2.height * w / c2.width;
-      pdf.addImage(jpegUnderSize(c2, PDF_MAX_BYTES).data, "JPEG", M, 56, w, h);
+      pdf.addImage(jpegUnderSize(c2, PDF_MAX_BYTES).data, "JPEG", M, M, w, h);
       pdf.addImage(jpegUnderSize(carte.canvas, PDF_MAX_BYTES).data, "JPEG",
-                   M + w + ecart, 56, w, h);
-      basImage = 56 + h;
+                   M + w + ecart, M, w, h);
+      basImage = M + h;
     }else{
       basImage = poserMiLargeur(c2);
     }
@@ -2183,6 +2197,31 @@ const FACTEUR_CONTEXTE = 3;   // voir le raisonnement chiffré dans chargerOrtho
 // été calibré (179 dpi à 90 mm contre 84 dpi en pleine largeur A4, sur une
 // parcelle urbaine de 30 m). Modifier l'un OBLIGE à revoir l'autre.
 const DOC_LARGEUR_VUE_MM = 90;
+
+/* ==================================================================
+   ⚠ RÈGLE DE DIMENSIONNEMENT DE TOUT CE QUI EST GRAVÉ DANS L'IMAGE
+   ------------------------------------------------------------------
+   ON DIMENSIONNE EN MILLIMÈTRES DE PAPIER, JAMAIS EN PIXELS DE CANVAS.
+
+   Le défaut corrigé le 31/07 : les tailles étaient exprimées en fractions de
+   S.W (« S.W / 95 »), or l'image est PLACÉE à environ 85 mm dans le document,
+   soit 14 px par millimètre. Un texte de 13 px sortait donc à 0,89 mm sur le
+   papier — ILLISIBLE. Et c'était le plus grave pour la mention de source : une
+   attribution qu'on ne peut pas lire ne remplit pas l'obligation de la licence
+   ouverte, qui est précisément le fondement autorisant la pièce.
+
+   ⚠ ON DIMENSIONNE POUR LE PLACEMENT LE PLUS ÉTROIT, non pour le plus large :
+   ce qui est lisible à 85 mm l'est encore à pleine page — l'inverse est faux.
+   Un texte un peu grand sur un export pleine page est une gêne ; un texte
+   illisible dans le document est une faute. Le pire cas commande.
+
+   La règle vaut quelle que soit la taille du canvas : 2 mm donnent 28 px sur un
+   canvas de 1 200 px, et 66 px sur les 2 813 px d'une grande parcelle rurale.
+   ================================================================== */
+const PLACEMENT_MIN_MM = 85;
+const mmPxDe = (largeurCanvas, mm) =>
+  Math.max(1, Math.round(largeurCanvas * mm / PLACEMENT_MIN_MM));
+const mmPx = (mm) => mmPxDe(S.W, mm);
 const ORTHO = {
   service: "https://data.geopf.fr/wms-r/wms",
   couche:  "ORTHOIMAGERY.ORTHOPHOTOS",
@@ -2473,7 +2512,7 @@ function tableauOrtho(rangs, total){
   // sur ses deux premières colonnes. REDPAR continue de les émettre : rien à
   // redéployer de son côté, et le retour en arrière ne coûte qu'une ligne ici.
   const lignes = [["Section", "N°"]].concat(rangs.map(r => r.slice(0, 2)));
-  const t = Math.max(13, Math.round(S.W / 95));
+  const t = mmPx(2.1);                    // 2,1 mm de papier
   oCtx.save();
   oCtx.font = t + "px Georgia, 'Times New Roman', serif";
   oCtx.textBaseline = "top";
@@ -2487,7 +2526,7 @@ function tableauOrtho(rangs, total){
   const x = padd, y = S.H - H - padd;
   oCtx.fillStyle = "rgba(255,255,255,0.88)";
   oCtx.fillRect(x, y, W, H);
-  oCtx.strokeStyle = "#0F2238"; oCtx.lineWidth = Math.max(1, Math.round(S.W / 1400));
+  oCtx.strokeStyle = "#0F2238"; oCtx.lineWidth = mmPx(0.2);
   oCtx.strokeRect(x, y, W, H);
   lignes.forEach((l, i) => {
     const yy = y + padd + i * hLigne;
@@ -2545,7 +2584,7 @@ function palierLisible(v){
 function cartoucheOrtho(){
   if(!S.ortho) return;
   const m = S.ortho.mParPx;
-  const t = Math.max(12, Math.round(S.W / 110));
+  const t = mmPx(1.9);                    // 1,9 mm ≈ 5,4 pt, taille d'un crédit photo
   oCtx.save();
   oCtx.font = t + "px Georgia, 'Times New Roman', serif";
   oCtx.textBaseline = "top";
@@ -2570,7 +2609,7 @@ function cartoucheOrtho(){
   oCtx.fillStyle = "rgba(255,255,255,0.88)";
   oCtx.fillRect(x, y, W, H);
   oCtx.strokeStyle = "#0F2238";
-  oCtx.lineWidth = Math.max(1, Math.round(S.W / 1400));
+  oCtx.lineWidth = mmPx(0.2);
   oCtx.strokeRect(x, y, W, H);
 
   // barre en deux segments alternés, convention cartographique
@@ -2588,20 +2627,26 @@ function cartoucheOrtho(){
   oCtx.fillText(source, x + (W - wSrc) / 2, by + hB + t * 1.5);
 
   // ---- flèche du nord, en haut à droite -------------------------------
-  const a = t * 2.2, hN = t * 3.2, nx = S.W - a - padd * 2, ny = padd;
+  // ALLÉGÉE le 31/07 : la version précédente remplissait son cadre et se lisait
+  // comme un pâté sombre. Triangle plus étroit, du blanc autour, « N » non gras.
+  const larg = mmPx(3.0), haut = mmPx(4.2), air = mmPx(1.1);
+  const bx2 = S.W - larg - air * 2 - mmPx(1.2), by2 = mmPx(1.2);
+  const bw = larg + air * 2, bh = haut + t * 1.35 + air * 1.6;
   oCtx.fillStyle = "rgba(255,255,255,0.88)";
-  oCtx.fillRect(nx - padd / 2, ny, a + padd, hN + padd / 2);
-  oCtx.strokeRect(nx - padd / 2, ny, a + padd, hN + padd / 2);
+  oCtx.fillRect(bx2, by2, bw, bh);
+  oCtx.strokeStyle = "#0F2238"; oCtx.lineWidth = mmPx(0.2);
+  oCtx.strokeRect(bx2, by2, bw, bh);
+  const cxN = bx2 + bw / 2, yH = by2 + air;
   oCtx.fillStyle = "#0F2238";
   oCtx.beginPath();
-  oCtx.moveTo(nx + a / 2, ny + padd * 0.4);
-  oCtx.lineTo(nx + a, ny + a + padd * 0.4);
-  oCtx.lineTo(nx + a / 2, ny + a * 0.72 + padd * 0.4);
-  oCtx.lineTo(nx, ny + a + padd * 0.4);
+  oCtx.moveTo(cxN, yH);                                  // pointe
+  oCtx.lineTo(cxN + larg * 0.32, yH + haut);             // aile droite
+  oCtx.lineTo(cxN, yH + haut * 0.68);                    // creux
+  oCtx.lineTo(cxN - larg * 0.32, yH + haut);             // aile gauche
   oCtx.closePath();
   oCtx.fill();
-  oCtx.font = "bold " + t + "px Georgia, 'Times New Roman', serif";
-  oCtx.fillText("N", nx + a / 2 - oCtx.measureText("N").width / 2, ny + a + padd * 0.6);
+  oCtx.font = t + "px Georgia, 'Times New Roman', serif";
+  oCtx.fillText("N", cxN - oCtx.measureText("N").width / 2, yH + haut + air * 0.35);
   oCtx.restore();
 }
 
@@ -2654,7 +2699,7 @@ async function contourOrtho(p, rangs, total){
   oCtx.strokeStyle = S.color;
   oCtx.lineJoin = "round";
   if(trace === "contour"){
-    oCtx.lineWidth = Math.max(2, Math.round(S.W / 500));
+    oCtx.lineWidth = mmPx(0.35);
     oCtx.beginPath();
     polygones.forEach(pts => {
       oCtx.moveTo(pts[0][0], pts[0][1]);
@@ -2665,7 +2710,7 @@ async function contourOrtho(p, rangs, total){
   }else{
     // Trait plus épais que pour un contour : un repère doit se voir d'emblée
     // sur une photographie chargée, là où un contour se suit du regard.
-    oCtx.lineWidth = Math.max(3, Math.round(S.W / 320));
+    oCtx.lineWidth = mmPx(0.5);
     // Les demi-axes se convertissent séparément : rien ne garantit que les deux
     // pas soient rigoureusement égaux, la hauteur en pixels étant arrondie.
     ellipsesDe(brut, trace).forEach(e => {
