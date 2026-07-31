@@ -1536,7 +1536,7 @@ function anneauxGeo(g){
 
 /* Rend un canvas, ou null. Ne jette jamais : la carte est un agrément, son
    absence ne doit pas empêcher la production du document. */
-async function carteCommune(codeInsee, zz, centresCC){
+async function carteCommune(codeInsee, zz, centresCC, aspectCible){
   try{
     const rep = await fetch("https://geo.api.gouv.fr/communes/" + encodeURIComponent(codeInsee)
       + "?fields=nom,centre,contour,surface");
@@ -1561,6 +1561,25 @@ async function carteCommune(codeInsee, zz, centresCC){
     const mx = (x1 - x0) * 0.05 + 50, my = (y1 - y0) * 0.05 + 50;
     x0 -= mx; x1 += mx; y0 -= my; y1 += my;
 
+    // ---- MÊME HAUTEUR QUE LA VUE AÉRIENNE -------------------------------
+    // Demandé par JFD. Placées à la même largeur, deux images n'ont la même
+    // hauteur que si elles ont le même rapport — on conforme donc l'emprise de
+    // la carte à celle de l'ortho.
+    // ⚠ PAR ÉLARGISSEMENT SEULEMENT, JAMAIS PAR RECADRAGE : élargir n'ajoute
+    // que du territoire voisin, alors que rogner cacherait une partie de la
+    // commune. La commune reste donc INTÉGRALEMENT visible quel que soit son
+    // allongement — au prix, pour une commune très étirée face à une ortho
+    // carrée, d'un large pourtour. C'est le bon compromis : on ne tronque pas
+    // un territoire pour satisfaire une mise en page.
+    if(aspectCible > 0){
+      const larg = x1 - x0, haut = y1 - y0, a = larg / haut;
+      if(a < aspectCible){
+        const d = (haut * aspectCible - larg) / 2; x0 -= d; x1 += d;
+      }else if(a > aspectCible){
+        const d = (larg / aspectCible - haut) / 2; y0 -= d; y1 += d;
+      }
+    }
+
     const W = 1200, H = Math.max(200, Math.round(W * (y1 - y0) / (x1 - x0)));
     const url = "https://data.geopf.fr/wms-r/wms?" + new URLSearchParams({
       SERVICE: "WMS", VERSION: "1.3.0", REQUEST: "GetMap",
@@ -1584,13 +1603,26 @@ async function carteCommune(codeInsee, zz, centresCC){
     // limite communale, en trait fin : le lecteur voit la parcelle DANS son
     // territoire, et non au milieu d'un carré arbitraire
     if(anneaux.length){
-      g.save(); g.strokeStyle = "#0F2238"; g.lineWidth = Math.max(1.5, cv.width / 500);
-      g.globalAlpha = 0.75;
-      anneaux.forEach((r) => {
-        g.beginPath();
-        r.forEach(([X, Y], i) => i ? g.lineTo(px(X), py(Y)) : g.moveTo(px(X), py(Y)));
-        g.closePath(); g.stroke();
-      });
+      // ORANGE VIF #FF982D de la charte, demandé par JFD.
+      // ⚠ La convention cadastrale du mémo EXCLUT l'orange — mais elle vaut pour
+      // un PLAN CADASTRAL, où l'orange signifie le bâti. Le fond est ici un Plan
+      // IGN : l'exclusion ne s'y applique pas. Et l'orange a l'avantage d'être
+      // franchement DISTINCT du carmin du marqueur, ce qui évite de confondre la
+      // limite du territoire et l'emplacement du bien.
+      // Tracé DEUX FOIS, un liseré blanc dessous : sans lui, un trait de couleur
+      // se perd sur les zones claires d'un fond topographique.
+      const tr = (couleur, ep) => {
+        g.strokeStyle = couleur; g.lineWidth = ep;
+        anneaux.forEach((r) => {
+          g.beginPath();
+          r.forEach(([X, Y], i) => i ? g.lineTo(px(X), py(Y)) : g.moveTo(px(X), py(Y)));
+          g.closePath(); g.stroke();
+        });
+      };
+      const ep = Math.max(2.5, cv.width / 320);
+      g.save(); g.lineJoin = "round";
+      tr("rgba(255,255,255,0.9)", ep * 2.1);
+      tr("#FF982D", ep);
       g.restore();
     }
     // marqueurs : disque carmin cerné de blanc, lisible sur n'importe quel fond
@@ -1662,7 +1694,7 @@ function composerBasDePage(pdf, y0, p){
     pdf.setFont("times", "normal"); pdf.setFontSize(10.5);
     const attaque = (rangs.length > 1)
       ? `Dans un ensemble immobilier situé à ${commune},`
-      : `Un immeuble situé à ${commune},`;
+      : `Un actif immobilier situé à ${commune},`;   // formule retenue par JFD le 31/07
     pdf.splitTextToSize(attaque, L).forEach((ligne) => { pdf.text(ligne, M, y); y += 13; });
     y += 4;
     pdf.text("Figurant ainsi au cadastre :", M, y); y += 16;
@@ -1815,7 +1847,8 @@ async function doExportDocument(){
     if(S.ortho){
       spin.classList.add("show"); spinmsg.textContent = "Carte de situation…";
       const centres = ellipsesDe(p.get("poly") || "", "ronds").map((e) => [e.cx, e.cy]);
-      carte = await carteCommune(p.get("commune") || "", S.ortho.zz, centres);
+      carte = await carteCommune(p.get("commune") || "", S.ortho.zz, centres,
+                                 c2.width / c2.height);
       spin.classList.remove("show");
     }
     let basImage;
@@ -1826,12 +1859,15 @@ async function doExportDocument(){
       const M = 56, ecart = 16;
       const L = pdf.internal.pageSize.getWidth() - 2 * M;
       const w = (L - ecart) / 2;
-      const hA = c2.height * w / c2.width;
-      const hB = carte.canvas.height * w / carte.canvas.width;
-      pdf.addImage(jpegUnderSize(c2, PDF_MAX_BYTES).data, "JPEG", M, 56, w, hA);
+      // HAUTEUR COMMUNE, imposée aux deux. L'emprise de la carte a été conformée
+      // au rapport de l'ortho, donc les deux rapports coïncident déjà ; on force
+      // néanmoins la même valeur pour absorber l'arrondi au pixel de la hauteur
+      // rendue par le service. La déformation résiduelle est inférieure au pixel.
+      const h = c2.height * w / c2.width;
+      pdf.addImage(jpegUnderSize(c2, PDF_MAX_BYTES).data, "JPEG", M, 56, w, h);
       pdf.addImage(jpegUnderSize(carte.canvas, PDF_MAX_BYTES).data, "JPEG",
-                   M + w + ecart, 56, w, hB);
-      basImage = 56 + Math.max(hA, hB);
+                   M + w + ecart, 56, w, h);
+      basImage = 56 + h;
     }else{
       basImage = poserMiLargeur(c2);
     }
