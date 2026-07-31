@@ -1483,6 +1483,137 @@ async function doExport(kind){
    simple d'aujourd'hui, plutôt que d'être dégradée pour tenir un total. Le
    document pèse donc environ le double — la taille réelle est annoncée.
    ================================================================== */
+/* ==================================================================
+   BAS DE LA PAGE 2 — DÉSIGNATION CADASTRALE ET LOCAUX BÂTIS
+   ------------------------------------------------------------------
+   Demandé par JFD le 31/07/2026. Écrit SUR LA PAGE du PDF et non gravé dans
+   l'image, contrairement au cartouche : ce sont des énonciations, pas des
+   propriétés de la photographie. Elles ne doivent donc PAS suivre l'image en
+   cas de réemploi ailleurs — une désignation détachée de son acte n'a rien à
+   circuler seule.
+
+   ⚠ LA RÉDACTION EST UNE PROPOSITION, PAS UNE FORME ARRÊTÉE. Les formules
+   d'attaque (« Dans un ensemble immobilier situé à… », « Un immeuble situé
+   à… ») sont de mon fait, calquées sur la convention TRENTE ; elles doivent
+   être relues et corrigées par JFD. Une désignation part dans un acte : elle se
+   relit de toute façon, mais qu'il soit clair qu'elle n'est pas validée.
+
+   ⚠ POLICE : jsPDF ne dispose que de ses fontes intégrées. Ni Georgia ni
+   Segoe UI de la charte ne sont disponibles — on emploie « times », le seul
+   serif disponible, qui est aussi le registre d'un acte. Ne pas s'étonner de
+   l'écart avec la charte, il est contraint et non choisi.
+
+   ⚠ LE DÉTAIL DES LOTS NE S'IMPRIME QUE S'IL RESTE LA PLACE, mesurée sur la
+   page et non déduite d'un nombre de lots. Un seuil fixe — « au-delà de douze
+   lots, la synthèse seule » — casserait dès qu'une désignation d'unité foncière
+   à six parcelles allonge le tableau du dessus. C'est la place réelle qui
+   décide, jamais un compte.
+   ================================================================== */
+function composerBasDePage(pdf, y0, p){
+  const M = 56;                                  // marge, alignée sur l'image
+  const pw = pdf.internal.pageSize.getWidth();
+  const ph = pdf.internal.pageSize.getHeight();
+  const L = pw - 2 * M;
+  let y = y0;
+
+  const rangs = (p.get("tab") || "").split(";")
+    .map((r) => r.split(",").map((c) => c.trim()))
+    .filter((r) => r.length >= 2 && (r[0] || r[1]));
+  const total = (p.get("total") || "").trim();
+  const commune = (p.get("nomCommune") || "").trim();
+
+  // ---- 1. DÉSIGNATION ---------------------------------------------------
+  if(rangs.length){
+    pdf.setFont("times", "bold"); pdf.setFontSize(11);
+    pdf.text("DÉSIGNATION", M, y); y += 6;
+    pdf.setLineWidth(0.6); pdf.line(M, y, M + L, y); y += 16;
+
+    pdf.setFont("times", "normal"); pdf.setFontSize(10.5);
+    const attaque = (rangs.length > 1)
+      ? `Dans un ensemble immobilier situé à ${commune},`
+      : `Un immeuble situé à ${commune},`;
+    pdf.splitTextToSize(attaque, L).forEach((ligne) => { pdf.text(ligne, M, y); y += 13; });
+    y += 4;
+    pdf.text("Figurant ainsi au cadastre :", M, y); y += 16;
+
+    // tableau : Section · N° · Lieudit · Surface
+    const col = [M, M + 52, M + 104, M + L - 96];
+    pdf.setFont("times", "bold"); pdf.setFontSize(9.5);
+    pdf.text("Section", col[0], y);
+    pdf.text("N°", col[1], y);
+    pdf.text("Lieudit", col[2], y);
+    pdf.text("Surface", M + L, y, { align: "right" });
+    y += 4; pdf.setLineWidth(0.4); pdf.line(M, y, M + L, y); y += 12;
+
+    pdf.setFont("times", "normal");
+    rangs.forEach((r) => {
+      const lieu = (r[3] || "").trim();
+      pdf.text(String(r[0] || ""), col[0], y);
+      pdf.text(String(r[1] || ""), col[1], y);
+      // le lieudit peut être long : on le coupe à la largeur disponible
+      const larg = col[3] - col[2] - 8;
+      const lignes = lieu ? pdf.splitTextToSize(lieu, larg) : [""];
+      pdf.text(lignes[0] || "", col[2], y);
+      pdf.text(String(r[2] || ""), M + L, y, { align: "right" });
+      y += 12;
+      for(let i = 1; i < lignes.length; i++){ pdf.text(lignes[i], col[2], y); y += 12; }
+    });
+    // Total UNIQUEMENT à partir de deux parcelles, et pris du paramètre
+    // « total » plutôt que recalculé : c'est REDPAR qui somme, à partir des
+    // contenances en mètres carrés, pas moi à partir de chaînes déjà formatées.
+    if(rangs.length > 1 && total){
+      pdf.setLineWidth(0.4); pdf.line(col[3] - 8, y - 8, M + L, y - 8);
+      pdf.setFont("times", "bold");
+      pdf.text("Total", col[2], y);
+      pdf.text(total, M + L, y, { align: "right" });
+      y += 12;
+    }
+    y += 14;
+  }
+
+  // ---- 2. LOCAUX BÂTIS --------------------------------------------------
+  const mB = (p.get("bati") || "").match(/^(\d+),(\d+)$/);
+  if(!mB) return y;
+  const nbBat = parseInt(mB[1], 10), nbLots = parseInt(mB[2], 10);
+  pdf.setFont("times", "bold"); pdf.setFontSize(11);
+  pdf.text("LOCAUX BÂTIS", M, y); y += 6;
+  pdf.setLineWidth(0.6); pdf.line(M, y, M + L, y); y += 16;
+
+  pdf.setFont("times", "normal"); pdf.setFontSize(10.5);
+  const pluriel = (n, mot) => n + " " + mot + (n > 1 ? "s" : "");
+  // ⚠ AUCUNE SUPERFICIE : le volet bâti de REDPAR est un inventaire STRUCTUREL
+  // (bâtiment, entrée, niveau, porte). Les fichiers MAJIC des personnes morales
+  // identifient les locaux, ils ne les mesurent pas. Ne pas chercher à annoncer
+  // une surface bâtie, la donnée n'existe pas dans cette source.
+  pdf.text(pluriel(nbBat, "bâtiment") + ", " + pluriel(nbLots, "lot")
+    + " recensés au fichier des locaux.", M, y);
+  y += 18;
+
+  const lots = (p.get("lots") || "").split(";")
+    .map((r) => r.split(",").map((c) => c.trim()))
+    .filter((r) => r.length >= 1 && r[0] !== "");
+  if(!lots.length) return y;
+
+  // LA PLACE DÉCIDE, PAS LE NOMBRE. On garde 48 pt de pied de page.
+  const hLigne = 12, besoin = 16 + hLigne * (lots.length + 1);
+  if(y + besoin > ph - 48){
+    pdf.setFont("times", "italic"); pdf.setFontSize(9);
+    pdf.text("Le détail des lots n'est pas reproduit ici, faute de place sur la page.",
+             M, y);
+    return y + 12;
+  }
+  const cl = [M, M + 90, M + 180, M + 270];
+  pdf.setFont("times", "bold"); pdf.setFontSize(9.5);
+  ["Bâtiment", "Entrée", "Niveau", "Porte"].forEach((t, i) => pdf.text(t, cl[i], y));
+  y += 4; pdf.setLineWidth(0.4); pdf.line(M, y, M + L, y); y += 12;
+  pdf.setFont("times", "normal");
+  lots.forEach((r) => {
+    for(let i = 0; i < 4; i++) pdf.text(String(r[i] || "—"), cl[i], y);
+    y += hLigne;
+  });
+  return y;
+}
+
 async function doExportDocument(){
   const btn = document.getElementById("docbtn");
   if(btn.disabled) return;                       // garde contre le double clic
@@ -1539,12 +1670,15 @@ async function doExportDocument(){
       const h = c.height * w / c.width;
       pdf.addImage(jpegUnderSize(c, PDF_MAX_BYTES).data, "JPEG",
                    (pw - w) / 2, 56, w, h);
+      return 56 + h;                    // ordonnée du bas de l'image
     };
     poserPleinePage(c1);
     // Page 2 TOUJOURS EN PORTRAIT : l'image n'occupant plus la page, son
     // orientation propre n'a plus à commander celle du feuillet.
     pdf.addPage("a4", "portrait");
-    poserMiLargeur(c2);
+    const basImage = poserMiLargeur(c2);
+    // Le bas de page se compose SOUS l'image, avec un blanc de respiration.
+    composerBasDePage(pdf, basImage + 34, p);
     const ref = [p.get("section") || "", p.get("parcelle") || ""].join("-");
     const blob = pdf.output("blob");
     const a = document.createElement("a");
@@ -2176,7 +2310,102 @@ function tableauOrtho(rangs, total){
     }
   });
   oCtx.restore();
+  if(S.ortho) S.ortho.tabW = W;    // le cartouche doit pouvoir l'éviter
   return lignes.length;
+}
+
+/* Palier lisible immédiatement inférieur : une barre d'échelle qui annonce
+   « 87 m » ne se lit pas, « 50 m » se lit. */
+function palierLisible(v){
+  const p = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 5000];
+  let r = p[0];
+  p.forEach((q) => { if(q <= v) r = q; });
+  return r;
+}
+
+/* ==================================================================
+   CARTOUCHE : ÉCHELLE GRAPHIQUE, NORD, ET MENTION DE SOURCE
+   ------------------------------------------------------------------
+   ⚠ LA MENTION DE SOURCE N'EST PAS DÉCORATIVE. C'est la licence ouverte de
+   l'IGN qui rend cette photographie reproductible dans un acte — et c'est
+   précisément l'argument qui a fait préférer l'IGN à Google Maps, dont
+   l'imagerie ne l'est pas. Or cette licence impose en retour l'attribution de
+   la source. Une page qui sortirait sans mention se priverait donc du fondement
+   même qui l'autorise. Elle est GRAVÉE DANS L'IMAGE et non écrite sur la page
+   du PDF, afin de suivre l'image partout : export PNG, vue aérienne isolée,
+   réemploi dans une fiche.
+
+   ÉCHELLE GRAPHIQUE PLUTÔT QUE NUMÉRIQUE : une échelle graphique reste juste
+   après agrandissement ou réduction de la page, un « 1/1000 » écrit devient faux
+   dès la première photocopie. Et elle est ici EXACTE, non estimée : le
+   géoréférencement étant analytique, on connaît la résolution au millième de
+   mètre par pixel — au plan cadastral il fallait la déduire par régression.
+
+   NORD TOUJOURS EN HAUT, donc la flèche dit vrai PAR CONSTRUCTION : la rotation
+   n'est jamais propagée aux liens de vue aérienne (§ 5 de l'addendum REDPAR v4).
+   ⚠ SI LA ROTATION VENAIT UN JOUR À L'ÊTRE, CETTE FLÈCHE DEVIENDRAIT MENSONGÈRE.
+   ================================================================== */
+function cartoucheOrtho(){
+  if(!S.ortho) return;
+  const m = S.ortho.mParPx;
+  const t = Math.max(12, Math.round(S.W / 110));
+  oCtx.save();
+  oCtx.font = t + "px Georgia, 'Times New Roman', serif";
+  oCtx.textBaseline = "top";
+  oCtx.textAlign = "left";
+
+  const metres = palierLisible(0.22 * S.W * m);
+  const barre = metres / m;
+  const source = "Source : IGN — Géoplateforme (licence ouverte)";
+  const wSrc = oCtx.measureText(source).width;
+  const lblG = "0", lblD = metres + " m";
+  const padd = t * 0.7, hB = t * 0.5;
+  const W = Math.max(barre, wSrc, oCtx.measureText(lblD).width * 2) + padd * 2;
+  const H = padd * 2 + hB + t * 1.35 + t * 1.25;
+
+  // Bas à droite, le tableau occupant le bas à gauche. Si les deux ne tiennent
+  // pas sur la même ligne — image étroite, cas d'une lanière en portrait — le
+  // cartouche monte en haut à gauche, le nord occupant le haut à droite.
+  const enBas = (S.ortho.tabW || 0) + W + padd * 3 <= S.W;
+  const x = enBas ? S.W - W - padd : padd;
+  const y = enBas ? S.H - H - padd : padd;
+
+  oCtx.fillStyle = "rgba(255,255,255,0.88)";
+  oCtx.fillRect(x, y, W, H);
+  oCtx.strokeStyle = "#0F2238";
+  oCtx.lineWidth = Math.max(1, Math.round(S.W / 1400));
+  oCtx.strokeRect(x, y, W, H);
+
+  // barre en deux segments alternés, convention cartographique
+  const bx = x + (W - barre) / 2, by = y + padd;
+  oCtx.fillStyle = "#0F2238";
+  oCtx.fillRect(bx, by, barre / 2, hB);
+  oCtx.strokeRect(bx, by, barre, hB);
+  oCtx.beginPath();
+  oCtx.moveTo(bx + barre / 2, by); oCtx.lineTo(bx + barre / 2, by + hB);
+  oCtx.stroke();
+
+  oCtx.fillStyle = "#0F2238";
+  oCtx.fillText(lblG, bx - oCtx.measureText(lblG).width / 2, by + hB + t * 0.25);
+  oCtx.fillText(lblD, bx + barre - oCtx.measureText(lblD).width / 2, by + hB + t * 0.25);
+  oCtx.fillText(source, x + (W - wSrc) / 2, by + hB + t * 1.5);
+
+  // ---- flèche du nord, en haut à droite -------------------------------
+  const a = t * 2.2, hN = t * 3.2, nx = S.W - a - padd * 2, ny = padd;
+  oCtx.fillStyle = "rgba(255,255,255,0.88)";
+  oCtx.fillRect(nx - padd / 2, ny, a + padd, hN + padd / 2);
+  oCtx.strokeRect(nx - padd / 2, ny, a + padd, hN + padd / 2);
+  oCtx.fillStyle = "#0F2238";
+  oCtx.beginPath();
+  oCtx.moveTo(nx + a / 2, ny + padd * 0.4);
+  oCtx.lineTo(nx + a, ny + a + padd * 0.4);
+  oCtx.lineTo(nx + a / 2, ny + a * 0.72 + padd * 0.4);
+  oCtx.lineTo(nx, ny + a + padd * 0.4);
+  oCtx.closePath();
+  oCtx.fill();
+  oCtx.font = "bold " + t + "px Georgia, 'Times New Roman', serif";
+  oCtx.fillText("N", nx + a / 2 - oCtx.measureText("N").width / 2, ny + a + padd * 0.6);
+  oCtx.restore();
 }
 
 async function contourOrtho(p, rangs, total){
@@ -2203,6 +2432,7 @@ async function contourOrtho(p, rangs, total){
 
   if(!polygones.length){
     tableauOrtho(rangs, total);
+    cartoucheOrtho();
     setStatus("Vue aérienne chargée, sans contour à tracer (paramètre « poly » "
       + "absent ou trop court). " + desc + repli, "warn");
     return;
@@ -2253,6 +2483,7 @@ async function contourOrtho(p, rangs, total){
   if(!S.legendLabels[S.color]) S.legendLabels[S.color] = "";
   rebuildLegend();
   const nb = tableauOrtho(rangs, total);
+  cartoucheOrtho();
 
   let alerte = "";
   // DISPERSION : un repère unique posé sur des parcelles éparpillées cerne
