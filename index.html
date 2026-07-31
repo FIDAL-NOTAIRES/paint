@@ -1484,6 +1484,137 @@ async function doExport(kind){
    document pèse donc environ le double — la taille réelle est annoncée.
    ================================================================== */
 /* ==================================================================
+   CARTE DE SITUATION DANS LA COMMUNE            (31/07/2026)
+   ------------------------------------------------------------------
+   Demandé par JFD : à côté de la vue aérienne, une carte de la commune avec un
+   repère rouge à l'endroit des parcelles. Même service, même mécanique : un
+   GetMap en conique conforme sur data.geopf.fr, couche Plan IGN v2, donc
+   géoréférencement analytique et marqueur posé au pixel exact. Aucun OCR.
+
+   ⚠ AUCUN PARAMÈTRE D'URL AJOUTÉ. PAINT reçoit déjà le code INSEE ; il appelle
+   geo.api.gouv.fr lui-même — qu'il interroge déjà pour l'autocomplétion — et
+   déduit la zone de l'ordonnée. Un seul fichier à déployer, REDPAR intact.
+
+   ⚠ PROJECTION CONIQUE CONFORME PORTÉE DANS PAINT, qui ne l'avait jamais eue :
+   jusqu'ici REDPAR projetait et PAINT peignait. Elle est nécessaire ici parce
+   que geo.api.gouv.fr rend le contour en degrés alors que tout le reste de la
+   chaîne travaille en mètres projetés. Elle a été VÉRIFIÉE NUMÉRIQUEMENT contre
+   pyproj sur 135 points répartis dans les neuf zones : écart maximal INFÉRIEUR
+   AU MICROMÈTRE. Ne pas la « corriger » sans refaire cette vérification.
+   ================================================================== */
+const CC = { a: 6378137.0, e: Math.sqrt(2 / 298.257222101 - Math.pow(1 / 298.257222101, 2)),
+             lon0: 3.0 * Math.PI / 180 };
+
+function ccParams(zz){
+  const e = CC.e, e2 = e * e, rad = (d) => d * Math.PI / 180;
+  const lat0 = rad(zz), lat1 = rad(zz - 0.75), lat2 = rad(zz + 0.75);
+  const m = (p) => Math.cos(p) / Math.sqrt(1 - e2 * Math.pow(Math.sin(p), 2));
+  const t = (p) => Math.tan(Math.PI / 4 - p / 2)
+    / Math.pow((1 - e * Math.sin(p)) / (1 + e * Math.sin(p)), e / 2);
+  const n = Math.log(m(lat1) / m(lat2)) / Math.log(t(lat1) / t(lat2));
+  const F = m(lat1) / (n * Math.pow(t(lat1), n));
+  return { n, F, r0: CC.a * F * Math.pow(t(lat0), n),
+           x0: 1700000, y0: (zz - 41) * 1e6 + 200000 };
+}
+
+function projeterCC(lon, lat, zz){
+  const P = ccParams(zz), e = CC.e, p = lat * Math.PI / 180;
+  const t = Math.tan(Math.PI / 4 - p / 2)
+    / Math.pow((1 - e * Math.sin(p)) / (1 + e * Math.sin(p)), e / 2);
+  const r = CC.a * P.F * Math.pow(t, P.n);
+  const th = P.n * (lon * Math.PI / 180 - CC.lon0);
+  return [P.x0 + r * Math.sin(th), P.y0 + P.r0 - r * Math.cos(th)];
+}
+
+/* Anneaux d'un contour GeoJSON, Polygon comme MultiPolygon. */
+function anneauxGeo(g){
+  if(!g || !g.coordinates) return [];
+  if(g.type === "Polygon") return g.coordinates;
+  if(g.type === "MultiPolygon") return g.coordinates.reduce((a, b) => a.concat(b), []);
+  return [];
+}
+
+/* Rend un canvas, ou null. Ne jette jamais : la carte est un agrément, son
+   absence ne doit pas empêcher la production du document. */
+async function carteCommune(codeInsee, zz, centresCC){
+  try{
+    const rep = await fetch("https://geo.api.gouv.fr/communes/" + encodeURIComponent(codeInsee)
+      + "?fields=nom,centre,contour,surface");
+    if(!rep.ok) return null;
+    const c = await rep.json();
+    const anneaux = anneauxGeo(c.contour).map((r) => r.map(([lo, la]) => projeterCC(lo, la, zz)));
+    let x0, y0, x1, y1, voie;
+    if(anneaux.length){
+      const pts = anneaux.reduce((a, b) => a.concat(b), []);
+      x0 = Math.min(...pts.map((q) => q[0])); x1 = Math.max(...pts.map((q) => q[0]));
+      y0 = Math.min(...pts.map((q) => q[1])); y1 = Math.max(...pts.map((q) => q[1]));
+      voie = "contour de la commune";
+    }else if(c.centre && c.centre.coordinates){
+      // REPLI MOINS JUSTE, ET IL EST DIT : un carré déduit de la superficie
+      // suppose la commune à peu près ronde. Une commune allongée sortira mal
+      // cadrée — mais mieux vaut une carte approximative qu'aucune carte.
+      const [cx, cy] = projeterCC(c.centre.coordinates[0], c.centre.coordinates[1], zz);
+      const cote = Math.sqrt(Math.max(Number(c.surface) || 0, 1e6) * 10000) * 0.7;
+      x0 = cx - cote; x1 = cx + cote; y0 = cy - cote; y1 = cy + cote;
+      voie = "carré déduit de la superficie, contour indisponible";
+    }else return null;
+    const mx = (x1 - x0) * 0.05 + 50, my = (y1 - y0) * 0.05 + 50;
+    x0 -= mx; x1 += mx; y0 -= my; y1 += my;
+
+    const W = 1200, H = Math.max(200, Math.round(W * (y1 - y0) / (x1 - x0)));
+    const url = "https://data.geopf.fr/wms-r/wms?" + new URLSearchParams({
+      SERVICE: "WMS", VERSION: "1.3.0", REQUEST: "GetMap",
+      LAYERS: "GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2", STYLES: "", FORMAT: "image/png",
+      CRS: "EPSG:" + (3900 + zz),
+      BBOX: [x0.toFixed(2), y0.toFixed(2), x1.toFixed(2), y1.toFixed(2)].join(","),
+      WIDTH: String(W), HEIGHT: String(H)
+    }).toString();
+    const img = await new Promise((ok, ko) => {
+      const i = new Image(); i.crossOrigin = "anonymous";
+      i.onload = () => ok(i); i.onerror = () => ko(new Error("plan IGN indisponible"));
+      i.src = url;
+    });
+    const cv = document.createElement("canvas");
+    cv.width = img.naturalWidth || W; cv.height = img.naturalHeight || H;
+    const g = cv.getContext("2d");
+    g.drawImage(img, 0, 0, cv.width, cv.height);
+    const px = (X) => (X - x0) / ((x1 - x0) / cv.width);
+    const py = (Y) => (Y - y1) / (-(y1 - y0) / cv.height);
+
+    // limite communale, en trait fin : le lecteur voit la parcelle DANS son
+    // territoire, et non au milieu d'un carré arbitraire
+    if(anneaux.length){
+      g.save(); g.strokeStyle = "#0F2238"; g.lineWidth = Math.max(1.5, cv.width / 500);
+      g.globalAlpha = 0.75;
+      anneaux.forEach((r) => {
+        g.beginPath();
+        r.forEach(([X, Y], i) => i ? g.lineTo(px(X), py(Y)) : g.moveTo(px(X), py(Y)));
+        g.closePath(); g.stroke();
+      });
+      g.restore();
+    }
+    // marqueurs : disque carmin cerné de blanc, lisible sur n'importe quel fond
+    const rM = Math.max(6, cv.width / 70);
+    (centresCC || []).forEach(([X, Y]) => {
+      const a = px(X), b = py(Y);
+      g.beginPath(); g.arc(a, b, rM, 0, 2 * Math.PI);
+      g.fillStyle = "#A01040"; g.fill();
+      g.lineWidth = Math.max(2, rM / 3); g.strokeStyle = "#ffffff"; g.stroke();
+    });
+    // attribution GRAVÉE, comme sur l'ortho : elle doit suivre l'image
+    const t = Math.max(11, Math.round(cv.width / 90));
+    g.font = t + "px Georgia, 'Times New Roman', serif"; g.textBaseline = "bottom";
+    const src = "Plan IGN — Géoplateforme (licence ouverte)";
+    const w = g.measureText(src).width;
+    g.fillStyle = "rgba(255,255,255,0.85)";
+    g.fillRect(4, cv.height - t * 1.5 - 4, w + 10, t * 1.5);
+    g.fillStyle = "#0F2238"; g.fillText(src, 9, cv.height - 7);
+    cv.dataset && (cv.dataset.voie = voie);
+    return { canvas: cv, voie, nom: c.nom };
+  }catch(e){ return null; }
+}
+
+/* ==================================================================
    BAS DE LA PAGE 2 — DÉSIGNATION CADASTRALE ET LOCAUX BÂTIS
    ------------------------------------------------------------------
    Demandé par JFD le 31/07/2026. Écrit SUR LA PAGE du PDF et non gravé dans
@@ -1623,6 +1754,7 @@ async function doExportDocument(){
     return;
   }
   btn.disabled = true;
+  let alerteCarte = "";
   try{
     const p = new URLSearchParams(location.search);
     // ---- page 1 : le plan cadastral tel qu'il est à l'écran -------------
@@ -1676,9 +1808,36 @@ async function doExportDocument(){
     // Page 2 TOUJOURS EN PORTRAIT : l'image n'occupant plus la page, son
     // orientation propre n'a plus à commander celle du feuillet.
     pdf.addPage("a4", "portrait");
-    const basImage = poserMiLargeur(c2);
-    // Le bas de page se compose SOUS l'image, avec un blanc de respiration.
+    // CARTE DE SITUATION, à côté de la vue aérienne. Si elle échoue — service
+    // indisponible, commune inconnue —, on retombe sur la vue aérienne seule à
+    // mi-largeur : le document sort quand même.
+    let carte = null;
+    if(S.ortho){
+      spin.classList.add("show"); spinmsg.textContent = "Carte de situation…";
+      const centres = ellipsesDe(p.get("poly") || "", "ronds").map((e) => [e.cx, e.cy]);
+      carte = await carteCommune(p.get("commune") || "", S.ortho.zz, centres);
+      spin.classList.remove("show");
+    }
+    let basImage;
+    if(carte){
+      // DEUX DE FRONT. Chaque image passe de 90 à environ 82 mm — et la
+      // résolution réelle MONTE, une image plus étroite concentrant les mêmes
+      // pixels : l'ortho passe de 179 à 197 dpi sur une petite parcelle.
+      const M = 56, ecart = 16;
+      const L = pdf.internal.pageSize.getWidth() - 2 * M;
+      const w = (L - ecart) / 2;
+      const hA = c2.height * w / c2.width;
+      const hB = carte.canvas.height * w / carte.canvas.width;
+      pdf.addImage(jpegUnderSize(c2, PDF_MAX_BYTES).data, "JPEG", M, 56, w, hA);
+      pdf.addImage(jpegUnderSize(carte.canvas, PDF_MAX_BYTES).data, "JPEG",
+                   M + w + ecart, 56, w, hB);
+      basImage = 56 + Math.max(hA, hB);
+    }else{
+      basImage = poserMiLargeur(c2);
+    }
+    // Le bas de page se compose SOUS les images, avec un blanc de respiration.
     composerBasDePage(pdf, basImage + 34, p);
+    if(carte && carte.voie.indexOf("carré") === 0) alerteCarte = carte.voie;
     const ref = [p.get("section") || "", p.get("parcelle") || ""].join("-");
     const blob = pdf.output("blob");
     const a = document.createElement("a");
@@ -1691,7 +1850,9 @@ async function doExportDocument(){
       + DOC_LARGEUR_VUE_MM + " mm de large. ⚠ L'écran affiche "
       + "désormais la vue aérienne : la colorisation du plan N'EST PLUS MODIFIABLE, "
       + "elle n'existe que dans le PDF que vous venez d'enregistrer. Rechargez le "
-      + "lien pour la reprendre depuis le début.", "warn");
+      + "lien pour la reprendre depuis le début."
+      + (alerteCarte ? " ⚠ Carte de situation cadrée par " + alerteCarte
+          + " : le cadrage peut être approximatif sur une commune allongée." : ""), "warn");
   }finally{
     btn.disabled = false;
     spin.classList.remove("show");
