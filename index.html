@@ -1679,6 +1679,44 @@ function carteAvecRepere(fond, centresCC){
   return cv;
 }
 
+/* EXTRAIT CADASTRAL BRUT D'UNE PARCELLE, sans colorisation.
+   ------------------------------------------------------------------
+   ⚠ C'EST L'ABSENCE DE COLORISATION QUI REND CETTE PAGE POSSIBLE. Colorier
+   exigerait le géoréférencement par OCR des étiquettes de coordonnées — une
+   fermeture de six cents lignes enfermée dans le bloc de chargement, qu'il
+   faudrait hisser au niveau du module. Et surtout, un plan mal géoréférencé ne
+   plante pas : il rend une page PLAUSIBLE ET FAUSSE, la couleur à côté de la
+   parcelle, dans la seule pièce qui délimite. Un extrait brut, lui, ne peut pas
+   être colorié de travers. La page 1 du document porte déjà le plan colorié de
+   l'ensemble ; ces extraits viennent en complément, pour montrer le voisinage
+   immédiat et les numéros mitoyens de chaque parcelle.
+   ⚠ NE PAS « AMÉLIORER » EN AJOUTANT LA COLORISATION sans avoir d'abord sorti
+   georeferencer du bloc de chargement, ET conservé son contrôle des 5 %.
+
+   On pilote les champs de la méthode ② puis on appelle generateExtrait, qui
+   charge le PDF dans le canvas de base. On copie ce canvas SEUL — pas
+   buildExportCanvas, qui y composerait le calque, la légende et les notes du
+   plan colorié. */
+async function extraitBrutDe(pp){
+  try{
+    const mets = (id, val) => {
+      const e = document.getElementById(id);
+      if(e && val !== undefined && val !== "") e.value = val;
+    };
+    mets("g_prefixe", pp.prefixe);
+    mets("g_section", pp.section);
+    mets("g_parcelle", pp.parcelle);
+    mets("g_echelle", pp.echelle);
+    mets("g_format", pp.format);
+    await generateExtrait("ref");
+    if(!S.pdf) return null;
+    const cv = document.createElement("canvas");
+    cv.width = S.W; cv.height = S.H;
+    cv.getContext("2d").drawImage(base, 0, 0);
+    return cv;
+  }catch(e){ return null; }
+}
+
 /* ==================================================================
    BAS DES PAGES — DÉSIGNATION, BLOCS PAR PARCELLE, LOCAUX
    ------------------------------------------------------------------
@@ -1725,7 +1763,7 @@ function composerDesignation(pdf, y, p, infoCom, rangs, total, M, L){
   pdf.setFont("times", "normal"); pdf.setFontSize(10.5);
   // ATTAQUE, forme arrêtée par JFD sur pièce :
   //   « Un actif immobilier situé à COMMUNE (DÉPARTEMENT) (CODE POSTAL) ADRESSE. »
-  // au singulier, « Dans un ensemble immobilier … » au pluriel.
+  // au singulier, « Un ensemble de biens immobiliers situés à … » au pluriel.
   // ⚠ CODE POSTAL OMIS SI LA COMMUNE EN A PLUSIEURS (règle reprise de TRENTE) :
   // en imprimer un seul désignerait un quartier plutôt que la commune, ce qui
   // serait FAUX et non seulement imprécis.
@@ -1737,8 +1775,12 @@ function composerDesignation(pdf, y, p, infoCom, rangs, total, M, L){
   const cps = (infoCom && Array.isArray(infoCom.codesPostaux)) ? infoCom.codesPostaux : [];
   const cp = (cps.length === 1) ? cps[0] : "";
   const adr = (rangs.length === 1) ? (rangs[0][3] || "").trim() : "";
+  // Formules arrêtées par JFD : « Un actif immobilier situé à … » pour une
+  // parcelle, « Un ensemble de biens immobiliers situés à … » dès qu'il y en a
+  // plusieurs. ⚠ Noter l'accord au PLURIEL de « situés », qui se rapporte aux
+  // biens et non à l'ensemble : c'est voulu, ne pas le « corriger ».
   const attaque = ((rangs.length > 1)
-      ? "Dans un ensemble immobilier situé à " : "Un actif immobilier situé à ")
+      ? "Un ensemble de biens immobiliers situés à " : "Un actif immobilier situé à ")
     + (p.get("nomCommune") || "").trim()
     + (dept ? ` (${dept})` : "") + (cp ? ` (${cp})` : "")
     + (adr ? ` ${adr}` : "") + ".";
@@ -1785,8 +1827,10 @@ function composerDesignation(pdf, y, p, infoCom, rangs, total, M, L){
 function composerBlocParcelle(pdf, y, vue, M, L, budget, aLieudit){
   const ph = pdf.internal.pageSize.getHeight();
   const ecart = 16, w = (L - ecart) / 2;
-  const hBloc = 18 + 30 + 6 + w + 10 + 16;
-  if(y + hBloc > ph - 48){ pdf.addPage("a4", "portrait"); y = M; }
+  // UNE PARCELLE PAR PAGE, forme arrêtée par JFD : référence, les deux plans au
+  // format constant, puis l'extrait cadastral sur tout le reste de la page. Le
+  // trait de séparation a donc disparu — la page fait la séparation.
+  pdf.addPage("a4", "portrait"); y = M;
 
   pdf.setFont("times", "bold"); pdf.setFontSize(11);
   pdf.text(vue.ref, M, y);
@@ -1814,10 +1858,25 @@ function composerBlocParcelle(pdf, y, vue, M, L, budget, aLieudit){
   pdf.addImage(jpegUnderSize(vue.ortho, budget).data, "JPEG", M, y, w, w);
   if(vue.carte)
     pdf.addImage(jpegUnderSize(vue.carte, budget).data, "JPEG", M + w + ecart, y, w, w);
-  y += w + 10;
-  pdf.setLineWidth(0.8); pdf.setDrawColor(150); pdf.line(M, y, M + L, y);
-  pdf.setDrawColor(0);
-  return y + 16;
+  y += w + 12;
+
+  // ---- EXTRAIT CADASTRAL BRUT, sur tout le reste de la page ------------
+  // Ajusté en conservant son rapport et centré : un extrait est en A4 portrait ou
+  // paysage selon la parcelle, on ne l'étire jamais.
+  if(vue.extrait){
+    const reste = ph - 48 - y;
+    const r = Math.min(L / vue.extrait.width, reste / vue.extrait.height);
+    const iw = vue.extrait.width * r, ih = vue.extrait.height * r;
+    pdf.addImage(jpegUnderSize(vue.extrait, budget).data, "JPEG",
+                 M + (L - iw) / 2, y, iw, ih);
+    y += ih;
+  }else{
+    // On le DIT plutôt que de laisser un blanc : un vide se lit comme un oubli.
+    pdf.setFont("times", "italic"); pdf.setFontSize(9);
+    pdf.text("Extrait du plan cadastral non disponible pour cette parcelle.", M, y + 12);
+    y += 20;
+  }
+  return y;
 }
 
 function composerLocaux(pdf, y, p, M, L){
@@ -1839,9 +1898,15 @@ function composerLocaux(pdf, y, p, M, L){
     + " recensés au fichier des locaux.", M, y);
   y += 18;
 
+  // ⚠ DEUX FORMATS ACCEPTÉS, et ce n'est pas de la complaisance : PAINT se déploie
+  // AVANT REDPAR, donc il reçoit forcément un moment l'ancien format à quatre
+  // champs. Six champs = section, numéro, bâtiment, entrée, niveau, porte ;
+  // quatre = l'ancien, sans parcelle, complété par deux champs vides.
   const lots = (p.get("lots") || "").split(";")
     .map((r) => r.split(",").map((c) => c.trim()))
-    .filter((r) => r.length >= 1 && r[0] !== "");
+    .filter((r) => r.length >= 1 && r.some((c) => c !== ""))
+    .map((r) => (r.length >= 6) ? r.slice(0, 6)
+      : ["", "", r[0] || "", r[1] || "", r[2] || "", r[3] || ""]);
   if(!lots.length) return y;
 
   // ⚠⚠ CE QUE CES COLONNES SONT ET NE SONT PAS. Bâtiment, entrée, niveau, porte
@@ -1850,10 +1915,20 @@ function composerLocaux(pdf, y, p, M, L){
   // les colonnes « PDL » et « N° du lot » d'un M1 restent vides. Le mot « lots »
   // est conservé pour l'intitulé à la demande de JFD, la confusion possible avec
   // un EDD ayant été signalée et assumée. NE PAS rapprocher ces valeurs d'un EDD.
-  const cw = [110, 90, 90, 90], hL2 = 14;
-  const enTete = () => {
-    y = grille(pdf, M, y, cw, ["Bâtiment", "Entrée", "Niveau", "Porte"], true, hL2, null, -1);
-  };
+  // ⚠ LES COLONNES CONSTANTES DISPARAISSENT, même principe que « Lieudit » vide
+  // dans la désignation : si tous les lots relèvent de la MÊME parcelle — cas d'un
+  // document à parcelle unique —, section et numéro répéteraient la même valeur à
+  // chaque ligne, ce que la désignation dit déjà une fois pour toutes.
+  // Les largeurs de Section et N° sont celles de colonnesCadastre, pour que les
+  // trois tableaux du document s'alignent verticalement.
+  const memeParcelle = lots.every((r) => r[0] === lots[0][0] && r[1] === lots[0][1]);
+  const cw = memeParcelle ? [110, 90, 90, 90] : [58, 46, 100, 75, 75, 75];
+  const hL2 = 14;
+  const entetes = memeParcelle
+    ? ["Bâtiment", "Entrée", "Niveau", "Porte"]
+    : ["Section", "N°", "Bâtiment", "Entrée", "Niveau", "Porte"];
+  const cellules = (r) => memeParcelle ? [r[2], r[3], r[4], r[5]] : r;
+  const enTete = () => { y = grille(pdf, M, y, cw, entetes, true, hL2, null, -1); };
   pdf.setLineWidth(0.5); pdf.setFontSize(9.5);
   enTete();
   lots.forEach((r) => {
@@ -1866,7 +1941,7 @@ function composerLocaux(pdf, y, p, M, L){
       enTete();   // en-tête REPRIS : une grille sans intitulé, en page 4, ne se lit pas
     }
     y = grille(pdf, M, y, cw,
-      [r[0] || "—", r[1] || "—", r[2] || "—", r[3] || "—"], false, hL2, null, -1);
+      cellules(r).map((c) => c || "—"), false, hL2, null, -1);
   });
   return y;
 }
@@ -1925,6 +2000,15 @@ async function doExportDocument(){
       if(fond && fond.voie.indexOf("carré") === 0) alerteCarte = fond.voie;
     }
 
+    // Paramètres par parcelle émis par REDPAR : prefixe, section, parcelle,
+    // échelle, format. Sans eux, pas d'extrait — et surtout pas d'extrait à la
+    // mauvaise échelle, ce qui serait pire.
+    const pps = (p.get("pp") || "").split(";")
+      .map((r) => r.split(",").map((c) => c.trim()))
+      .filter((r) => r.length >= 3 && r[1] && r[2])
+      .map((r) => ({ prefixe: r[0], section: r[1], parcelle: r[2],
+                     echelle: r[3] || "", format: r[4] || "" }));
+
     const vues = [];
     for(let i = 0; i < blocs.length; i++){
       const q = new URLSearchParams(p.toString());
@@ -1937,6 +2021,11 @@ async function doExportDocument(){
       q.set("tab", r ? [r[0], r[1]].join(",") : "");
       q.delete("total");
       spin.classList.add("show");
+      // ⚠ L'EXTRAIT D'ABORD, L'ORTHO ENSUITE. Les deux écrivent dans le canvas de
+      // base : il faut capturer chacun juste après son propre chargement.
+      spinmsg.textContent = "Extrait cadastral " + (i + 1) + " sur " + blocs.length + "…";
+      const extrait = pps[i] ? await extraitBrutDe(pps[i]) : null;
+      spin.classList.add("show");
       spinmsg.textContent = "Vue " + (i + 1) + " sur " + blocs.length + "…";
       if(!await chargerOrtho(q)) continue;         // motif déjà affiché
       await contourOrtho(q, r ? [[r[0], r[1]]] : [], "");
@@ -1945,7 +2034,8 @@ async function doExportDocument(){
         carte: fond ? carteAvecRepere(fond,
                  ellipsesDe(blocs[i], "rond").map((e) => [e.cx, e.cy])) : null,
         ref: r ? (r[0] + " " + r[1]) : ("Parcelle " + (i + 1)),
-        rang: r
+        rang: r,
+        extrait: extrait
       });
       spin.classList.remove("show");
     }
@@ -1974,7 +2064,7 @@ async function doExportDocument(){
     // budget complet : six parcelles auraient fait douze images et un PDF de
     // trente mégaoctets, impossible à envoyer. On vise huit mégaoctets pour
     // l'ensemble des vues, avec un plancher pour ne pas rendre une image illisible.
-    const nbImg = vues.reduce((n, v) => n + 1 + (v.carte ? 1 : 0), 0);
+    const nbImg = vues.reduce((n, v) => n + 1 + (v.carte ? 1 : 0) + (v.extrait ? 1 : 0), 0);
     const budget = Math.max(3.0e5, Math.min(PDF_MAX_BYTES, 8.0e6 / Math.max(1, nbImg)));
 
     // Les pages de contenu sont TOUJOURS EN PORTRAIT : les vues n'occupant plus le
