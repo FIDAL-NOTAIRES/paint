@@ -1477,6 +1477,14 @@ function buildExportCanvas(anchor){
 
 const PDF_MAX_BYTES=2.6e6;   // cible de taille pour le PDF exporté (~2,5-2,6 Mo)
 // Encode le canvas en JPEG en abaissant la qualité par paliers jusqu'à passer sous maxBytes (plancher 0,45).
+// Image compressée À LA CAPTURE : le canvas est aussitôt abandonné au ramasse-
+// miettes. Exigence « jusqu'à 3 000 parcelles » (JFD, 01/08) : garder les canvas
+// vivants jusqu'à l'assemblage coûtait ~20 Mo pièce — Watten 152 ≈ 3 Go de
+// mémoire, 3 000 était impensable. Avec ceci, la mémoire est PLATE en N.
+function imgCompressee(cv, maxBytes){
+  if(!cv) return null;
+  return { data: jpegUnderSize(cv, maxBytes).data, width: cv.width, height: cv.height };
+}
 function jpegUnderSize(canvas,maxBytes){
   const bytes=d=>Math.ceil((d.length-(d.indexOf(",")+1))*3/4); // taille reelle depuis le dataURL base64
   let q=0.92, data=canvas.toDataURL("image/jpeg",q);
@@ -2063,9 +2071,18 @@ function composerBlocParcelle(pdf, y, vue, M, L, budget, aLieudit){
     y += 6;
   }
 
-  pdf.addImage(jpegUnderSize(vue.ortho, budget).data, "JPEG", M, y, w, w);
+  if(vue.ortho){
+    pdf.addImage(vue.ortho.data, "JPEG", M, y, w, w);
+  }else{
+    // Cadre gris et mention : la parcelle reste au document, l'absence est DITE.
+    pdf.setDrawColor("#d8dee6"); pdf.setLineWidth(0.7); pdf.rect(M, y, w, w);
+    pdf.setFont(S.fonteDoc || "helvetica", "normal"); pdf.setFontSize(9);
+    pdf.setTextColor("#657D96");
+    pdf.text("Vue aérienne indisponible", M + w / 2, y + w / 2, { align: "center" });
+    pdf.setTextColor(0, 0, 0);
+  }
   if(vue.carte)
-    pdf.addImage(jpegUnderSize(vue.carte, budget).data, "JPEG", M + w + ecart, y, w, w);
+    pdf.addImage(vue.carte.data, "JPEG", M + w + ecart, y, w, w);
   y += w + 12;
 
   // ---- EXTRAIT CADASTRAL BRUT, sur tout le reste de la page ------------
@@ -2075,8 +2092,7 @@ function composerBlocParcelle(pdf, y, vue, M, L, budget, aLieudit){
     const reste = ph - 48 - y;
     const r = Math.min(L / vue.extrait.width, reste / vue.extrait.height);
     const iw = vue.extrait.width * r, ih = vue.extrait.height * r;
-    pdf.addImage(jpegUnderSize(vue.extrait, budget).data, "JPEG",
-                 M + (L - iw) / 2, y, iw, ih);
+    pdf.addImage(vue.extrait.data, "JPEG", M + (L - iw) / 2, y, iw, ih);
     y += ih;
   }else{
     // On le DIT plutôt que de laisser un blanc : un vide se lit comme un oubli.
@@ -2250,10 +2266,17 @@ async function capturerPlanSection(p, g, blocs, rangs, pps){
   q.set("dim", wM + "x" + hM);
   q.set("poly", g.idx.map((i) => blocs[i]).join("|"));
   q.set("tab", g.idx.map((i) => (rangs[i] ? rangs[i].join(",") : "")).filter(Boolean).join(";"));
-  q.set("auto", "1"); q.set("capture", "1"); q.set("cb", String(Date.now()));
+  q.set("auto", "1"); q.set("capture", "1");
+  // ⚠ La src de l'iframe est une REQUÊTE SERVEUR : sur une grosse section,
+  // elle heurterait le même URI_TOO_LONG que le lien principal. Les paramètres
+  // passent donc par le registre du parent (charge=iframe), et l'URL reste
+  // courte quel que soit le nombre de parcelles.
+  S.chargesIframe = S.chargesIframe || {};
+  const cle = "s" + Date.now() + "_" + Math.floor(Math.random() * 1e6);
+  S.chargesIframe[cle] = q.toString();
   const ifr = document.createElement("iframe");
   ifr.style.cssText = "position:fixed;left:-12000px;top:0;width:1400px;height:1000px;border:0;";
-  ifr.src = location.pathname + "?" + q.toString();
+  ifr.src = location.pathname + "?charge=iframe&cle=" + cle;
   document.body.appendChild(ifr);
   try{
     const debut = Date.now();
@@ -2275,7 +2298,7 @@ async function capturerPlanSection(p, g, blocs, rangs, pps){
       }
     }
     return null;
-  }finally{ ifr.remove(); }
+  }finally{ ifr.remove(); if(S.chargesIframe) delete S.chargesIframe[cle]; }
 }
 async function doExportDocument(){
   const btn = document.getElementById("docbtn");
@@ -2350,6 +2373,12 @@ async function doExportDocument(){
                      echelle: r[3] || "", format: r[4] || "" }));
 
     const journal = [];   // ce qui a été demandé pour chaque extrait, et sa signature
+    // Budget PAR IMAGE, arrêté d'avance : cible 20 Mo répartis sur les trois
+    // images de chaque parcelle, PLANCHER 120 ko de lisibilité. Aux grands N le
+    // plancher l'emporte et le PDF grossit linéairement (~0,4 Mo par parcelle) —
+    // assumé : à 3 000 parcelles, comptez ~7 h de service et un PDF de plusieurs
+    // centaines de Mo. La taille réelle est annoncée au statut.
+    const budgetImg = Math.max(1.2e5, Math.min(PDF_MAX_BYTES, 2.0e7 / Math.max(1, blocs.length * 3)));
     const vues = [];
     for(let i = 0; i < blocs.length; i++){
       const q = new URLSearchParams(p.toString());
@@ -2371,16 +2400,22 @@ async function doExportDocument(){
         + " → " + (ex ? ex.sig : "—"));
       spin.classList.add("show");
       spinmsg.textContent = "Vue " + (i + 1) + " sur " + blocs.length + "…";
-      if(!await chargerOrtho(q)) continue;         // motif déjà affiché
-      await contourOrtho(q, r ? [[r[0], r[1]]] : [], "");
+      // ⚠ UNE VUE EN ÉCHEC NE DISPARAÎT PLUS : elle produit une PAGE MARQUÉE
+      // (« vue aérienne indisponible »). Avant, la parcelle sortait du document
+      // en silence ET décalait toutes les pages du sommaire — deux torts.
+      let orthoImg = null;
+      if(await chargerOrtho(q)){
+        await contourOrtho(q, r ? [[r[0], r[1]]] : [], "");
+        orthoImg = imgCompressee(buildExportCanvas(null), budgetImg);
+      }
       vues.push({
         idx: i,
-        ortho: buildExportCanvas(null),
-        carte: fond ? carteAvecRepere(fond,
-                 ellipsesDe(blocs[i], "rond").map((e) => [e.cx, e.cy])) : null,
+        ortho: orthoImg,
+        carte: fond ? imgCompressee(carteAvecRepere(fond,
+                 ellipsesDe(blocs[i], "rond").map((e) => [e.cx, e.cy])), budgetImg) : null,
         ref: r ? (r[0] + " " + r[1]) : ("Parcelle " + (i + 1)),
         rang: r,
-        extrait: extrait
+        extrait: imgCompressee(extrait, budgetImg)
       });
       spin.classList.remove("show");
     }
@@ -2416,11 +2451,12 @@ async function doExportDocument(){
         spin.classList.add("show");
         spinmsg.textContent = "Plan de la section " + g.sec + " (" + fait + " sur "
           + groupes.length + ") — extrait, calage et colorisation…";
-        g.plan = await capturerPlanSection(p, g, blocs, rangs, pps);
+        g.plan = imgCompressee(await capturerPlanSection(p, g, blocs, rangs, pps), PDF_MAX_BYTES);
         spin.classList.remove("show");
       }
     }else{
-      groupes.push({ label: "Plan cadastral d'ensemble", idx: vues.map((v) => v.idx), plan: c1 });
+      groupes.push({ label: "Plan cadastral d'ensemble", idx: vues.map((v) => v.idx),
+        plan: imgCompressee(c1, PDF_MAX_BYTES) });
     }
     const sectionsSansPlan = groupes.filter((g) => !g.plan).map((g) => g.label);
 
@@ -2447,14 +2483,9 @@ async function doExportDocument(){
     // propre orientation sur SA page (jsPDF le permet page par page).
     const pdf = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4", compress: true });
     await chargerPolicesDoc(pdf);
-    // ⚠ BUDGET DE COMPRESSION RÉPARTI ENTRE LES VUES. Chaque image consommait le
-    // budget complet : six parcelles auraient fait douze images et un PDF de
-    // trente mégaoctets, impossible à envoyer. Porté de 8 à VINGT mégaoctets
-    // pour l'ensemble des vues le 01/08 (décision JFD, marge de qualité) — les
-    // messageries usuelles acceptant 20-25 Mo, on reste envoyable. Le plancher
-    // par image demeure, pour ne jamais rendre une vue illisible.
-    const nbImg = vues.reduce((n, v) => n + 1 + (v.carte ? 1 : 0) + (v.extrait ? 1 : 0), 0);
-    const budget = Math.max(3.0e5, Math.min(PDF_MAX_BYTES, 2.0e7 / Math.max(1, nbImg)));
+    // La compression se fait désormais À LA CAPTURE (budgetImg, plus haut) :
+    // l'assemblage ne compresse plus rien, il pose des JPEG déjà taillés.
+    const budget = 0;
 
     // Les pages de contenu sont TOUJOURS EN PORTRAIT : les vues n'occupant plus le
     // feuillet, leur orientation propre n'a plus à commander celle de la page.
@@ -2477,8 +2508,7 @@ async function doExportDocument(){
         const pw = pdf.internal.pageSize.getWidth(), ph = pdf.internal.pageSize.getHeight();
         const m = 24, r = Math.min((pw - 2 * m) / g.plan.width, (ph - 2 * m) / g.plan.height);
         const w = g.plan.width * r, h = g.plan.height * r;
-        pdf.addImage(jpegUnderSize(g.plan, PDF_MAX_BYTES).data, "JPEG",
-                     (pw - w) / 2, (ph - h) / 2, w, h);
+        pdf.addImage(g.plan.data, "JPEG", (pw - w) / 2, (ph - h) / 2, w, h);
       }
       vues.filter((v) => g.idx.includes(v.idx))
         .forEach((v) => { y = composerBlocParcelle(pdf, y, v, M, L, budget, aLieudit); });
@@ -2513,9 +2543,12 @@ async function doExportDocument(){
     // plan-et-vue-aerienne-… rendait le dossier illisible.
     const jour = new Date();
     const aaaammjj = jour.getFullYear() * 10000 + (jour.getMonth() + 1) * 100 + jour.getDate();
+    const vol = (p.get("vol") || "").trim();   // « 2/4 » émis par le Dossier complet
     a.download = (aaaammjj + " " + (numDossier ? "Dossier " + numDossier + " — " : "")
       + ((p.get("nomCommune") || "").trim().toUpperCase() || (p.get("commune") || ""))
-      + " (" + (p.get("commune") || "") + ").pdf").replace(/[\\/:*?"<>|]/g, "-");
+      + " (" + (p.get("commune") || "") + ")"
+      + (vol ? " — volume " + vol.replace("/", " de ") : "")
+      + ".pdf").replace(/[\\/:*?"<>|]/g, "-");
     a.href = URL.createObjectURL(blob); a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 4000);
     showHint("Document 2 pages : " + (blob.size / 1e6).toFixed(1) + " Mo.");
@@ -3480,7 +3513,7 @@ async function contourOrtho(p, rangs, total){
     (alerte || repli) ? "warn" : "ok");
 }
 
-(function preremplirDepuisURL(){
+function preremplirDepuisURL(){
   const p = new URLSearchParams(location.search);
   const commune  = (p.get("commune")  || "").trim();
   const section  = (p.get("section")  || "").trim().toUpperCase();
@@ -4512,6 +4545,62 @@ async function contourOrtho(p, rangs, total){
       }
     }
   })();
+}
+
+/* ================== AMORCE DU CHARGEMENT — 01/08/2026 ==================
+   LE MUR : Vercel refuse les URL au-delà de ~14 ko (URI_TOO_LONG, constaté
+   sur le Dossier complet de Watten, 152 parcelles ≈ 20 ko de paramètres).
+   Aucun réglage de budget ne repousse une limite de TRANSPORT.
+   LE CANAL : les paramètres voyagent AUTREMENT que par la requête serveur,
+   puis history.replaceState les pose dans la barre d'adresse SANS AUCUNE
+   REQUÊTE — et tout le code existant, qui lit location.search, fonctionne
+   INCHANGÉ. C'est ce qui évite la refonte : on change le facteur, pas la
+   lettre.
+   Trois modes :
+   — pas de paramètre charge : URL directe, comportement historique ;
+   — charge=iframe&cle=… : iframe de MÊME ORIGINE (plans de section), les
+     paramètres se lisent directement chez le parent (S.chargesIframe) ;
+   — charge=message : onglet ouvert par REDPAR (origine différente), qui
+     envoie la chaîne par postMessage après le ping « paint-pret ». REDPAR
+     n'emprunte ce canal que pour les liens trop longs. */
+(function amorcerChargement(){
+  const p0 = new URLSearchParams(location.search);
+  const mode = (p0.get("charge") || "").trim();
+  if(!mode){ preremplirDepuisURL(); return; }
+  if(mode === "iframe"){
+    try{
+      const qs = (window.parent && window.parent.S && window.parent.S.chargesIframe)
+        ? window.parent.S.chargesIframe[p0.get("cle") || ""] : null;
+      if(qs){
+        history.replaceState(null, "", location.pathname + "?" + qs);
+        preremplirDepuisURL();
+        return;
+      }
+    }catch(e){ console.error("charge=iframe :", e); }
+    setGenStatus("Chargement par iframe demandé mais paramètres introuvables "
+      + "chez le parent — clé absente ou origine différente.", "err");
+    S.capturePret = true;   // ne jamais laisser le parent attendre 120 s pour rien
+    return;
+  }
+  if(mode === "message"){
+    let recu = false;
+    window.addEventListener("message", (e) => {
+      // Une seule livraison, du bon type. Les paramètres reçus n'ont pas plus
+      // d'autorité qu'une URL : c'est le même niveau de confiance, déplacé.
+      if(recu || !e.data || e.data.type !== "paint-params" || typeof e.data.qs !== "string") return;
+      recu = true;
+      history.replaceState(null, "", location.pathname + "?" + e.data.qs);
+      preremplirDepuisURL();
+    });
+    if(window.opener){ try{ window.opener.postMessage({ type: "paint-pret" }, "*"); }catch(e){} }
+    setGenStatus("En attente des données de REDPAR — lien trop long pour une URL, "
+      + "canal postMessage…", "");
+    setTimeout(() => { if(!recu) setGenStatus("Données non reçues de REDPAR après 15 s. "
+      + "Refermez cet onglet et relancez « Générer » depuis le panneau Dossier complet ; "
+      + "si l'échec persiste, vérifiez que REDPAR est bien à jour.", "err"); }, 15000);
+    return;
+  }
+  preremplirDepuisURL();
 })();
 
 </script>
