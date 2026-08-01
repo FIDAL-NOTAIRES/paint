@@ -1534,6 +1534,24 @@ function anneauxGeo(g){
   return [];
 }
 
+/* UN SEUL APPEL pour la commune, partagé par la carte et par la désignation :
+   le contour cadre la carte, le département et le code postal nourrissent
+   l'attaque. Deux appels pour la même commune seraient un gaspillage, et
+   surtout un risque de divergence entre les deux blocs.
+   ⚠ CETTE FONCTION A ÉTÉ SUPPRIMÉE PAR ACCIDENT le 31/07, emportée par un
+   remplacement de bloc trop large lors du passage aux vues par parcelle. Comme
+   doExportDocument n'avait pas de « catch », la ReferenceError était AVALÉE EN
+   SILENCE : le bouton se réactivait et rien ne se passait. Deux défauts qui se
+   composaient — une découpe trop large et une erreur muette. */
+async function infoCommune(codeInsee){
+  try{
+    const rep = await fetch("https://geo.api.gouv.fr/communes/"
+      + encodeURIComponent(codeInsee)
+      + "?fields=nom,centre,contour,surface,codesPostaux,departement");
+    return rep.ok ? await rep.json() : null;
+  }catch(e){ return null; }
+}
+
 /* FOND DE CARTE COMMUNAL, SANS REPÈRE. Rend un objet ou null ; ne jette jamais,
    la carte étant un agrément dont l'absence ne doit pas empêcher le document.
 
@@ -1982,6 +2000,18 @@ async function doExportDocument(){
       + "lien pour la reprendre depuis le début."
       + (alerteCarte ? " ⚠ Carte de situation cadrée par " + alerteCarte
           + " : le cadrage peut être approximatif sur une commune allongée." : ""), "warn");
+  }catch(err){
+    // ⚠ SANS CE CATCH, TOUTE ERREUR ÉTAIT MUETTE : le finally réactivait le
+    // bouton, masquait le sablier, et l'utilisateur voyait « rien ne se passe ».
+    // C'est exactement ce qui est arrivé le 31/07 avec infoCommune supprimée par
+    // accident. Sur une fonction de cette taille, une erreur silencieuse coûte
+    // plus cher que l'erreur elle-même — elle empêche de la trouver.
+    // NE JAMAIS RETIRER CE BLOC.
+    console.error("doExportDocument", err);
+    setStatus("Document — ÉCHEC : " + (err && err.message ? err.message : err)
+      + ". Le détail complet est dans la console du navigateur (F12, onglet "
+      + "Console). Si le message cite un nom de fonction, c'est une erreur de "
+      + "programme et non de données : signalez-le tel quel.", "err");
   }finally{
     btn.disabled = false;
     spin.classList.remove("show");
