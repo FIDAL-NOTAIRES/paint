@@ -1768,6 +1768,22 @@ function carteAvecRepere(fond, centresCC){
    charge le PDF dans le canvas de base. On copie ce canvas SEUL — pas
    buildExportCanvas, qui y composerait le calque, la légende et les notes du
    plan colorié. */
+// SIGNATURE : 64 pixels répartis, sommés. Sert à détecter DEUX EXTRAITS
+// IDENTIQUES — la panne du 01/08, que seul l'œil de JFD avait vue. Un
+// programme qui rend trois fois la même image doit le dire lui-même.
+// Factorisée le 01/08 au soir : la voie IFRAME (extraits coloriés) doit signer
+// avec le MÊME algorithme, sinon le détecteur compare des choses différentes.
+function signatureCanvas(cv){
+  let sig = 0;
+  const g = cv.getContext("2d");
+  for(let k = 0; k < 64; k++){
+    const x = Math.floor((k % 8 + 0.5) * cv.width / 8);
+    const y = Math.floor((Math.floor(k / 8) + 0.5) * cv.height / 8);
+    const d = g.getImageData(x, y, 1, 1).data;
+    sig = (sig * 31 + d[0] * 65536 + d[1] * 256 + d[2]) % 2147483647;
+  }
+  return String(sig);
+}
 async function extraitBrutDe(pp){
   try{
     const mets = (id, val) => {
@@ -1821,18 +1837,7 @@ async function extraitBrutDe(pp){
     const cv = document.createElement("canvas");
     cv.width = S.W; cv.height = S.H;
     cv.getContext("2d").drawImage(base, 0, 0);
-    // SIGNATURE : 64 pixels répartis, sommés. Sert à détecter DEUX EXTRAITS
-    // IDENTIQUES — la panne du 01/08, que seul l'œil de JFD avait vue. Un
-    // programme qui rend trois fois la même image doit le dire lui-même.
-    let sig = 0;
-    const g = cv.getContext("2d");
-    for(let k = 0; k < 64; k++){
-      const x = Math.floor((k % 8 + 0.5) * cv.width / 8);
-      const y = Math.floor((Math.floor(k / 8) + 0.5) * cv.height / 8);
-      const d = g.getImageData(x, y, 1, 1).data;
-      sig = (sig * 31 + d[0] * 65536 + d[1] * 256 + d[2]) % 2147483647;
-    }
-    return { canvas: cv, demande, sig: String(sig) };
+    return { canvas: cv, demande, sig: signatureCanvas(cv) };
   }catch(e){ return { canvas: null, demande: "erreur", sig: "exception : " + (e && e.message) }; }
 }
 
@@ -2397,13 +2402,34 @@ async function doExportDocument(){
       q.set("tab", r ? [r[0], r[1]].join(",") : "");
       q.delete("total");
       spin.classList.add("show");
-      // ⚠ L'EXTRAIT D'ABORD, L'ORTHO ENSUITE. Les deux écrivent dans le canvas de
-      // base : il faut capturer chacun juste après son propre chargement.
-      spinmsg.textContent = "Extrait cadastral " + (i + 1) + " sur " + blocs.length + "…";
-      const ex = pps[i] ? await extraitBrutDe(pps[i]) : null;
-      const extrait = ex ? ex.canvas : null;
-      journal.push((r ? r[0] + " " + r[1] : "?") + " → demandé " + (ex ? ex.demande : "pas de pp")
-        + " → " + (ex ? ex.sig : "—"));
+      // ---- EXTRAIT COLORIÉ PAR IFRAME — demandé par JFD le 01/08 au soir. ----
+      // Le verrou v6 « extraits bruts, le géoréférenceur est insoudable de
+      // l'écran » tombe par la même clé que les plans de section : l'iframe EST
+      // un écran, le pipeline complet s'y exécute — extrait recentré sur LA
+      // parcelle, calage, polygone peint, tableau. Coût dit : le calage OCR
+      // s'ajoute à chaque parcelle (~15-20 s au lieu de ~8). La signature du
+      // détecteur d'identiques se calcule sur le canvas capturé, MÊME
+      // algorithme que la voie brute (signatureCanvas). Repli : si l'iframe
+      // rend null (échec du service ou du calage), on retente EN BRUT — un
+      // extrait sans couleur vaut mieux qu'une page sans extrait, et le
+      // journal dit lequel des deux est parti.
+      spinmsg.textContent = "Extrait colorié " + (i + 1) + " sur " + blocs.length + "…";
+      let extrait = null, exDemande = "pas de pp", exSig = "—";
+      if(pps[i]){
+        const gP = { label: "", sec: pps[i].section, idx: [i] };
+        const cap = await capturerPlanSection(p, gP, blocs, rangs, pps);
+        if(cap){
+          extrait = cap;
+          exDemande = pps[i].prefixe + "/" + pps[i].section + "/" + pps[i].parcelle + " (colorié, iframe)";
+          exSig = signatureCanvas(cap);
+        }else{
+          const ex = await extraitBrutDe(pps[i]);
+          extrait = ex ? ex.canvas : null;
+          exDemande = (ex ? ex.demande : "?") + " (repli BRUT, iframe en échec)";
+          exSig = ex ? ex.sig : "—";
+        }
+      }
+      journal.push((r ? r[0] + " " + r[1] : "?") + " → demandé " + exDemande + " → " + exSig);
       spin.classList.add("show");
       spinmsg.textContent = "Vue " + (i + 1) + " sur " + blocs.length + "…";
       // ⚠ UNE VUE EN ÉCHEC NE DISPARAÎT PLUS : elle produit une PAGE MARQUÉE
