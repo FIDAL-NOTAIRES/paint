@@ -868,6 +868,9 @@ async function generateExtrait(mode){
   }
   const b1=document.getElementById("genrun_adr"), b2=document.getElementById("genrun_ref");
   b1.disabled=true; b2.disabled=true;
+  // Drapeau d'échec — 01/08 : S.pdf ne peut PAS servir de témoin, il garde le
+  // document PRÉCÉDENT quand la génération échoue en boucle multi-parcelles.
+  S.extraitEchec = null;
   try{
     // Préfixe non saisi (méthode ②) → détection automatique via IGN (communes fusionnées)
     if(mode==="ref" && !prefixe){
@@ -912,6 +915,7 @@ async function generateExtrait(mode){
     setGenStatus("","");
     await loadPDFData(buf);
   }catch(err){
+    S.extraitEchec = (err && err.message) || String(err);
     setGenStatus("Échec : "+err.message+".","err");
   }finally{ b1.disabled=false; b2.disabled=false; }
 }
@@ -1781,7 +1785,20 @@ async function extraitBrutDe(pp){
     const recentrageSauve = S.recentrage;
     S.recentrage = null;
     try{
-      await generateExtrait("ref");
+      // ⚠ REPRISE SUR ERREUR — 01/08. Le SCPC limite le débit : sur une série,
+      // qu'une parcelle échoue devient probable, et elle sortait SANS extrait,
+      // en silence. Trois tentatives, pauses croissantes (2,5 s puis 5 s) ; le
+      // témoin d'échec est S.extraitEchec, jamais S.pdf (voir generateExtrait).
+      for(let essai = 1; essai <= 3; essai++){
+        await generateExtrait("ref");
+        if(!S.extraitEchec) break;
+        if(essai < 3){
+          spin.classList.add("show");
+          spinmsg.textContent = "Service du cadastre en échec — nouvelle tentative ("
+            + (essai + 1) + "/3) dans " + (essai * 2.5) + " s…";
+          await new Promise((r) => setTimeout(r, essai * 2500));
+        }
+      }
     }finally{
       S.recentrage = recentrageSauve;
     }
@@ -1790,6 +1807,8 @@ async function extraitBrutDe(pp){
     const lu = (id) => { const e = document.getElementById(id); return e ? e.value : "∅"; };
     const demande = lu("g_prefixe") + "/" + lu("g_section") + "/" + lu("g_parcelle")
       + " au 1/" + lu("g_echelle") + " " + lu("g_format");
+    if(S.extraitEchec)
+      return { canvas: null, demande, sig: "échec du service après 3 tentatives : " + S.extraitEchec };
     if(!S.pdf) return { canvas: null, demande, sig: "aucun document" };
     const cv = document.createElement("canvas");
     cv.width = S.W; cv.height = S.H;
@@ -1846,7 +1865,7 @@ function colonnesCadastre(L, aLieudit){
     : [wSec, wNum, wSurf];
 }
 
-function composerDesignation(pdf, y, p, infoCom, rangs, total, M, L){
+function composerDesignation(pdf, y, p, infoCom, rangs, total, M, L, vues){
   if(!rangs.length) return y;
   // ---- EN-TÊTE DE LA PAGE 1, arrêté par JFD le 01/08 (variante B) ----------
   // Surtitre discret + date, filet canard pleine largeur ; puis le NOM DE LA
@@ -1929,22 +1948,56 @@ function composerDesignation(pdf, y, p, infoCom, rangs, total, M, L){
   if(rangs.length > 1 && total)
     y = grille(pdf, M, y, cols,
       aLieudit ? ["", "", "Total", total] : ["", "Total", total], true, 14, null, -1);
-  // ---- COMPOSITION DU DOCUMENT — annonce l'ordre, dont le plan renvoyé en
-  // dernière page (décision JFD du 01/08) : c'est cette annonce qui évite au
-  // lecteur de croire le plan absent.
+  // ---- SOMMAIRE — remplace « Composition du document » (décision JFD 01/08) :
+  // une ligne par PARCELLE avec le NUMÉRO DE PAGE de sa fiche, précédée du plan
+  // d'ensemble. Points durs, à ne pas défaire :
+  // ⚠ Il se bâtit sur VUES et non sur rangs : une parcelle dont la vue a échoué
+  //   n'a PAS de page — un sommaire bâti sur rangs pointerait alors faux.
+  // ⚠ Les numéros se CALCULENT AVANT d'exister : fiche i = pagesDes + 2 + i, où
+  //   pagesDes = pages de la présente désignation, sommaire compris. D'où la
+  //   SIMULATION de pagination ci-dessous, à l'identique du tracé réel — toute
+  //   retouche du tracé (interligne, seuils) doit être répercutée dans les deux.
+  const phD = pdf.internal.pageSize.getHeight();
+  const basUtile = phD - 56;   // au-dessus de la zone du pied de page
+  const items = (vues || []).map((v, i) => ({
+    label: v.rang
+      ? (v.rang[0] + " " + v.rang[1] + ((v.rang[3] || "").trim() ? " — " + v.rang[3].trim() : ""))
+      : v.ref,
+    i }));
   y += 26;
+  let ySim = y + 15, pagesDes = 1;
+  for(let n = 0; n < items.length + 1; n++){   // +1 : la ligne du plan
+    if(ySim + 13 > basUtile){ pagesDes += 1; ySim = M + 15; }
+    ySim += 13;
+  }
   pdf.setFont("helvetica", "bold"); pdf.setFontSize(9); pdf.setTextColor("#33838B");
-  pdf.text("COMPOSITION DU DOCUMENT", M, y, { charSpace: 1.2 });
+  pdf.text("SOMMAIRE", M, y, { charSpace: 1.2 });
   y += 15;
-  pdf.setFont("helvetica", "normal"); pdf.setFontSize(9.5); pdf.setTextColor("#0F2238");
-  const lignesCompo = ["Une page par parcelle : références, vue aérienne, carte de situation, extrait cadastral."];
-  if((new URLSearchParams(location.search)).get("lots"))
-    lignesCompo.push("Les locaux bâtis rattachés à leurs parcelles.");
-  lignesCompo.push("Le plan cadastral d'ensemble colorié, pleine page, en dernière page.");
-  lignesCompo.forEach((t) => {
-    pdf.setFillColor("#33838B"); pdf.circle(M + 2.5, y - 3, 1.6, "F");
-    pdf.text(t, M + 12, y); y += 14;
-  });
+  pdf.setFont("helvetica", "normal"); pdf.setFontSize(9.5);
+  const ligneSommaire = (label, page) => {
+    if(y + 13 > basUtile){ pdf.addPage("a4", "portrait"); y = M + 15; }
+    pdf.setTextColor("#0F2238");
+    pdf.text(label, M, y);
+    const num = "p. " + page;
+    pdf.setTextColor("#657D96");
+    pdf.text(num, M + L, y, { align: "right" });
+    // Conduite pointillée entre le libellé et le numéro, à la manière d'une
+    // table des matières — un filet discret, pas un aplat.
+    const x1 = M + pdf.getTextWidth(label) + 6;
+    const x2 = M + L - pdf.getTextWidth(num) - 6;
+    if(x2 > x1){
+      pdf.setDrawColor("#d8dee6"); pdf.setLineWidth(0.5);
+      pdf.setLineDashPattern([1, 2], 0);
+      pdf.line(x1, y - 2.5, x2, y - 2.5);
+      pdf.setLineDashPattern([], 0);
+    }
+    // Lien interne : un clic sur la ligne ouvre la page visée. API vérifiée au
+    // banc sur jsPDF 2.5.1 (pdf.link + pageNumber) avant intégration.
+    pdf.link(M, y - 9, L, 12, { pageNumber: page });
+    y += 13;
+  };
+  ligneSommaire("Plan cadastral d'ensemble", pagesDes + 1);
+  items.forEach((it) => ligneSommaire(it.label, pagesDes + 2 + it.i));
   pdf.setTextColor(0, 0, 0);
   return y + 12;
 }
@@ -2185,6 +2238,7 @@ async function doExportDocument(){
 
     // ---- assemblage -----------------------------------------------------
     const { jsPDF } = window.jspdf;
+    const numDossier = (p.get("dossier") || "").trim();
     // ⚠ ORDRE DES PAGES, décision JFD du 01/08 : LA DÉSIGNATION OUVRE LE
     // DOCUMENT, le plan cadastral d'ensemble le FERME, pleine page. C'est la
     // convention de l'acte — on désigne avant d'illustrer — et celle de la
@@ -2204,64 +2258,99 @@ async function doExportDocument(){
     const M = 42;
     // La désignation occupe la PAGE 1, celle du constructeur — pas d'addPage ici.
     const L = pdf.internal.pageSize.getWidth() - 2 * M;
-    let y = composerDesignation(pdf, M, p, infoCom, rangs, total, M, L);
-    vues.forEach((v) => { y = composerBlocParcelle(pdf, y, v, M, L, budget, aLieudit); });
-    composerLocaux(pdf, y, p, M, L);
-    // ---- DERNIÈRE PAGE : le plan cadastral d'ensemble OCCUPE LA PAGE ------
-    // C'est la pièce qui délimite, elle doit se lire à la loupe si besoin.
-    // Budget de compression PLEIN pour elle : elle est unique, et c'est la
-    // seule qui fait foi. Son orientation suit sa forme, indépendamment du
-    // reste du document (voir la décision d'ordre au constructeur).
+    let y = composerDesignation(pdf, M, p, infoCom, rangs, total, M, L, vues);
+    // ---- PAGE 2 : le plan cadastral d'ensemble OCCUPE LA PAGE -------------
+    // Ordre corrigé par JFD le 01/08 (seconde décision, remplace « en dernière
+    // page ») : le plan SUIT IMMÉDIATEMENT la feuille qui liste les parcelles —
+    // désignation, saut de page, plan. C'est la pièce qui délimite, elle doit
+    // se lire à la loupe si besoin. Budget de compression PLEIN : elle est
+    // unique, et c'est la seule qui fait foi. Son orientation suit sa forme,
+    // indépendamment du reste du document (jsPDF le permet page par page).
+    let pagePlan = 0;
     {
       pdf.addPage("a4", (c1.width >= c1.height) ? "landscape" : "portrait");
+      pagePlan = pdf.internal.getNumberOfPages();
       const pw = pdf.internal.pageSize.getWidth(), ph = pdf.internal.pageSize.getHeight();
       const m = 24, r = Math.min((pw - 2 * m) / c1.width, (ph - 2 * m) / c1.height);
       const w = c1.width * r, h = c1.height * r;
       pdf.addImage(jpegUnderSize(c1, PDF_MAX_BYTES).data, "JPEG",
                    (pw - w) / 2, (ph - h) / 2, w, h);
     }
-    // ---- PIED DE PAGE : filet fin, sources à gauche (l'obligation de paternité
-    // DGFiP/IGN qui fonde la pièce), pagination à droite. ⚠ PAS sur la dernière
-    // page : le plan cadastral y est pleine page, la pièce reste nue.
+    vues.forEach((v) => { y = composerBlocParcelle(pdf, y, v, M, L, budget, aLieudit); });
+    composerLocaux(pdf, y, p, M, L);
+    // ---- PIED DE PAGE : filet fin, « FIDAL Notaires · Dossier n° … » puis les
+    // sources (l'obligation de paternité DGFiP/IGN qui fonde la pièce) à gauche,
+    // pagination à droite. Le numéro de dossier vient du paramètre d'URL
+    // « dossier », saisi dans le panneau Dossier complet de REDPAR ; absent, la
+    // mention se réduit à « FIDAL Notaires ». ⚠ PAS de pied de page sur la PAGE
+    // DU PLAN : il y est pleine page, la pièce reste nue — délibéré.
     {
       const nb = pdf.internal.getNumberOfPages();
-      for(let i = 1; i < nb; i++){
+      const gauche = "FIDAL Notaires" + (numDossier ? " · Dossier " + numDossier : "")
+        + " · Sources : DGFiP — cadastre.gouv.fr · IGN — Géoplateforme";
+      for(let i = 1; i <= nb; i++){
+        if(i === pagePlan) continue;
         pdf.setPage(i);
         const pw2 = pdf.internal.pageSize.getWidth(), ph2 = pdf.internal.pageSize.getHeight();
         pdf.setDrawColor("#d8dee6"); pdf.setLineWidth(0.5);
         pdf.line(M, ph2 - 40, pw2 - M, ph2 - 40);
         pdf.setFont("helvetica", "normal"); pdf.setFontSize(7.5); pdf.setTextColor("#657D96");
-        pdf.text("Sources : DGFiP — cadastre.gouv.fr · IGN — Géoplateforme", M, ph2 - 29);
+        pdf.text(gauche, M, ph2 - 29);
         pdf.text(i + " / " + nb, pw2 - M, ph2 - 29, { align: "right" });
       }
       pdf.setPage(nb); pdf.setTextColor(0, 0, 0);
     }
-    const ref = [p.get("section") || "", p.get("parcelle") || ""].join("-");
     const blob = pdf.output("blob");
     const a = document.createElement("a");
-    a.download = `plan-et-vue-aerienne-${p.get("commune") || ""}-${ref}.pdf`;
+    // Plan de nommage FIDAL « AAAAMMJJ Désignation » (doctrine de la charte,
+    // déjà appliqué à COUNTDOWN) : en série sur dix communes, l'ancien
+    // plan-et-vue-aerienne-… rendait le dossier illisible.
+    const jour = new Date();
+    const aaaammjj = jour.getFullYear() * 10000 + (jour.getMonth() + 1) * 100 + jour.getDate();
+    a.download = (aaaammjj + " " + (numDossier ? "Dossier " + numDossier + " — " : "")
+      + ((p.get("nomCommune") || "").trim().toUpperCase() || (p.get("commune") || ""))
+      + " (" + (p.get("commune") || "") + ").pdf").replace(/[\\/:*?"<>|]/g, "-");
     a.href = URL.createObjectURL(blob); a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 4000);
     showHint("Document 2 pages : " + (blob.size / 1e6).toFixed(1) + " Mo.");
+    // Réserves calculées AVANT le statut : elles servent aussi à décider de la
+    // fermeture automatique de l'onglet (§ docauto ci-dessous).
+    const sigs = journal.map((l) => l.split(" → ").pop());
+    const doubles = sigs.filter((v, i) => sigs.indexOf(v) !== i && v !== "—");
+    const sansExtrait = vues.filter((v) => !v.extrait).map((v) => v.ref);
     setStatus("DOCUMENT généré (" + (blob.size / 1e6).toFixed(1) + " Mo, "
-      + pdf.internal.getNumberOfPages() + " pages) — la désignation d'abord, "
-      + vues.length + " page(s) de parcelle, puis le plan cadastral pleine page "
-      + "en dernière page. ⚠ L'écran affiche "
+      + pdf.internal.getNumberOfPages() + " pages) — la désignation, le plan "
+      + "cadastral pleine page, puis " + vues.length + " page(s) de parcelle. "
+      + "⚠ L'écran affiche "
       + "désormais la vue aérienne : la colorisation du plan N'EST PLUS MODIFIABLE, "
       + "elle n'existe que dans le PDF que vous venez d'enregistrer. Rechargez le "
       + "lien pour la reprendre depuis le début."
-      + (function(){
-          const sigs = journal.map((l) => l.split(" → ").pop());
-          const doubles = sigs.filter((v, i) => sigs.indexOf(v) !== i && v !== "—");
-          const alerte = doubles.length
-            ? " ⚠⚠ EXTRAITS CADASTRAUX IDENTIQUES entre plusieurs parcelles : "
-              + "les pages ne montrent PAS chacune leur parcelle, NE PAS verser ce "
-              + "document au dossier. "
-            : "";
-          return alerte + " — Journal des extraits : " + journal.join(" | ");
-        })()
+      + (doubles.length
+          ? " ⚠⚠ EXTRAITS CADASTRAUX IDENTIQUES entre plusieurs parcelles : "
+            + "les pages ne montrent PAS chacune leur parcelle, NE PAS verser ce "
+            + "document au dossier. "
+          : "")
+      + (sansExtrait.length
+          ? " ⚠ " + sansExtrait.length + " parcelle(s) SANS EXTRAIT cadastral malgré "
+            + "trois tentatives (" + sansExtrait.join(", ") + ") : pages incomplètes."
+          : "")
+      + " — Journal des extraits : " + journal.join(" | ")
       + (alerteCarte ? " ⚠ Carte de situation cadrée par " + alerteCarte
           + " : le cadrage peut être approximatif sur une commune allongée." : ""), "warn");
+    // ---- FERMETURE AUTOMATIQUE DE L'ONGLET (docauto, Dossier complet) -----
+    // L'onglet a été ouvert par script : window.close() est permis. On ne ferme
+    // QUE si aucune réserve — doublons, extraits manquants, carte approximative.
+    // La moindre réserve laisse l'onglet ouvert, statut visible : l'exception du
+    // Dossier complet livre le document, elle ne cache pas les alertes.
+    if(S.docAutoLance){
+      S.docAutoLance = false;
+      if(doubles.length || sansExtrait.length || alerteCarte){
+        showHint("Réserves au statut — onglet laissé ouvert pour contrôle.");
+      }else{
+        showHint("Document téléchargé — l'onglet se referme dans 8 secondes.");
+        setTimeout(() => window.close(), 8000);
+      }
+    }
   }catch(err){
     // ⚠ SANS CE CATCH, TOUTE ERREUR ÉTAIT MUETTE : le finally réactivait le
     // bouton, masquait le sablier, et l'utilisateur voyait « rien ne se passe ».
@@ -4191,6 +4280,7 @@ async function contourOrtho(p, rangs, total){
       // de page 1, doExportDocument le dirait mais autant ne pas le lancer.
       if(S.docAuto && S.pdf){
         S.docAuto = false;   // un seul déclenchement par chargement
+        S.docAutoLance = true;   // autorise la fermeture de l'onglet en fin d'export
         showHint("Dossier complet : le document se génère automatiquement…");
         setTimeout(() => { doExportDocument(); }, 600);
       }
