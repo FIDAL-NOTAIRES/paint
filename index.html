@@ -2236,7 +2236,7 @@ function choisirEchelleDoc(w, h){
 // peinture du polygone, tableau. ⚠ C'est la réponse au verrou du v6 § 6 : le
 // géoréférenceur est une fermeture insoudable du bloc de chargement — or une
 // iframe EST un chargement. On ne déplace pas les six cents lignes fragiles,
-// on les exécute là où elles vivent. Le parent attend S.capturePret (posé au
+// on les exécute là où elles vivent. Le parent attend window.capturePret (posé au
 // finally de la chaîne automatique), capture base + overlay, détruit l'iframe.
 // Rend null au bout de 120 s : la réserve est portée au statut, jamais tue.
 async function capturerPlanSection(p, g, blocs, rangs, pps){
@@ -2271,9 +2271,15 @@ async function capturerPlanSection(p, g, blocs, rangs, pps){
   // elle heurterait le même URI_TOO_LONG que le lien principal. Les paramètres
   // passent donc par le registre du parent (charge=iframe), et l'URL reste
   // courte quel que soit le nombre de parcelles.
-  S.chargesIframe = S.chargesIframe || {};
+  // ⚠⚠ SUR WINDOW, PAS SUR S — leçon du 01/08 au soir : « const S » ne crée
+  // PAS de propriété window, donc window.parent.S était undefined dans
+  // l'iframe, ET contentWindow.S l'était pour le parent : le registre était
+  // invisible d'un côté, le drapeau de fin de l'autre. Chaque section mangeait
+  // ses 120 s de plafond puis sortait « plan non produit ». Tout ce qui
+  // traverse la frontière des cadres se pose EXPLICITEMENT sur window.
+  window.chargesIframe = window.chargesIframe || {};
   const cle = "s" + Date.now() + "_" + Math.floor(Math.random() * 1e6);
-  S.chargesIframe[cle] = q.toString();
+  window.chargesIframe[cle] = q.toString();
   const ifr = document.createElement("iframe");
   ifr.style.cssText = "position:fixed;left:-12000px;top:0;width:1400px;height:1000px;border:0;";
   ifr.src = location.pathname + "?charge=iframe&cle=" + cle;
@@ -2283,7 +2289,7 @@ async function capturerPlanSection(p, g, blocs, rangs, pps){
     while(Date.now() - debut < 120000){
       await new Promise((r) => setTimeout(r, 400));
       let pret = false;
-      try{ pret = !!(ifr.contentWindow && ifr.contentWindow.S && ifr.contentWindow.S.capturePret); }
+      try{ pret = !!(ifr.contentWindow && ifr.contentWindow.capturePret); }
       catch(e){ /* document de l'iframe pas encore prêt */ }
       if(pret){
         const d = ifr.contentWindow.document;
@@ -2298,7 +2304,7 @@ async function capturerPlanSection(p, g, blocs, rangs, pps){
       }
     }
     return null;
-  }finally{ ifr.remove(); if(S.chargesIframe) delete S.chargesIframe[cle]; }
+  }finally{ ifr.remove(); if(window.chargesIframe) delete window.chargesIframe[cle]; }
 }
 async function doExportDocument(){
   const btn = document.getElementById("docbtn");
@@ -4531,7 +4537,9 @@ function preremplirDepuisURL(){
       // Drapeau lu par capturerPlanSection depuis la page MÈRE (iframes de même
       // origine) : le pipeline automatique est terminé — quel que soit son
       // chemin —, le canvas est dans son état final, capturable.
-      S.capturePret = true;
+      // ⚠ SUR WINDOW : « const S » n'est pas une propriété window, le parent ne
+      // verrait jamais un drapeau posé sur S (leçon du 01/08 au soir).
+      window.capturePret = true;
       // ---- docauto : DÉCLENCHEMENT UNIQUE, à la fin du chemin automatique.
       // Un finally attrape TOUS les return de la chaîne — succès, repli, refus,
       // erreur — c'est ce que veut l'exception du Dossier complet (voir le
@@ -4569,8 +4577,8 @@ function preremplirDepuisURL(){
   if(!mode){ preremplirDepuisURL(); return; }
   if(mode === "iframe"){
     try{
-      const qs = (window.parent && window.parent.S && window.parent.S.chargesIframe)
-        ? window.parent.S.chargesIframe[p0.get("cle") || ""] : null;
+      const qs = (window.parent && window.parent.chargesIframe)
+        ? window.parent.chargesIframe[p0.get("cle") || ""] : null;
       if(qs){
         history.replaceState(null, "", location.pathname + "?" + qs);
         preremplirDepuisURL();
@@ -4579,7 +4587,7 @@ function preremplirDepuisURL(){
     }catch(e){ console.error("charge=iframe :", e); }
     setGenStatus("Chargement par iframe demandé mais paramètres introuvables "
       + "chez le parent — clé absente ou origine différente.", "err");
-    S.capturePret = true;   // ne jamais laisser le parent attendre 120 s pour rien
+    window.capturePret = true;   // ne jamais laisser le parent attendre 120 s pour rien
     return;
   }
   if(mode === "message"){
