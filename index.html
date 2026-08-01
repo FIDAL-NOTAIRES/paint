@@ -222,9 +222,35 @@
     filter:drop-shadow(0 1px 2px rgba(9,21,37,.45));
   }
   #toolring .badge svg{width:22px;height:22px}
+/* ---- VOILE DE PRODUCTION (docauto) — l'onglet travaille, on ne touche pas.
+   Demandé par JFD le 01/08 : l'interface qui se manipule toute seule appelait
+   la souris. Le voile couvre TOUT, dit où on en est, et sourit un peu. */
+#voile{position:fixed;inset:0;z-index:9999;display:none;flex-direction:column;
+  align-items:center;justify-content:center;gap:18px;background:#0F2238;
+  color:#fff;text-align:center;padding:32px;font-family:"Segoe UI",Selawik,system-ui,sans-serif}
+#voile.on{display:flex}
+#voile .vlogo{font-size:15px;letter-spacing:5px;color:#6DD5DC;font-weight:600}
+#voile .vtitre{font-size:34px;font-weight:700;letter-spacing:1px}
+#voile .vvol{font-size:15px;color:#9fb3c8;margin-top:-10px}
+#voile .vphase{font-size:15px;color:#e8eef5;min-height:22px}
+#voile .vbarre{width:min(520px,80vw);height:8px;border-radius:99px;background:rgba(255,255,255,.14);overflow:hidden}
+#voile .vbarre>div{height:100%;width:0%;background:#33838B;border-radius:99px;transition:width .6s ease}
+#voile .vquip{font-size:13.5px;color:#8fa5bb;font-style:italic;max-width:560px;min-height:20px;
+  opacity:1;transition:opacity .5s ease}
+#voile .vnote{font-size:12px;color:#657D96;margin-top:14px}
+#voile.fin .vbarre>div{background:#4caf7d}
 </style>
 </head>
 <body>
+<div id="voile">
+  <div class="vlogo">FIDAL NOTAIRES · PAINT</div>
+  <div class="vtitre" id="vtitre">Production en cours</div>
+  <div class="vvol" id="vvol"></div>
+  <div class="vbarre"><div id="vbarrefill"></div></div>
+  <div class="vphase" id="vphase">Préparation…</div>
+  <div class="vquip" id="vquip"></div>
+  <div class="vnote">Ne fermez pas cet onglet — il travaille seul et se refermera tout seul.</div>
+</div>
 
 <header>
   <div class="brand">
@@ -2179,6 +2205,62 @@ function composerLocaux(pdf, y, p, M, L){
   return y;
 }
 
+// ---- VOILE DE PRODUCTION (docauto) — JFD, 01/08 au soir --------------------
+// L'onglet du Dossier complet manipulait ses champs sous les yeux de
+// l'utilisateur : on croyait devoir interagir. Le voile couvre tout, SUIT LE
+// SABLIER (il relit spinmsg toutes les 400 ms et en extrait « i sur N » pour la
+// barre — zéro instrumentation des boucles, elles parlent déjà), et tourne une
+// pointe d'humour toutes les 7 s. Il s'efface si des RÉSERVES doivent se lire.
+const QUIPS_VOILE = [
+  "Le carmin, jamais le jaune : convention du plan cadastral oblige.",
+  "Chaque parcelle se fait tirer le portrait — trois poses par parcelle.",
+  "Tesseract relit les coordonnées en marge, à la loupe.",
+  "Un conservateur des hypothèques aurait demandé trois semaines et deux timbres.",
+  "Le service du cadastre a son rythme ; nous avons la patience.",
+  "Bornage au pixel près, sans convoquer le géomètre-expert.",
+  "Les contours sont projetés en conique conforme — la Terre est têtue, on s'adapte.",
+  "Pendant ce temps, votre café reste chaud. C'est le moment.",
+  "Chaque plan sort nu, pleine page : c'est la pièce qui fait foi.",
+  "Le sommaire se calcule avant d'exister — les pages tiennent parole.",
+];
+let voileTimers = null;
+function montrerVoile(titre, sousTitre){
+  const v = document.getElementById("voile");
+  if(!v || voileTimers) return;
+  document.getElementById("vtitre").textContent = titre || "Production en cours";
+  document.getElementById("vvol").textContent = sousTitre || "";
+  v.classList.add("on");
+  const quip = document.getElementById("vquip");
+  let qi = Math.floor(Math.random() * QUIPS_VOILE.length);
+  const tourneQuip = () => {
+    quip.style.opacity = "0";
+    setTimeout(() => { quip.textContent = QUIPS_VOILE[qi++ % QUIPS_VOILE.length]; quip.style.opacity = "1"; }, 500);
+  };
+  tourneQuip();
+  const suit = () => {
+    const t = (spinmsg && spinmsg.textContent) || "";
+    if(t) document.getElementById("vphase").textContent = t;
+    const m = t.match(/(\d+)\s*(?:sur|\/)\s*(\d+)/);
+    if(m){
+      const frac = Math.min(1, parseInt(m[1], 10) / Math.max(1, parseInt(m[2], 10)));
+      document.getElementById("vbarrefill").style.width = Math.round(frac * 100) + "%";
+    }
+  };
+  voileTimers = { quip: setInterval(tourneQuip, 7000), suit: setInterval(suit, 400) };
+}
+function voileFinal(message){
+  const v = document.getElementById("voile");
+  if(!v || !v.classList.contains("on")) return;
+  v.classList.add("fin");
+  document.getElementById("vbarrefill").style.width = "100%";
+  document.getElementById("vphase").textContent = message || "Terminé.";
+  document.getElementById("vquip").textContent = "";
+}
+function masquerVoile(){
+  const v = document.getElementById("voile");
+  if(v) v.classList.remove("on", "fin");
+  if(voileTimers){ clearInterval(voileTimers.quip); clearInterval(voileTimers.suit); voileTimers = null; }
+}
 // ---- POLICE DU DOCUMENT : SELAWIK, LE SEGOE UI LIBRE (JFD, 01/08) ----------
 // Segoe UI est propriétaire : l'embarquer violerait sa licence. Selawik est le
 // substitut PUBLIÉ PAR MICROSOFT sous licence SIL OFL, métriques compatibles.
@@ -2621,8 +2703,11 @@ async function doExportDocument(){
     if(S.docAutoLance){
       S.docAutoLance = false;
       if(doubles.length || sansExtrait.length || sectionsSansPlan.length || alerteCarte){
+        // Les réserves DOIVENT se lire : le voile s'efface, le statut apparaît.
+        masquerVoile();
         showHint("Réserves au statut — onglet laissé ouvert pour contrôle.");
       }else{
+        voileFinal("Document téléchargé ✓ — l'onglet se referme dans 8 secondes.");
         showHint("Document téléchargé — l'onglet se referme dans 8 secondes.");
         setTimeout(() => window.close(), 8000);
       }
@@ -2634,6 +2719,7 @@ async function doExportDocument(){
     // accident. Sur une fonction de cette taille, une erreur silencieuse coûte
     // plus cher que l'erreur elle-même — elle empêche de la trouver.
     // NE JAMAIS RETIRER CE BLOC.
+    masquerVoile();   // l'erreur doit se lire, le voile ne cache jamais un échec
     console.error("doExportDocument", err);
     setStatus("Document — ÉCHEC : " + (err && err.message ? err.message : err)
       + ". Le détail complet est dans la console du navigateur (F12, onglet "
@@ -3554,6 +3640,13 @@ function preremplirDepuisURL(){
 
   const setVal = (id, v) => { const el = document.getElementById(id); if(el && v) el.value = v; };
 
+  // Voile de production : levé dès que docauto est su, AVANT toute manœuvre
+  // visible — c'est tout son objet.
+  if((p.get("doc") || "") === "1" && (p.get("docauto") || "") === "1"){
+    const volV = (p.get("vol") || "").trim();
+    montrerVoile((p.get("nomCommune") || commune).toUpperCase(),
+      volV ? "Volume " + volV.replace("/", " de ") : "Dossier complet");
+  }
   selectedCommune2 = { code: commune, nom: p.get("nomCommune") || commune };
   const nomEl = c2Nom(); if(nomEl) nomEl.value = selectedCommune2.nom;
   ac2Mark("ok", "✓ " + selectedCommune2.nom + " — INSEE " + commune);
