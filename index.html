@@ -919,7 +919,22 @@ async function loadPDF(file){
 async function loadPDFData(buf){
   spin.classList.add("show"); spinmsg.textContent="Lecture du plan…";
   try{
-    S.pdf = await pdfjsLib.getDocument({data:buf}).promise;
+    // ⚠⚠ DÉTRUIRE LE DOCUMENT PRÉCÉDENT AVANT D'EN OUVRIR UN AUTRE.
+    // pdf.js PARTAGE SON CACHE DE POLICES entre documents : sans cette
+    // destruction, les tables de glyphes se télescopent et le texte des extraits
+    // suivants sort en CHARABIA — « Ü7°¿®³ »²¬æ » — tandis que le PLAN reste
+    // juste, étant du tracé vectoriel qui ne dépend d'aucune police.
+    // Défaut LATENT DEPUIS TOUJOURS et invisible : PAINT ne chargeait qu'UN PDF
+    // par session. Révélé le 01/08 par la boucle par parcelle, qui en charge cinq.
+    // C'est le second défaut de la même racine que S.recentrage : faire boucler
+    // une chaîne conçue pour un seul passage expose ce qu'elle mémorisait.
+    // standardFontDataUrl en ceinture et bretelles : les polices standard non
+    // embarquées ont besoin de ces fichiers pour être rendues correctement.
+    if(S.pdf){ try{ await S.pdf.destroy(); }catch(e){} S.pdf = null; }
+    S.pdf = await pdfjsLib.getDocument({
+      data: buf,
+      standardFontDataUrl: "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/standard_fonts/"
+    }).promise;
     S.pageCount = S.pdf.numPages; S.page=1;
     S.notes=[]; anno.innerHTML=""; S.legendLabels={}; S.couleursAnnot=null;
     await renderPage();
@@ -1708,7 +1723,24 @@ async function extraitBrutDe(pp){
     mets("g_parcelle", pp.parcelle);
     mets("g_echelle", pp.echelle);
     mets("g_format", pp.format);
-    await generateExtrait("ref");
+    // ⚠⚠ NEUTRALISER S.recentrage LE TEMPS DE CET APPEL.
+    // generateExtrait SUBSTITUE S.recentrage au centre de la parcelle demandée
+    // (voir le commentaire de sa construction de requête) : mécanisme ajouté
+    // exprès pour les UNITÉS FONCIÈRES, le service centrant sinon sur une
+    // parcelle de bord et laissant le groupe colorié en marge du plan.
+    // Or S.recentrage est renseigné UNE FOIS pour toutes par le préremplissage,
+    // à partir du pt de l'ENSEMBLE. Il écrasait donc la référence à chaque
+    // parcelle : quatre demandes différentes, un seul centre, et donc UNE SEULE
+    // IMAGE ne variant qu'avec l'échelle. C'était le défaut du 01/08.
+    // Ici on veut précisément l'inverse : que le service centre sur LA parcelle.
+    // Le recentrage ne vaut que pour le plan d'ensemble de la page 1.
+    const recentrageSauve = S.recentrage;
+    S.recentrage = null;
+    try{
+      await generateExtrait("ref");
+    }finally{
+      S.recentrage = recentrageSauve;
+    }
     // ⚠ CE QUE LE PROGRAMME A RÉELLEMENT DEMANDÉ, relu DANS les champs et non
     // dans mes variables : c'est la seule façon de savoir si l'écriture a pris.
     const lu = (id) => { const e = document.getElementById(id); return e ? e.value : "∅"; };
