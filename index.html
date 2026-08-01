@@ -1534,22 +1534,13 @@ function anneauxGeo(g){
   return [];
 }
 
-/* Rend un canvas, ou null. Ne jette jamais : la carte est un agrément, son
-   absence ne doit pas empêcher la production du document. */
-/* UN SEUL APPEL pour la commune, partagé par la carte et par la désignation :
-   le contour cadre la carte, le département et le code postal nourrissent
-   l'attaque de la désignation. Deux appels pour la même commune seraient un
-   gaspillage, et surtout un risque de divergence entre les deux blocs. */
-async function infoCommune(codeInsee){
-  try{
-    const rep = await fetch("https://geo.api.gouv.fr/communes/"
-      + encodeURIComponent(codeInsee)
-      + "?fields=nom,centre,contour,surface,codesPostaux,departement");
-    return rep.ok ? await rep.json() : null;
-  }catch(e){ return null; }
-}
+/* FOND DE CARTE COMMUNAL, SANS REPÈRE. Rend un objet ou null ; ne jette jamais,
+   la carte étant un agrément dont l'absence ne doit pas empêcher le document.
 
-async function carteCommune(c, zz, centresCC, aspectCible){
+   ⚠ UN SEUL APPEL AU SERVICE POUR TOUTE LA COMMUNE. L'emprise ne change pas
+   d'une parcelle à l'autre — seule la croix se déplace. Six parcelles coûtent
+   donc UNE image de fond et six copies, non six requêtes. */
+async function fondCommune(c, zz, aspectCible){
   try{
     if(!c) return null;
     const anneaux = anneauxGeo(c.contour).map((r) => r.map(([lo, la]) => projeterCC(lo, la, zz)));
@@ -1560,9 +1551,6 @@ async function carteCommune(c, zz, centresCC, aspectCible){
       y0 = Math.min(...pts.map((q) => q[1])); y1 = Math.max(...pts.map((q) => q[1]));
       voie = "contour de la commune";
     }else if(c.centre && c.centre.coordinates){
-      // REPLI MOINS JUSTE, ET IL EST DIT : un carré déduit de la superficie
-      // suppose la commune à peu près ronde. Une commune allongée sortira mal
-      // cadrée — mais mieux vaut une carte approximative qu'aucune carte.
       const [cx, cy] = projeterCC(c.centre.coordinates[0], c.centre.coordinates[1], zz);
       const cote = Math.sqrt(Math.max(Number(c.surface) || 0, 1e6) * 10000) * 0.7;
       x0 = cx - cote; x1 = cx + cote; y0 = cy - cote; y1 = cy + cote;
@@ -1570,26 +1558,11 @@ async function carteCommune(c, zz, centresCC, aspectCible){
     }else return null;
     const mx = (x1 - x0) * 0.05 + 50, my = (y1 - y0) * 0.05 + 50;
     x0 -= mx; x1 += mx; y0 -= my; y1 += my;
-
-    // ---- MÊME HAUTEUR QUE LA VUE AÉRIENNE -------------------------------
-    // Demandé par JFD. Placées à la même largeur, deux images n'ont la même
-    // hauteur que si elles ont le même rapport — on conforme donc l'emprise de
-    // la carte à celle de l'ortho.
-    // ⚠ PAR ÉLARGISSEMENT SEULEMENT, JAMAIS PAR RECADRAGE : élargir n'ajoute
-    // que du territoire voisin, alors que rogner cacherait une partie de la
-    // commune. La commune reste donc INTÉGRALEMENT visible quel que soit son
-    // allongement — au prix, pour une commune très étirée face à une ortho
-    // carrée, d'un large pourtour. C'est le bon compromis : on ne tronque pas
-    // un territoire pour satisfaire une mise en page.
     if(aspectCible > 0){
       const larg = x1 - x0, haut = y1 - y0, a = larg / haut;
-      if(a < aspectCible){
-        const d = (haut * aspectCible - larg) / 2; x0 -= d; x1 += d;
-      }else if(a > aspectCible){
-        const d = (larg / aspectCible - haut) / 2; y0 -= d; y1 += d;
-      }
+      if(a < aspectCible){ const d = (haut * aspectCible - larg) / 2; x0 -= d; x1 += d; }
+      else if(a > aspectCible){ const d = (larg / aspectCible - haut) / 2; y0 -= d; y1 += d; }
     }
-
     const W = 1200, H = Math.max(200, Math.round(W * (y1 - y0) / (x1 - x0)));
     const url = "https://data.geopf.fr/wms-r/wms?" + new URLSearchParams({
       SERVICE: "WMS", VERSION: "1.3.0", REQUEST: "GetMap",
@@ -1609,18 +1582,12 @@ async function carteCommune(c, zz, centresCC, aspectCible){
     g.drawImage(img, 0, 0, cv.width, cv.height);
     const px = (X) => (X - x0) / ((x1 - x0) / cv.width);
     const py = (Y) => (Y - y1) / (-(y1 - y0) / cv.height);
-
-    // limite communale, en trait fin : le lecteur voit la parcelle DANS son
-    // territoire, et non au milieu d'un carré arbitraire
     if(anneaux.length){
-      // ORANGE VIF #FF982D de la charte, demandé par JFD.
-      // ⚠ La convention cadastrale du mémo EXCLUT l'orange — mais elle vaut pour
-      // un PLAN CADASTRAL, où l'orange signifie le bâti. Le fond est ici un Plan
-      // IGN : l'exclusion ne s'y applique pas. Et l'orange a l'avantage d'être
-      // franchement DISTINCT du carmin du marqueur, ce qui évite de confondre la
-      // limite du territoire et l'emplacement du bien.
-      // Tracé DEUX FOIS, un liseré blanc dessous : sans lui, un trait de couleur
-      // se perd sur les zones claires d'un fond topographique.
+      // ORANGE VIF #FF982D de la charte. ⚠ La convention cadastrale du mémo exclut
+      // l'orange, mais elle vaut pour un PLAN CADASTRAL où l'orange signifie le
+      // bâti : le fond est ici un Plan IGN. Et l'orange est franchement DISTINCT du
+      // carmin du repère. Tracé deux fois, liseré blanc dessous — sans lui un
+      // trait de couleur se perd sur les aplats clairs du Plan IGN.
       const tr = (couleur, ep) => {
         g.strokeStyle = couleur; g.lineWidth = ep;
         anneaux.forEach((r) => {
@@ -1629,74 +1596,13 @@ async function carteCommune(c, zz, centresCC, aspectCible){
           g.closePath(); g.stroke();
         });
       };
-      const ep = mmPxDe(cv.width, 0.9);      // épaissi le 31/07 à la demande de JFD
+      const ep = mmPxDe(cv.width, 0.9);
       g.save(); g.lineJoin = "round";
       tr("rgba(255,255,255,0.9)", ep * 2.1);
       tr("#FF982D", ep);
       g.restore();
     }
-    // marqueurs : disque carmin cerné de blanc, lisible sur n'importe quel fond
-    // ---- CROIX DE REPÉRAGE, et non disque ------------------------------
-    // Décision JFD du 31/07. Le motif n'est pas décoratif : à l'échelle d'une
-    // commune — environ 1/34 500 pour Tilques sur 87 mm —, un disque de 1,7 mm
-    // de rayon couvrait près de 120 m de terrain. Il AFFIRMAIT donc une étendue
-    // que la parcelle n'a pas. Une croix marque une POSITION sans rien dire de
-    // la taille : c'est « désigner sans délimiter », appliqué à l'autre bout de
-    // l'échelle. Ne pas la remplacer par une forme pleine.
-    // Tracée deux fois, liseré blanc dessous, comme le contour communal : sans
-    // lui, un trait fin disparaît sur les aplats clairs du Plan IGN.
-    // ⚠ LA CROIX NE DOIT PAS TOUCHER L'ANNEAU. Le calcul est à faire sur les
-    // BORDS des traits, non sur leurs axes — c'est ce que j'avais négligé :
-    // avec des branches de 2,6 mm et un anneau de rayon 3,2 mm, le LISERÉ BLANC
-    // de l'anneau (1,4 mm d'épaisseur, donc bord intérieur à 3,2 − 0,7 = 2,5 mm)
-    // mordait sur des pointes situées à 2,6 mm.
-    // Réglage retenu : branches 1,9 mm, anneau 3,4 mm → bord intérieur du liseré
-    // à 2,7 mm, soit 0,8 mm de jeu franc. À REFAIRE si l'une des épaisseurs change.
-    const bras = mmPxDe(cv.width, 1.9);        // demi-longueur des branches
-    const rayon = mmPxDe(cv.width, 3.4);       // cercle AUTOUR de la croix, sans contact
-    // ---- le cercle, rétabli le 31/07 à la demande de JFD ---------------
-    // Retiré au tour précédent en même temps que le disque, alors qu'il n'en
-    // faisait pas partie : il cerne la croix sans rien affirmer sur l'étendue,
-    // un anneau ne se lisant pas comme une emprise. Tracé SOUS la croix, pour
-    // que celle-ci reste nette au croisement.
-    // ⚠ FUSION DES REPÈRES TROP PROCHES. Sur l'ortho, trace=rond pose UN repère
-    // sur l'ensemble ; ici je dessinais une croix PAR PARCELLE, ce qui donnait un
-    // pâté pour une unité foncière contiguë — à l'échelle d'une commune, quelques
-    // dizaines de mètres séparent des centres que rien ne distingue.
-    // On ne se rabat pas pour autant sur un repère unique : des parcelles
-    // réellement dispersées, dans deux hameaux, MÉRITENT deux croix, et une
-    // croix unique tomberait alors entre les deux, sur du terrain d'autrui.
-    // D'où un regroupement par distance : au-delà, les croix restent distinctes.
-    const seuil = rayon * 2.2;
-    const groupes = [];
-    (centresCC || []).forEach(([X, Y]) => {
-      const a = px(X), b = py(Y);
-      const g0 = groupes.find((q) => Math.hypot(q.x - a, q.y - b) < seuil);
-      if(g0){ g0.sx += a; g0.sy += b; g0.n += 1; g0.x = g0.sx / g0.n; g0.y = g0.sy / g0.n; }
-      else groupes.push({ x: a, y: b, sx: a, sy: b, n: 1 });
-    });
-    const anneau = (couleur, ep) => {
-      g.strokeStyle = couleur; g.lineWidth = ep;
-      groupes.forEach((q) => {
-        g.beginPath(); g.arc(q.x, q.y, rayon, 0, 2 * Math.PI); g.stroke();
-      });
-    };
-    const croix = (couleur, ep) => {
-      g.strokeStyle = couleur; g.lineWidth = ep; g.lineCap = "butt";
-      groupes.forEach((q) => {
-        g.beginPath();
-        g.moveTo(q.x - bras, q.y); g.lineTo(q.x + bras, q.y);
-        g.moveTo(q.x, q.y - bras); g.lineTo(q.x, q.y + bras);
-        g.stroke();
-      });
-    };
-    g.save();
-    anneau("rgba(255,255,255,0.9)", mmPxDe(cv.width, 1.4));
-    anneau("rgba(160,16,64,0.35)", mmPxDe(cv.width, 0.9));
-    croix("rgba(255,255,255,0.9)", mmPxDe(cv.width, 1.5));
-    croix("#A01040", mmPxDe(cv.width, 0.7));
-    g.restore();
-    // attribution GRAVÉE, comme sur l'ortho : elle doit suivre l'image
+    // attribution GRAVÉE : elle doit suivre l'image partout où elle va
     const t = mmPxDe(cv.width, 1.9);
     g.font = t + "px Georgia, 'Times New Roman', serif"; g.textBaseline = "bottom";
     const src = "Plan IGN — Géoplateforme";
@@ -1704,148 +1610,214 @@ async function carteCommune(c, zz, centresCC, aspectCible){
     g.fillStyle = "rgba(255,255,255,0.85)";
     g.fillRect(4, cv.height - t * 1.5 - 4, w + 10, t * 1.5);
     g.fillStyle = "#0F2238"; g.fillText(src, 9, cv.height - 7);
-    cv.dataset && (cv.dataset.voie = voie);
-    return { canvas: cv, voie, nom: c.nom };
+    return { canvas: cv, px, py, voie, nom: c.nom };
   }catch(e){ return null; }
 }
 
+/* COPIE DU FOND, AVEC SES REPÈRES. Une copie par parcelle, ou une seule portant
+   tous les repères fusionnés — voir § du mémo sur la fusion par distance. */
+function carteAvecRepere(fond, centresCC){
+  const cv = document.createElement("canvas");
+  cv.width = fond.canvas.width; cv.height = fond.canvas.height;
+  const g = cv.getContext("2d");
+  g.drawImage(fond.canvas, 0, 0);
+  // ⚠ LA CROIX NE DOIT PAS TOUCHER L'ANNEAU, et le calcul se fait sur les BORDS
+  // des traits, non sur leurs axes : branches 1,9 mm, anneau 3,4 mm, liseré
+  // 1,4 mm → bord intérieur à 2,7 mm, soit 0,8 mm de jeu. À REFAIRE si une
+  // épaisseur change.
+  const bras = mmPxDe(cv.width, 1.9);
+  const rayon = mmPxDe(cv.width, 3.4);
+  // FUSION DES REPÈRES TROP PROCHES : une croix par parcelle donnait un pâté sur
+  // une unité contiguë. Mais on ne se rabat pas sur un repère unique — des
+  // parcelles dispersées dans deux hameaux méritent deux croix, une croix unique
+  // tombant alors entre les deux, sur du terrain d'autrui.
+  const seuil = rayon * 2.2;
+  const groupes = [];
+  (centresCC || []).forEach(([X, Y]) => {
+    const a = fond.px(X), b = fond.py(Y);
+    const g0 = groupes.find((q) => Math.hypot(q.x - a, q.y - b) < seuil);
+    if(g0){ g0.sx += a; g0.sy += b; g0.n += 1; g0.x = g0.sx / g0.n; g0.y = g0.sy / g0.n; }
+    else groupes.push({ x: a, y: b, sx: a, sy: b, n: 1 });
+  });
+  const anneau = (couleur, ep) => {
+    g.strokeStyle = couleur; g.lineWidth = ep;
+    groupes.forEach((q) => { g.beginPath(); g.arc(q.x, q.y, rayon, 0, 2 * Math.PI); g.stroke(); });
+  };
+  const croix = (couleur, ep) => {
+    g.strokeStyle = couleur; g.lineWidth = ep; g.lineCap = "butt";
+    groupes.forEach((q) => {
+      g.beginPath();
+      g.moveTo(q.x - bras, q.y); g.lineTo(q.x + bras, q.y);
+      g.moveTo(q.x, q.y - bras); g.lineTo(q.x, q.y + bras);
+      g.stroke();
+    });
+  };
+  g.save();
+  anneau("rgba(255,255,255,0.9)", mmPxDe(cv.width, 1.4));
+  anneau("rgba(160,16,64,0.35)", mmPxDe(cv.width, 0.9));
+  croix("rgba(255,255,255,0.9)", mmPxDe(cv.width, 1.5));
+  croix("#A01040", mmPxDe(cv.width, 0.7));
+  g.restore();
+  return cv;
+}
+
 /* ==================================================================
-   BAS DE LA PAGE 2 — DÉSIGNATION CADASTRALE ET LOCAUX BÂTIS
+   BAS DES PAGES — DÉSIGNATION, BLOCS PAR PARCELLE, LOCAUX
    ------------------------------------------------------------------
-   Demandé par JFD le 31/07/2026. Écrit SUR LA PAGE du PDF et non gravé dans
-   l'image, contrairement au cartouche : ce sont des énonciations, pas des
-   propriétés de la photographie. Elles ne doivent donc PAS suivre l'image en
-   cas de réemploi ailleurs — une désignation détachée de son acte n'a rien à
+   Écrit SUR LA PAGE du PDF et non gravé dans l'image, contrairement au
+   cartouche : ce sont des énonciations, pas des propriétés de la
+   photographie, et une désignation détachée de son acte n'a rien à
    circuler seule.
 
-   ⚠ LA RÉDACTION EST UNE PROPOSITION, PAS UNE FORME ARRÊTÉE. Les formules
-   d'attaque (« Dans un ensemble immobilier situé à… », « Un immeuble situé
-   à… ») sont de mon fait, calquées sur la convention TRENTE ; elles doivent
-   être relues et corrigées par JFD. Une désignation part dans un acte : elle se
-   relit de toute façon, mais qu'il soit clair qu'elle n'est pas validée.
-
-   ⚠ POLICE : jsPDF ne dispose que de ses fontes intégrées. Ni Georgia ni
-   Segoe UI de la charte ne sont disponibles — on emploie « times », le seul
-   serif disponible, qui est aussi le registre d'un acte. Ne pas s'étonner de
-   l'écart avec la charte, il est contraint et non choisi.
-
-   ⚠ LE DÉTAIL DES LOTS NE S'IMPRIME QUE S'IL RESTE LA PLACE, mesurée sur la
-   page et non déduite d'un nombre de lots. Un seuil fixe — « au-delà de douze
-   lots, la synthèse seule » — casserait dès qu'une désignation d'unité foncière
-   à six parcelles allonge le tableau du dessus. C'est la place réelle qui
-   décide, jamais un compte.
+   ⚠ POLICE : jsPDF n'a que ses fontes intégrées. Ni Georgia ni Segoe UI de
+   la charte. On emploie « times », seul serif disponible, qui est aussi le
+   registre d'un acte. Écart contraint, non choisi.
    ================================================================== */
-function composerBasDePage(pdf, y0, p, infoCom){
-  const M = 42;                                  // marge, alignée sur les images
-  const pw = pdf.internal.pageSize.getWidth();
+
+/* Une rangée de grille. Partagée par les deux tableaux pour qu'ils s'alignent
+   à l'œil : mêmes largeurs, même graisse, même retrait. */
+function grille(pdf, x, y, cols, cells, gras, hauteur, lignes, iMulti){
+  const gx = (i) => x + cols.slice(0, i).reduce((a, b) => a + b, 0);
+  pdf.setFont("times", gras ? "bold" : "normal");
+  cells.forEach((txt, i) => {
+    pdf.rect(gx(i), y, cols[i], hauteur);
+    if(!(lignes && i === iMulti)) pdf.text(String(txt || ""), gx(i) + 4, y + 10);
+  });
+  if(lignes) lignes.forEach((L2, k) => pdf.text(L2, gx(iMulti) + 4, y + 10 + k * 12));
+  return y + hauteur;
+}
+
+/* Colonnes communes aux deux tableaux. Largeurs FIXES en points, non en
+   fractions de page : une colonne « Section » n'a pas à s'étirer parce que la
+   page est large, et le tableau doit garder la même allure d'un dossier à
+   l'autre. Seul le lieudit absorbe le reste, lui seul étant imprévisible. */
+function colonnesCadastre(L, aLieudit){
+  const wSec = 58, wNum = 46, wSurf = 112;
+  return aLieudit
+    ? [wSec, wNum, Math.max(130, L * 0.80 - wSec - wNum - wSurf), wSurf]
+    : [wSec, wNum, wSurf];
+}
+
+function composerDesignation(pdf, y, p, infoCom, rangs, total, M, L){
+  if(!rangs.length) return y;
+  pdf.setFont("times", "bold"); pdf.setFontSize(11);
+  pdf.text("DÉSIGNATION", M, y); y += 6;
+  pdf.setLineWidth(0.6); pdf.line(M, y, M + L, y); y += 16;
+
+  pdf.setFont("times", "normal"); pdf.setFontSize(10.5);
+  // ATTAQUE, forme arrêtée par JFD sur pièce :
+  //   « Un actif immobilier situé à COMMUNE (DÉPARTEMENT) (CODE POSTAL) ADRESSE. »
+  // au singulier, « Dans un ensemble immobilier … » au pluriel.
+  // ⚠ CODE POSTAL OMIS SI LA COMMUNE EN A PLUSIEURS (règle reprise de TRENTE) :
+  // en imprimer un seul désignerait un quartier plutôt que la commune, ce qui
+  // serait FAUX et non seulement imprécis.
+  // ⚠ ADRESSE DANS L'ATTAQUE UNIQUEMENT POUR UNE PARCELLE : à plusieurs elles
+  // diffèrent et figurent au tableau ; en hisser une donnerait à l'ensemble
+  // l'adresse de l'une d'elles.
+  const dept = (infoCom && infoCom.departement && infoCom.departement.nom)
+    ? infoCom.departement.nom.toUpperCase() : "";
+  const cps = (infoCom && Array.isArray(infoCom.codesPostaux)) ? infoCom.codesPostaux : [];
+  const cp = (cps.length === 1) ? cps[0] : "";
+  const adr = (rangs.length === 1) ? (rangs[0][3] || "").trim() : "";
+  const attaque = ((rangs.length > 1)
+      ? "Dans un ensemble immobilier situé à " : "Un actif immobilier situé à ")
+    + (p.get("nomCommune") || "").trim()
+    + (dept ? ` (${dept})` : "") + (cp ? ` (${cp})` : "")
+    + (adr ? ` ${adr}` : "") + ".";
+  pdf.splitTextToSize(attaque, L).forEach((ligne) => { pdf.text(ligne, M, y); y += 13; });
+  y += 4;
+  pdf.text("Figurant ainsi au cadastre :", M, y); y += 16;
+
+  // ⚠ UNE COLONNE SANS DONNÉE DISPARAÎT : « Lieudit » vide au milieu de la page,
+  // avec « Surface » rejetée à l'autre bout, se lit comme une donnée manquante
+  // alors que c'est une colonne inutile.
+  const aLieudit = rangs.some((r) => (r[3] || "").trim() !== "");
+  const cols = colonnesCadastre(L, aLieudit);
+  pdf.setLineWidth(0.5); pdf.setFontSize(9.5);
+  y = grille(pdf, M, y, cols,
+    aLieudit ? ["Section", "N°", "Lieudit", "Surface"] : ["Section", "N°", "Surface"],
+    true, 14, null, 2);
+  rangs.forEach((r) => {
+    let h = 14, lignes = null;
+    if(aLieudit){
+      lignes = pdf.splitTextToSize((r[3] || "").trim(), cols[2] - 8);
+      h = Math.max(14, lignes.length * 12 + 4);
+    }
+    y = grille(pdf, M, y, cols,
+      aLieudit ? [r[0], r[1], "", r[2]] : [r[0], r[1], r[2]], false, h, lignes, 2);
+  });
+  // Total UNIQUEMENT à partir de deux parcelles, et pris du paramètre « total »
+  // plutôt que recalculé : c'est REDPAR qui somme, en mètres carrés, pas PAINT
+  // à partir de chaînes déjà mises en forme.
+  if(rangs.length > 1 && total)
+    y = grille(pdf, M, y, cols,
+      aLieudit ? ["", "", "Total", total] : ["", "Total", total], true, 14, null, -1);
+  return y + 20;
+}
+
+/* BLOC PAR PARCELLE — forme arrêtée par JFD le 31/07 : sous-titre souligné,
+   tableau réduit à la parcelle concernée, les deux vues côte à côte, puis un
+   trait de séparation.
+
+   ⚠ LE SOUS-TITRE N'EST PAS DÉCORATIF. Plusieurs photographies aériennes sans
+   légende sont PIRES qu'une seule : le lecteur ne sait plus laquelle va avec
+   quelle parcelle, et peut rapporter au bien une vue qui n'est pas la sienne.
+   ⚠ LES DEUX VUES SONT CARRÉES (carre=1 côté ortho, aspect 1 côté carte), sans
+   quoi les hauteurs ne s'aligneraient pas d'une ligne à l'autre. */
+function composerBlocParcelle(pdf, y, vue, M, L, budget, aLieudit){
   const ph = pdf.internal.pageSize.getHeight();
-  const L = pw - 2 * M;
-  let y = y0;
+  const ecart = 16, w = (L - ecart) / 2;
+  const hBloc = 18 + 30 + 6 + w + 10 + 16;
+  if(y + hBloc > ph - 48){ pdf.addPage("a4", "portrait"); y = M; }
 
-  const rangs = (p.get("tab") || "").split(";")
-    .map((r) => r.split(",").map((c) => c.trim()))
-    .filter((r) => r.length >= 2 && (r[0] || r[1]));
-  const total = (p.get("total") || "").trim();
-  const commune = (p.get("nomCommune") || "").trim();
+  pdf.setFont("times", "bold"); pdf.setFontSize(11);
+  pdf.text(vue.ref, M, y);
+  const lw = pdf.getTextWidth(vue.ref);
+  pdf.setLineWidth(0.7); pdf.line(M, y + 2.5, M + lw, y + 2.5);
+  y += 18;
 
-  // ---- 1. DÉSIGNATION ---------------------------------------------------
-  if(rangs.length){
-    pdf.setFont("times", "bold"); pdf.setFontSize(11);
-    pdf.text("DÉSIGNATION", M, y); y += 6;
-    pdf.setLineWidth(0.6); pdf.line(M, y, M + L, y); y += 16;
-
-    pdf.setFont("times", "normal"); pdf.setFontSize(10.5);
-    // ---- ATTAQUE, forme arrêtée par JFD le 31/07 sur pièce ---------------
-    //   « Un actif immobilier situé à COMMUNE (DÉPARTEMENT) (CODE POSTAL) ADRESSE. »
-    // au singulier, « Dans un ensemble immobilier … » au pluriel.
-    // ⚠ CODE POSTAL OMIS SI LA COMMUNE EN A PLUSIEURS — règle reprise de TRENTE :
-    // en imprimer un seul désignerait un quartier plutôt que la commune, ce qui
-    // serait faux et non pas seulement imprécis.
-    // ⚠ ADRESSE DANS L'ATTAQUE UNIQUEMENT POUR UNE PARCELLE : à plusieurs, les
-    // adresses diffèrent et figurent déjà au tableau ; en hisser une seule dans
-    // la phrase donnerait à l'ensemble l'adresse de l'une d'elles.
-    const dept = (infoCom && infoCom.departement && infoCom.departement.nom)
-      ? infoCom.departement.nom.toUpperCase() : "";
-    const cps = (infoCom && Array.isArray(infoCom.codesPostaux)) ? infoCom.codesPostaux : [];
-    const cp = (cps.length === 1) ? cps[0] : "";
-    const adr = (rangs.length === 1) ? (rangs[0][3] || "").trim() : "";
-    const attaque = ((rangs.length > 1)
-        ? "Dans un ensemble immobilier situé à "
-        : "Un actif immobilier situé à ")
-      + commune
-      + (dept ? ` (${dept})` : "")
-      + (cp ? ` (${cp})` : "")
-      + (adr ? ` ${adr}` : "") + ".";
-    pdf.splitTextToSize(attaque, L).forEach((ligne) => { pdf.text(ligne, M, y); y += 13; });
-    y += 4;
-    pdf.text("Figurant ainsi au cadastre :", M, y); y += 16;
-
-    // ⚠ UNE COLONNE SANS DONNÉE DISPARAÎT, ET LE TABLEAU SE RESSERRE.
-    // Défaut corrigé le 31/07 : « Lieudit » s'imprimait vide au milieu de la
-    // page avec « Surface » rejetée à l'autre bout — cela se lisait comme une
-    // donnée manquante alors que c'était une colonne inutile.
-    //
-    // TABLEAU ENCADRÉ, forme arrêtée par JFD sur pièce le 31/07 : une grille
-    // complète, en-têtes en gras, tout aligné à gauche — et non des filets
-    // horizontaux avec la surface fuyant au bord droit de la page.
-    //
-    // Largeurs FIXES en points, et non en fractions de la page : une colonne
-    // « Section » n'a pas besoin de s'étirer parce que la page est large, et le
-    // tableau doit garder la même allure d'un dossier à l'autre. Seul le lieudit
-    // absorbe le reste, puisque lui seul est de longueur imprévisible.
-    const aLieudit = rangs.some((r) => (r[3] || "").trim() !== "");
-    const wSec = 58, wNum = 46, wSurf = 112;
-    const wLieu = aLieudit ? Math.max(130, L * 0.80 - wSec - wNum - wSurf) : 0;
-    const cols = aLieudit ? [wSec, wNum, wLieu, wSurf] : [wSec, wNum, wSurf];
-    const bord = (i) => M + cols.slice(0, i).reduce((a, b) => a + b, 0);
-    const pad = 4, hL = 14, iLieu = 2;
+  if(vue.rang){
+    const cols = colonnesCadastre(L, aLieudit);
+    const r = vue.rang;
     pdf.setLineWidth(0.5); pdf.setFontSize(9.5);
-
-    const rangee = (cells, gras, hauteur, lignesLieu) => {
-      pdf.setFont("times", gras ? "bold" : "normal");
-      cells.forEach((txt, i) => {
-        pdf.rect(bord(i), y, cols[i], hauteur);
-        if(!(lignesLieu && aLieudit && i === iLieu))
-          pdf.text(String(txt || ""), bord(i) + pad, y + 10);
-      });
-      if(lignesLieu && aLieudit)
-        lignesLieu.forEach((L2, k) => pdf.text(L2, bord(iLieu) + pad, y + 10 + k * 12));
-      y += hauteur;
-    };
-
-    rangee(aLieudit ? ["Section", "N°", "Lieudit", "Surface"]
-                    : ["Section", "N°", "Surface"], true, hL, null);
-    rangs.forEach((r) => {
-      let h = hL, lignes = null;
-      if(aLieudit){
-        lignes = pdf.splitTextToSize((r[3] || "").trim(), wLieu - pad * 2);
-        h = Math.max(hL, lignes.length * 12 + 4);
-      }
-      rangee(aLieudit ? [r[0], r[1], "", r[2]] : [r[0], r[1], r[2]], false, h, lignes);
-    });
-    // Total UNIQUEMENT à partir de deux parcelles, et pris du paramètre « total »
-    // plutôt que recalculé : c'est REDPAR qui somme, à partir des contenances en
-    // mètres carrés, pas moi à partir de chaînes déjà mises en forme.
-    if(rangs.length > 1 && total)
-      rangee(aLieudit ? ["", "", "Total", total] : ["", "Total", total], true, hL, null);
-    y += 14;
+    y = grille(pdf, M, y, cols,
+      aLieudit ? ["Section", "N°", "Lieudit", "Surface"] : ["Section", "N°", "Surface"],
+      true, 14, null, 2);
+    let h = 14, lignes = null;
+    if(aLieudit){
+      lignes = pdf.splitTextToSize((r[3] || "").trim(), cols[2] - 8);
+      h = Math.max(14, lignes.length * 12 + 4);
+    }
+    y = grille(pdf, M, y, cols,
+      aLieudit ? [r[0], r[1], "", r[2]] : [r[0], r[1], r[2]], false, h, lignes, 2);
+    y += 6;
   }
 
-  // ---- 2. LOCAUX BÂTIS --------------------------------------------------
+  pdf.addImage(jpegUnderSize(vue.ortho, budget).data, "JPEG", M, y, w, w);
+  if(vue.carte)
+    pdf.addImage(jpegUnderSize(vue.carte, budget).data, "JPEG", M + w + ecart, y, w, w);
+  y += w + 10;
+  pdf.setLineWidth(0.8); pdf.setDrawColor(150); pdf.line(M, y, M + L, y);
+  pdf.setDrawColor(0);
+  return y + 16;
+}
+
+function composerLocaux(pdf, y, p, M, L){
+  const ph = pdf.internal.pageSize.getHeight();
   const mB = (p.get("bati") || "").match(/^(\d+),(\d+)$/);
   if(!mB) return y;
   const nbBat = parseInt(mB[1], 10), nbLots = parseInt(mB[2], 10);
+  if(y + 60 > ph - 48){ pdf.addPage("a4", "portrait"); y = M; }
   pdf.setFont("times", "bold"); pdf.setFontSize(11);
   pdf.text("LOCAUX BÂTIS", M, y); y += 6;
   pdf.setLineWidth(0.6); pdf.line(M, y, M + L, y); y += 16;
 
   pdf.setFont("times", "normal"); pdf.setFontSize(10.5);
-  const pluriel = (n, mot) => n + " " + mot + (n > 1 ? "s" : "");
-  // ⚠ AUCUNE SUPERFICIE : le volet bâti de REDPAR est un inventaire STRUCTUREL
-  // (bâtiment, entrée, niveau, porte). Les fichiers MAJIC des personnes morales
-  // identifient les locaux, ils ne les mesurent pas. Ne pas chercher à annoncer
-  // une surface bâtie, la donnée n'existe pas dans cette source.
-  pdf.text(pluriel(nbBat, "bâtiment") + ", " + pluriel(nbLots, "lot")
+  const pl = (n, mot) => n + " " + mot + (n > 1 ? "s" : "");
+  // ⚠ AUCUNE SUPERFICIE : le volet bâti IDENTIFIE les locaux (bâtiment, entrée,
+  // niveau, porte), il ne les MESURE pas. Cette donnée n'existe pas dans la
+  // source, ne pas la chercher.
+  pdf.text(pl(nbBat, "bâtiment") + ", " + pl(nbLots, "lot")
     + " recensés au fichier des locaux.", M, y);
   y += 18;
 
@@ -1854,49 +1826,29 @@ function composerBasDePage(pdf, y0, p, infoCom){
     .filter((r) => r.length >= 1 && r[0] !== "");
   if(!lots.length) return y;
 
-  // ---- GRILLE DES LOTS, AVEC PAGES DE CONTINUATION -------------------
-  // Décision JFD du 31/07 : on ne tronque plus, on continue sur autant de pages
-  // qu'il faut. Le repli « faute de place » de la première version reposait sur
-  // un plafond de 40 imposé par la longueur d'URL — une limite TECHNIQUE déguisée
-  // en limite éditoriale, ce qui était un mauvais raisonnement.
-  //
-  // ⚠ CE QUE CES COLONNES SONT, ET NE SONT PAS. Bâtiment, entrée, niveau, porte
-  // sont des REPÈRES DE POSITION CADASTRALE issus du fichier des locaux. Ce ne
-  // sont PAS des numéros de lot d'état descriptif de division : le fichier MAJIC
-  // n'en porte aucun, et les colonnes « PDL » et « N° du lot » d'un M1 restent
-  // vides. Le mot « lots » est conservé à la demande de JFD pour l'intitulé, mais
-  // NE PAS tenter de rapprocher ces valeurs d'un EDD, elles ne s'y réfèrent pas.
-  const cw = [110, 90, 90, 90];
-  const bordL = (i) => M + cw.slice(0, i).reduce((a, b) => a + b, 0);
-  const hL2 = 14, pad2 = 4;
-  const enTeteLots = () => {
-    pdf.setFont("times", "bold"); pdf.setFontSize(9.5);
-    ["Bâtiment", "Entrée", "Niveau", "Porte"].forEach((t, i) => {
-      pdf.rect(bordL(i), y, cw[i], hL2);
-      pdf.text(t, bordL(i) + pad2, y + 10);
-    });
-    y += hL2;
+  // ⚠⚠ CE QUE CES COLONNES SONT ET NE SONT PAS. Bâtiment, entrée, niveau, porte
+  // sont des REPÈRES DE POSITION CADASTRALE du fichier des locaux. Ce ne sont PAS
+  // des numéros de lot d'état descriptif de division : MAJIC n'en porte aucun, et
+  // les colonnes « PDL » et « N° du lot » d'un M1 restent vides. Le mot « lots »
+  // est conservé pour l'intitulé à la demande de JFD, la confusion possible avec
+  // un EDD ayant été signalée et assumée. NE PAS rapprocher ces valeurs d'un EDD.
+  const cw = [110, 90, 90, 90], hL2 = 14;
+  const enTete = () => {
+    y = grille(pdf, M, y, cw, ["Bâtiment", "Entrée", "Niveau", "Porte"], true, hL2, null, -1);
   };
-  // L'en-tête est REPRIS sur chaque page : une grille de quatre colonnes sans
-  // intitulé, en page 4, ne se lit pas.
-  const pageSuivante = () => {
-    pdf.addPage("a4", "portrait");
-    y = M;
-    pdf.setFont("times", "bold"); pdf.setFontSize(11);
-    pdf.text("LOCAUX BÂTIS (suite)", M, y); y += 6;
-    pdf.setLineWidth(0.6); pdf.line(M, y, M + L, y); y += 16;
-    enTeteLots();
-  };
-  pdf.setLineWidth(0.5);
-  enTeteLots();
+  pdf.setLineWidth(0.5); pdf.setFontSize(9.5);
+  enTete();
   lots.forEach((r) => {
-    if(y + hL2 > ph - 48) pageSuivante();
-    pdf.setFont("times", "normal"); pdf.setFontSize(9.5);
-    for(let i = 0; i < 4; i++){
-      pdf.rect(bordL(i), y, cw[i], hL2);
-      pdf.text(String(r[i] || "—"), bordL(i) + pad2, y + 10);
+    if(y + hL2 > ph - 48){
+      pdf.addPage("a4", "portrait"); y = M;
+      pdf.setFont("times", "bold"); pdf.setFontSize(11);
+      pdf.text("LOCAUX BÂTIS (suite)", M, y); y += 6;
+      pdf.setLineWidth(0.6); pdf.line(M, y, M + L, y); y += 16;
+      pdf.setLineWidth(0.5); pdf.setFontSize(9.5);
+      enTete();   // en-tête REPRIS : une grille sans intitulé, en page 4, ne se lit pas
     }
-    y += hL2;
+    y = grille(pdf, M, y, cw,
+      [r[0] || "—", r[1] || "—", r[2] || "—", r[3] || "—"], false, hL2, null, -1);
   });
   return y;
 }
@@ -1926,80 +1878,95 @@ async function doExportDocument(){
       .map((r) => r.split(",").map((c) => c.trim()))
       .filter((r) => r.length >= 2 && (r[0] || r[1]));
     const total = (p.get("total") || "").trim();
-    // ---- page 2 : la vue aérienne, qui REMPLACE l'affichage -------------
-    if(!await chargerOrtho(p)) return;           // motif déjà affiché
-    await contourOrtho(p, rangs, total);
-    const c2 = buildExportCanvas(null);
-    // ---- assemblage -----------------------------------------------------
-    const { jsPDF } = window.jspdf;
-    const sens = (c) => (c.width >= c.height) ? "landscape" : "portrait";  // page 1 seule
-    const pdf = new jsPDF({ orientation: sens(c1), unit: "pt", format: "a4", compress: true });
-    // PAGE 1 — le plan cadastral OCCUPE LA PAGE : c'est la pièce qui délimite,
-    // elle doit se lire à la loupe si besoin.
-    const poserPleinePage = (c) => {
-      const pw = pdf.internal.pageSize.getWidth(), ph = pdf.internal.pageSize.getHeight();
-      const m = 24, r = Math.min((pw - 2 * m) / c.width, (ph - 2 * m) / c.height);
-      const w = c.width * r, h = c.height * r;
-      pdf.addImage(jpegUnderSize(c, PDF_MAX_BYTES).data, "JPEG",
-                   (pw - w) / 2, (ph - h) / 2, w, h);
-    };
-    // PAGE 2 — la vue aérienne à MI-LARGEUR, et ce n'est pas une question de goût.
-    // Le facteur de cadrage de contexte (×3) est CALIBRÉ sur une insertion en
-    // demi-page : c'est ce calcul qui avait fait écarter le ×2. Placer la même
-    // image en pleine largeur A4 la ramènerait à 84 dpi sur une petite parcelle
-    // urbaine, et condamnerait donc le cadrage retenu par la mise en page.
-    // À 90 mm, la même image rend 179 dpi. Les deux réglages sont LIÉS : changer
-    // l'un sans l'autre casse l'arbitrage.
-    // Image calée en haut, centrée horizontalement : le bas de page reste libre
-    // pour une mention manuscrite ou une légende ajoutée après coup.
-    const poserMiLargeur = (c) => {
-      const pw = pdf.internal.pageSize.getWidth();
-      const w = DOC_LARGEUR_VUE_MM * 72 / 25.4;
-      const h = c.height * w / c.width;
-      pdf.addImage(jpegUnderSize(c, PDF_MAX_BYTES).data, "JPEG",
-                   (pw - w) / 2, 42, w, h);
-      return 42 + h;                    // ordonnée du bas de l'image
-    };
-    poserPleinePage(c1);
-    // Page 2 TOUJOURS EN PORTRAIT : l'image n'occupant plus la page, son
-    // orientation propre n'a plus à commander celle du feuillet.
-    pdf.addPage("a4", "portrait");
-    // CARTE DE SITUATION, à côté de la vue aérienne. Si elle échoue — service
-    // indisponible, commune inconnue —, on retombe sur la vue aérienne seule à
-    // mi-largeur : le document sort quand même.
-    let carte = null, infoCom = null;
-    if(S.ortho){
+    // ---- pages 2 et suivantes : UNE LIGNE DE VUES PAR PARCELLE ---------
+    // Forme arrêtée par JFD le 31/07 : la désignation en haut, puis pour chaque
+    // parcelle son sous-titre souligné, son tableau réduit à elle seule, ses deux
+    // vues côte à côte, et un trait de séparation.
+    //
+    // ⚠ LES VUES SONT FABRIQUÉES EN BOUCLE PAR LA MACHINERIE EXISTANTE, et non
+    // par un dessin hors écran paramétré. Pour chaque parcelle on charge l'ortho
+    // dans le canvas global, on laisse le code DÉJÀ ÉPROUVÉ y peindre repère,
+    // tableau et cartouche, puis on capture. L'écran défile et finit sur la
+    // dernière parcelle — ce qu'on avait déjà accepté au premier jet. Le gain est
+    // de NE PAS retoucher quatre fonctions validées : c'était le seul endroit où
+    // une refonte pouvait introduire des erreurs invisibles.
+    const blocs = (p.get("poly") || "").split("|").map((b) => b.trim()).filter(Boolean);
+    const aLieudit = rangs.some((r) => (r[3] || "").trim() !== "");
+
+    // Zone déduite du premier sommet : il faut la connaître AVANT toute vue, pour
+    // ne demander le fond communal qu'UNE SEULE FOIS. L'emprise de la commune ne
+    // change pas d'une parcelle à l'autre, seule la croix se déplace.
+    const som0 = sommetsProjetes(blocs[0] || "");
+    const zz0 = som0.length ? (zoneCC(som0[0][1]) || {}).zz : null;
+    let fond = null, infoCom = null;
+    if(zz0){
       spin.classList.add("show"); spinmsg.textContent = "Carte de situation…";
-      const centres = ellipsesDe(p.get("poly") || "", "ronds").map((e) => [e.cx, e.cy]);
       infoCom = await infoCommune(p.get("commune") || "");
-      carte = await carteCommune(infoCom, S.ortho.zz, centres, c2.width / c2.height);
+      fond = await fondCommune(infoCom, zz0, 1);   // aspect 1 : carré, pour la grille
+      spin.classList.remove("show");
+      if(fond && fond.voie.indexOf("carré") === 0) alerteCarte = fond.voie;
+    }
+
+    const vues = [];
+    for(let i = 0; i < blocs.length; i++){
+      const q = new URLSearchParams(p.toString());
+      q.set("poly", blocs[i]);
+      q.set("cadre", "contexte"); q.delete("emp");
+      q.set("trace", "rond"); q.set("carre", "1");
+      const r = rangs[i] || null;
+      // Le tableau GRAVÉ dans la vue ne porte que cette parcelle, et pas de total :
+      // le total appartient à la désignation d'ensemble, pas à une vue isolée.
+      q.set("tab", r ? [r[0], r[1]].join(",") : "");
+      q.delete("total");
+      spin.classList.add("show");
+      spinmsg.textContent = "Vue " + (i + 1) + " sur " + blocs.length + "…";
+      if(!await chargerOrtho(q)) continue;         // motif déjà affiché
+      await contourOrtho(q, r ? [[r[0], r[1]]] : [], "");
+      vues.push({
+        ortho: buildExportCanvas(null),
+        carte: fond ? carteAvecRepere(fond,
+                 ellipsesDe(blocs[i], "rond").map((e) => [e.cx, e.cy])) : null,
+        ref: r ? (r[0] + " " + r[1]) : ("Parcelle " + (i + 1)),
+        rang: r
+      });
       spin.classList.remove("show");
     }
-    let basImage;
-    if(carte){
-      // DEUX DE FRONT. Chaque image passe de 90 à environ 82 mm — et la
-      // résolution réelle MONTE, une image plus étroite concentrant les mêmes
-      // pixels : l'ortho passe de 179 à 197 dpi sur une petite parcelle.
-      // MARGES RAMENÉES DE 56 À 42 pt le 31/07 : le bas de page restait vide, la
-      // place a été rendue aux images, qui passent de 82,4 à 87,4 mm.
-      const M = 42, ecart = 16;
-      const L = pdf.internal.pageSize.getWidth() - 2 * M;
-      const w = (L - ecart) / 2;
-      // HAUTEUR COMMUNE, imposée aux deux. L'emprise de la carte a été conformée
-      // au rapport de l'ortho, donc les deux rapports coïncident déjà ; on force
-      // néanmoins la même valeur pour absorber l'arrondi au pixel de la hauteur
-      // rendue par le service. La déformation résiduelle est inférieure au pixel.
-      const h = c2.height * w / c2.width;
-      pdf.addImage(jpegUnderSize(c2, PDF_MAX_BYTES).data, "JPEG", M, M, w, h);
-      pdf.addImage(jpegUnderSize(carte.canvas, PDF_MAX_BYTES).data, "JPEG",
-                   M + w + ecart, M, w, h);
-      basImage = M + h;
-    }else{
-      basImage = poserMiLargeur(c2);
+    if(!vues.length){
+      setStatus("Document interrompu : aucune vue aérienne n'a pu être produite. "
+        + "Le motif est affiché au-dessus.", "err");
+      return;
     }
-    // Le bas de page se compose SOUS les images, avec un blanc de respiration.
-    composerBasDePage(pdf, basImage + 34, p, infoCom);
-    if(carte && carte.voie.indexOf("carré") === 0) alerteCarte = carte.voie;
+
+    // ---- assemblage -----------------------------------------------------
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({
+      orientation: (c1.width >= c1.height) ? "landscape" : "portrait",
+      unit: "pt", format: "a4", compress: true });
+    // PAGE 1 — le plan cadastral OCCUPE LA PAGE : c'est la pièce qui délimite,
+    // elle doit se lire à la loupe si besoin. Budget de compression PLEIN pour
+    // elle : elle est unique, et c'est la seule qui fait foi.
+    {
+      const pw = pdf.internal.pageSize.getWidth(), ph = pdf.internal.pageSize.getHeight();
+      const m = 24, r = Math.min((pw - 2 * m) / c1.width, (ph - 2 * m) / c1.height);
+      const w = c1.width * r, h = c1.height * r;
+      pdf.addImage(jpegUnderSize(c1, PDF_MAX_BYTES).data, "JPEG",
+                   (pw - w) / 2, (ph - h) / 2, w, h);
+    }
+    // ⚠ BUDGET DE COMPRESSION RÉPARTI ENTRE LES VUES. Chaque image consommait le
+    // budget complet : six parcelles auraient fait douze images et un PDF de
+    // trente mégaoctets, impossible à envoyer. On vise huit mégaoctets pour
+    // l'ensemble des vues, avec un plancher pour ne pas rendre une image illisible.
+    const nbImg = vues.reduce((n, v) => n + 1 + (v.carte ? 1 : 0), 0);
+    const budget = Math.max(3.0e5, Math.min(PDF_MAX_BYTES, 8.0e6 / Math.max(1, nbImg)));
+
+    // Les pages de contenu sont TOUJOURS EN PORTRAIT : les vues n'occupant plus le
+    // feuillet, leur orientation propre n'a plus à commander celle de la page.
+    const M = 42;
+    pdf.addPage("a4", "portrait");
+    const L = pdf.internal.pageSize.getWidth() - 2 * M;
+    let y = composerDesignation(pdf, M, p, infoCom, rangs, total, M, L);
+    vues.forEach((v) => { y = composerBlocParcelle(pdf, y, v, M, L, budget, aLieudit); });
+    composerLocaux(pdf, y, p, M, L);
     const ref = [p.get("section") || "", p.get("parcelle") || ""].join("-");
     const blob = pdf.output("blob");
     const a = document.createElement("a");
@@ -2007,9 +1974,9 @@ async function doExportDocument(){
     a.href = URL.createObjectURL(blob); a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 4000);
     showHint("Document 2 pages : " + (blob.size / 1e6).toFixed(1) + " Mo.");
-    setStatus("DOCUMENT À DEUX PAGES généré (" + (blob.size / 1e6).toFixed(1) + " Mo) — "
-      + "page 1 le plan cadastral pleine page, page 2 la vue aérienne à "
-      + DOC_LARGEUR_VUE_MM + " mm de large. ⚠ L'écran affiche "
+    setStatus("DOCUMENT généré (" + (blob.size / 1e6).toFixed(1) + " Mo, "
+      + pdf.internal.getNumberOfPages() + " pages) — page 1 le plan cadastral pleine "
+      + "page, puis la désignation et " + vues.length + " ligne(s) de vues. ⚠ L'écran affiche "
       + "désormais la vue aérienne : la colorisation du plan N'EST PLUS MODIFIABLE, "
       + "elle n'existe que dans le PDF que vous venez d'enregistrer. Rechargez le "
       + "lien pour la reprendre depuis le début."
@@ -2304,11 +2271,13 @@ function showHint(t){hintbar.textContent=t;hintbar.classList.add("show");clearTi
    millésime servi est porté à l'écran quand le service le déclare.
    ================================================================== */
 const FACTEUR_CONTEXTE = 3;   // voir le raisonnement chiffré dans chargerOrtho
-// ⚠ LIÉ À FACTEUR_CONTEXTE : largeur de placement de la vue aérienne dans le
-// document à deux pages. C'est l'hypothèse sur laquelle le facteur ci-dessus a
-// été calibré (179 dpi à 90 mm contre 84 dpi en pleine largeur A4, sur une
-// parcelle urbaine de 30 m). Modifier l'un OBLIGE à revoir l'autre.
-const DOC_LARGEUR_VUE_MM = 90;
+// ⚠ LIÉ À FACTEUR_CONTEXTE, sans être une constante : la largeur de placement des
+// vues se déduit de la page — deux par ligne, marges de 42 pt, soit environ
+// 87 mm chacune. C'est l'hypothèse sur laquelle le facteur ci-dessus a été
+// calibré : 179 dpi à cette largeur, contre 84 dpi en pleine largeur A4, sur une
+// parcelle urbaine de 30 m. CHANGER LA MISE EN PAGE OBLIGE À REVOIR LE FACTEUR.
+// (L'ancienne constante DOC_LARGEUR_VUE_MM a été retirée le 31/07 en passant aux
+// deux vues de front : elle n'était plus lue, et du code mort ment.)
 
 /* ==================================================================
    ⚠ RÈGLE DE DIMENSIONNEMENT DE TOUT CE QUI EST GRAVÉ DANS L'IMAGE
@@ -2501,6 +2470,16 @@ async function chargerOrtho(p){
         + "cadastral est inconnue, cadrage serré sur le contour — les deux "
         + "plans NE SONT PAS superposables";
     }
+  }
+
+  // ⚠ CADRAGE CARRÉ OPTIONNEL (carre=1), pour que N vues s'alignent en grille :
+  // placées à la même largeur, deux images n'ont la même hauteur que si elles ont
+  // le même rapport. PAR ÉLARGISSEMENT SEULEMENT, jamais par recadrage — comme
+  // pour la carte de commune : élargir n'ajoute que du voisinage, rogner
+  // amputerait le repère.
+  if((p.get("carre") || "") === "1"){
+    const cote = Math.max(largeur, hauteur);
+    largeur = cote; hauteur = cote;
   }
 
   // ---- zone de projection ----------------------------------------------
