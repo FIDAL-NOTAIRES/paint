@@ -1865,7 +1865,7 @@ function colonnesCadastre(L, aLieudit){
     : [wSec, wNum, wSurf];
 }
 
-function composerDesignation(pdf, y, p, infoCom, rangs, total, M, L, vues){
+function composerDesignation(pdf, y, p, infoCom, rangs, total, M, L, entrees){
   if(!rangs.length) return y;
   // ---- EN-TÊTE DE LA PAGE 1, arrêté par JFD le 01/08 (variante B) ----------
   // Surtitre discret + date, filet canard pleine largeur ; puis le NOM DE LA
@@ -1959,14 +1959,13 @@ function composerDesignation(pdf, y, p, infoCom, rangs, total, M, L, vues){
   //   retouche du tracé (interligne, seuils) doit être répercutée dans les deux.
   const phD = pdf.internal.pageSize.getHeight();
   const basUtile = phD - 56;   // au-dessus de la zone du pied de page
-  const items = (vues || []).map((v, i) => ({
-    label: v.rang
-      ? (v.rang[0] + " " + v.rang[1] + ((v.rang[3] || "").trim() ? " — " + v.rang[3].trim() : ""))
-      : v.ref,
-    i }));
+  // Les entrées arrivent DÉJÀ INTERCALÉES (plans de section et fiches, dans
+  // l'ordre exact des pages) : une entrée = une page, la numérotation est
+  // séquentielle — pagesDes + 1 + rang de l'entrée.
+  const items = entrees || [];
   y += 26;
   let ySim = y + 15, pagesDes = 1;
-  for(let n = 0; n < items.length + 1; n++){   // +1 : la ligne du plan
+  for(let n = 0; n < items.length; n++){
     if(ySim + 13 > basUtile){ pagesDes += 1; ySim = M + 15; }
     ySim += 13;
   }
@@ -1996,8 +1995,7 @@ function composerDesignation(pdf, y, p, infoCom, rangs, total, M, L, vues){
     pdf.link(M, y - 9, L, 12, { pageNumber: page });
     y += 13;
   };
-  ligneSommaire("Plan cadastral d'ensemble", pagesDes + 1);
-  items.forEach((it) => ligneSommaire(it.label, pagesDes + 2 + it.i));
+  items.forEach((it, i) => ligneSommaire(it.label, pagesDes + 1 + i));
   pdf.setTextColor(0, 0, 0);
   return y + 12;
 }
@@ -2133,10 +2131,97 @@ function composerLocaux(pdf, y, p, M, L){
   return y;
 }
 
+// ---- PLANS PAR SECTION — outillage (mode B, décision JFD du 01/08) ---------
+// Emprises terrain des formats au 1/1000, en mètres — mêmes valeurs que
+// MAP_SIZES d'api/extrait.js (qui les tient en centièmes de mm). Sert à choisir
+// échelle et format d'un plan de SECTION depuis sa boîte englobante, comme
+// REDPAR le fait par parcelle : le lien du document étant déjà émis, PAINT ne
+// peut plus le lui demander.
+const EMPRISES_1000 = { "A4|portrait": [195.5, 211.0], "A4|paysage": [210.7, 197.0],
+                        "A3|portrait": [281.5, 301.0], "A3|paysage": [316.0, 283.0] };
+const ECHELLES_DOC = [200, 500, 650, 1000, 1250, 1500, 2000, 2500, 4000, 5000];
+function choisirEchelleDoc(w, h){
+  const marge = 1.10;
+  for(const e of ECHELLES_DOC)
+    for(const f of ["A4|portrait", "A4|paysage", "A3|portrait", "A3|paysage"]){
+      const [ew, eh] = EMPRISES_1000[f];
+      if(w * marge <= ew * e / 1000 && h * marge <= eh * e / 1000)
+        return { echelle: String(e), format: f };
+    }
+  return { echelle: "5000", format: "A3|paysage" };   // déborde : au plus large
+}
+// Produit le plan COLORIÉ d'une section par une IFRAME PAINT de même origine :
+// la page se recharge avec les seuls paramètres du groupe et déroule le
+// pipeline NORMAL — extrait SCPC (avec ses trois tentatives), géoréférencement,
+// peinture du polygone, tableau. ⚠ C'est la réponse au verrou du v6 § 6 : le
+// géoréférenceur est une fermeture insoudable du bloc de chargement — or une
+// iframe EST un chargement. On ne déplace pas les six cents lignes fragiles,
+// on les exécute là où elles vivent. Le parent attend S.capturePret (posé au
+// finally de la chaîne automatique), capture base + overlay, détruit l'iframe.
+// Rend null au bout de 120 s : la réserve est portée au statut, jamais tue.
+async function capturerPlanSection(p, g, blocs, rangs, pps){
+  const sommets = [];
+  g.idx.forEach((i) => (blocs[i] || "").split(";").forEach((c) => {
+    const [a, b] = c.split(",").map(parseFloat);
+    if(Number.isFinite(a) && Number.isFinite(b)) sommets.push([a, b]);
+  }));
+  if(!sommets.length) return null;
+  const xs = sommets.map((s) => s[0]), ys = sommets.map((s) => s[1]);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  const wM = Math.round((maxX - minX) * 10) / 10, hM = Math.round((maxY - minY) * 10) / 10;
+  const cx = ((minX + maxX) / 2).toFixed(1), cy = ((minY + maxY) / 2).toFixed(1);
+  const ef = choisirEchelleDoc(wM, hM);
+  const q = new URLSearchParams(location.search);
+  ["doc", "docauto", "dossier", "pp", "bati", "lots", "total", "fond", "cadre",
+   "trace", "carre", "axe", "diaggeo"].forEach((k) => q.delete(k));
+  const i0 = g.idx[0];
+  if(pps[i0]){
+    q.set("prefixe", pps[i0].prefixe);
+    q.set("section", pps[i0].section);
+    q.set("parcelle", pps[i0].parcelle);
+  }
+  q.set("echelle", ef.echelle); q.set("format", ef.format);
+  q.set("x", cx); q.set("y", cy); q.set("pt", cx + "," + cy);
+  q.set("dim", wM + "x" + hM);
+  q.set("poly", g.idx.map((i) => blocs[i]).join("|"));
+  q.set("tab", g.idx.map((i) => (rangs[i] ? rangs[i].join(",") : "")).filter(Boolean).join(";"));
+  q.set("auto", "1"); q.set("capture", "1"); q.set("cb", String(Date.now()));
+  const ifr = document.createElement("iframe");
+  ifr.style.cssText = "position:fixed;left:-12000px;top:0;width:1400px;height:1000px;border:0;";
+  ifr.src = location.pathname + "?" + q.toString();
+  document.body.appendChild(ifr);
+  try{
+    const debut = Date.now();
+    while(Date.now() - debut < 120000){
+      await new Promise((r) => setTimeout(r, 400));
+      let pret = false;
+      try{ pret = !!(ifr.contentWindow && ifr.contentWindow.S && ifr.contentWindow.S.capturePret); }
+      catch(e){ /* document de l'iframe pas encore prêt */ }
+      if(pret){
+        const d = ifr.contentWindow.document;
+        const b = d.getElementById("base"), o = d.getElementById("overlay");
+        if(!b || !b.width) return null;
+        const cv = document.createElement("canvas");
+        cv.width = b.width; cv.height = b.height;
+        const ctx = cv.getContext("2d");
+        ctx.drawImage(b, 0, 0);
+        if(o && o.width) ctx.drawImage(o, 0, 0);
+        return cv;
+      }
+    }
+    return null;
+  }finally{ ifr.remove(); }
+}
 async function doExportDocument(){
   const btn = document.getElementById("docbtn");
   if(btn.disabled) return;                       // garde contre le double clic
-  if(!S.pdf){
+  // En mode « plans par section » (poly présent), le plan de l'écran ne sert
+  // plus au document : les plans viennent des iframes. Le document peut donc
+  // partir MÊME si l'écran n'a rien chargé — cas des communes dont l'ensemble
+  // déborde du cadre, où REDPAR retire auto.
+  const aPoly = !!((new URLSearchParams(location.search)).get("poly") || "").trim();
+  if(!S.pdf && !aPoly){
     setStatus("Document impossible : aucun plan cadastral chargé. Ce bouton "
       + "assemble le plan colorié ET la vue aérienne ; il lui faut le premier.", "err");
     return;
@@ -2145,15 +2230,19 @@ async function doExportDocument(){
   let alerteCarte = "";
   try{
     const p = new URLSearchParams(location.search);
-    // ---- page 1 : le plan cadastral tel qu'il est à l'écran -------------
-    let anchor = null;
-    if(document.getElementById("inclegend").checked
-       && document.getElementById("legendpos").value === "auto"){
-      spin.classList.add("show"); spinmsg.textContent = "Localisation de la légende…";
-      anchor = await findCadastreAnchor();
-      spin.classList.remove("show");
+    // ---- plan de l'écran : REPLI SEULEMENT, quand aucun poly n'est transmis.
+    // En mode sections, ni ancre de légende (un passage d'OCR économisé), ni
+    // capture de l'écran : les plans viennent des iframes.
+    let anchor = null, c1 = null;
+    if(!aPoly && S.pdf){
+      if(document.getElementById("inclegend").checked
+         && document.getElementById("legendpos").value === "auto"){
+        spin.classList.add("show"); spinmsg.textContent = "Localisation de la légende…";
+        anchor = await findCadastreAnchor();
+        spin.classList.remove("show");
+      }
+      c1 = buildExportCanvas(anchor);
     }
-    const c1 = buildExportCanvas(anchor);
     const rangs = (p.get("tab") || "").split(";")
       .map((r) => r.split(",").map((c) => c.trim()))
       .filter((r) => r.length >= 2 && (r[0] || r[1]));
@@ -2221,6 +2310,7 @@ async function doExportDocument(){
       if(!await chargerOrtho(q)) continue;         // motif déjà affiché
       await contourOrtho(q, r ? [[r[0], r[1]]] : [], "");
       vues.push({
+        idx: i,
         ortho: buildExportCanvas(null),
         carte: fond ? carteAvecRepere(fond,
                  ellipsesDe(blocs[i], "rond").map((e) => [e.cx, e.cy])) : null,
@@ -2236,6 +2326,52 @@ async function doExportDocument(){
       return;
     }
 
+    // ---- GROUPES PAR SECTION et capture de leurs plans --------------------
+    // Ordre d'arrivée conservé : REDPAR trie déjà préfixe-section puis numéro,
+    // les sections sont donc consécutives et le document les intercale — plan
+    // de la section, puis ses fiches. Repli sans poly : un seul groupe, le plan
+    // de l'écran (c1), comportement d'avant.
+    const groupes = [];
+    if(aPoly){
+      const parCle = new Map();
+      blocs.forEach((b, i) => {
+        const cle = pps[i] ? (pps[i].prefixe + "/" + pps[i].section)
+                           : (rangs[i] ? "?/" + rangs[i][0] : "?/?");
+        if(!parCle.has(cle)){
+          const sec = pps[i] ? pps[i].section : (rangs[i] ? rangs[i][0] : "?");
+          const pfx = pps[i] ? pps[i].prefixe : "";
+          const g = { label: "Plan de la section " + sec
+              + (pfx && pfx !== "000" ? " (préfixe " + pfx + ")" : ""), sec, idx: [] };
+          parCle.set(cle, g); groupes.push(g);
+        }
+        parCle.get(cle).idx.push(i);
+      });
+      let fait = 0;
+      for(const g of groupes){
+        fait += 1;
+        spin.classList.add("show");
+        spinmsg.textContent = "Plan de la section " + g.sec + " (" + fait + " sur "
+          + groupes.length + ") — extrait, calage et colorisation…";
+        g.plan = await capturerPlanSection(p, g, blocs, rangs, pps);
+        spin.classList.remove("show");
+      }
+    }else{
+      groupes.push({ label: "Plan cadastral d'ensemble", idx: vues.map((v) => v.idx), plan: c1 });
+    }
+    const sectionsSansPlan = groupes.filter((g) => !g.plan).map((g) => g.label);
+
+    // ---- SOMMAIRE INTERCALÉ : plan de section puis ses fiches, dans l'ordre
+    // exact des pages. Un plan non produit N'A PAS d'entrée (pas de page) : la
+    // réserve le dit au statut, le sommaire ne pointe jamais dans le vide.
+    const entrees = [];
+    groupes.forEach((g) => {
+      if(g.plan) entrees.push({ label: g.label });
+      vues.filter((v) => g.idx.includes(v.idx)).forEach((v) => entrees.push({
+        label: v.rang
+          ? (v.rang[0] + " " + v.rang[1] + ((v.rang[3] || "").trim() ? " — " + v.rang[3].trim() : ""))
+          : v.ref }));
+    });
+
     // ---- assemblage -----------------------------------------------------
     const { jsPDF } = window.jspdf;
     const numDossier = (p.get("dossier") || "").trim();
@@ -2248,35 +2384,40 @@ async function doExportDocument(){
     const pdf = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4", compress: true });
     // ⚠ BUDGET DE COMPRESSION RÉPARTI ENTRE LES VUES. Chaque image consommait le
     // budget complet : six parcelles auraient fait douze images et un PDF de
-    // trente mégaoctets, impossible à envoyer. On vise huit mégaoctets pour
-    // l'ensemble des vues, avec un plancher pour ne pas rendre une image illisible.
+    // trente mégaoctets, impossible à envoyer. Porté de 8 à VINGT mégaoctets
+    // pour l'ensemble des vues le 01/08 (décision JFD, marge de qualité) — les
+    // messageries usuelles acceptant 20-25 Mo, on reste envoyable. Le plancher
+    // par image demeure, pour ne jamais rendre une vue illisible.
     const nbImg = vues.reduce((n, v) => n + 1 + (v.carte ? 1 : 0) + (v.extrait ? 1 : 0), 0);
-    const budget = Math.max(3.0e5, Math.min(PDF_MAX_BYTES, 8.0e6 / Math.max(1, nbImg)));
+    const budget = Math.max(3.0e5, Math.min(PDF_MAX_BYTES, 2.0e7 / Math.max(1, nbImg)));
 
     // Les pages de contenu sont TOUJOURS EN PORTRAIT : les vues n'occupant plus le
     // feuillet, leur orientation propre n'a plus à commander celle de la page.
     const M = 42;
     // La désignation occupe la PAGE 1, celle du constructeur — pas d'addPage ici.
     const L = pdf.internal.pageSize.getWidth() - 2 * M;
-    let y = composerDesignation(pdf, M, p, infoCom, rangs, total, M, L, vues);
-    // ---- PAGE 2 : le plan cadastral d'ensemble OCCUPE LA PAGE -------------
-    // Ordre corrigé par JFD le 01/08 (seconde décision, remplace « en dernière
-    // page ») : le plan SUIT IMMÉDIATEMENT la feuille qui liste les parcelles —
-    // désignation, saut de page, plan. C'est la pièce qui délimite, elle doit
-    // se lire à la loupe si besoin. Budget de compression PLEIN : elle est
-    // unique, et c'est la seule qui fait foi. Son orientation suit sa forme,
-    // indépendamment du reste du document (jsPDF le permet page par page).
-    let pagePlan = 0;
-    {
-      pdf.addPage("a4", (c1.width >= c1.height) ? "landscape" : "portrait");
-      pagePlan = pdf.internal.getNumberOfPages();
-      const pw = pdf.internal.pageSize.getWidth(), ph = pdf.internal.pageSize.getHeight();
-      const m = 24, r = Math.min((pw - 2 * m) / c1.width, (ph - 2 * m) / c1.height);
-      const w = c1.width * r, h = c1.height * r;
-      pdf.addImage(jpegUnderSize(c1, PDF_MAX_BYTES).data, "JPEG",
-                   (pw - w) / 2, (ph - h) / 2, w, h);
-    }
-    vues.forEach((v) => { y = composerBlocParcelle(pdf, y, v, M, L, budget, aLieudit); });
+    let y = composerDesignation(pdf, M, p, infoCom, rangs, total, M, L, entrees);
+    // ---- PLANS DE SECTION INTERCALÉS (troisième décision d'ordre, JFD 01/08,
+    // remplace la page 2 unique) : pour chaque groupe, le PLAN DE LA SECTION
+    // pleine page puis SES fiches, dans l'ordre section/numéro. Ce sont les
+    // pièces qui délimitent : budget de compression PLEIN pour chacune, et
+    // l'orientation de chaque plan suit sa forme (jsPDF le permet page par
+    // page). Un plan non produit (capture en échec) est simplement absent :
+    // ses fiches suivent la section précédente, la réserve le dit au statut.
+    const pagesPlans = new Set();
+    groupes.forEach((g) => {
+      if(g.plan){
+        pdf.addPage("a4", (g.plan.width >= g.plan.height) ? "landscape" : "portrait");
+        pagesPlans.add(pdf.internal.getNumberOfPages());
+        const pw = pdf.internal.pageSize.getWidth(), ph = pdf.internal.pageSize.getHeight();
+        const m = 24, r = Math.min((pw - 2 * m) / g.plan.width, (ph - 2 * m) / g.plan.height);
+        const w = g.plan.width * r, h = g.plan.height * r;
+        pdf.addImage(jpegUnderSize(g.plan, PDF_MAX_BYTES).data, "JPEG",
+                     (pw - w) / 2, (ph - h) / 2, w, h);
+      }
+      vues.filter((v) => g.idx.includes(v.idx))
+        .forEach((v) => { y = composerBlocParcelle(pdf, y, v, M, L, budget, aLieudit); });
+    });
     composerLocaux(pdf, y, p, M, L);
     // ---- PIED DE PAGE : filet fin, « FIDAL Notaires · Dossier n° … » puis les
     // sources (l'obligation de paternité DGFiP/IGN qui fonde la pièce) à gauche,
@@ -2289,7 +2430,7 @@ async function doExportDocument(){
       const gauche = "FIDAL Notaires" + (numDossier ? " · Dossier " + numDossier : "")
         + " · Sources : DGFiP — cadastre.gouv.fr · IGN — Géoplateforme";
       for(let i = 1; i <= nb; i++){
-        if(i === pagePlan) continue;
+        if(pagesPlans.has(i)) continue;   // les plans restent nus, tous
         pdf.setPage(i);
         const pw2 = pdf.internal.pageSize.getWidth(), ph2 = pdf.internal.pageSize.getHeight();
         pdf.setDrawColor("#d8dee6"); pdf.setLineWidth(0.5);
@@ -2319,8 +2460,9 @@ async function doExportDocument(){
     const doubles = sigs.filter((v, i) => sigs.indexOf(v) !== i && v !== "—");
     const sansExtrait = vues.filter((v) => !v.extrait).map((v) => v.ref);
     setStatus("DOCUMENT généré (" + (blob.size / 1e6).toFixed(1) + " Mo, "
-      + pdf.internal.getNumberOfPages() + " pages) — la désignation, le plan "
-      + "cadastral pleine page, puis " + vues.length + " page(s) de parcelle. "
+      + pdf.internal.getNumberOfPages() + " pages) — la désignation, "
+      + groupes.filter((g) => g.plan).length + " plan(s) pleine page intercalé(s) "
+      + "et " + vues.length + " page(s) de parcelle. "
       + "⚠ L'écran affiche "
       + "désormais la vue aérienne : la colorisation du plan N'EST PLUS MODIFIABLE, "
       + "elle n'existe que dans le PDF que vous venez d'enregistrer. Rechargez le "
@@ -2334,6 +2476,10 @@ async function doExportDocument(){
           ? " ⚠ " + sansExtrait.length + " parcelle(s) SANS EXTRAIT cadastral malgré "
             + "trois tentatives (" + sansExtrait.join(", ") + ") : pages incomplètes."
           : "")
+      + (sectionsSansPlan.length
+          ? " ⚠ Plan(s) de section NON PRODUIT(S) : " + sectionsSansPlan.join(" ; ")
+            + " — capture en échec, le document ne les contient pas."
+          : "")
       + " — Journal des extraits : " + journal.join(" | ")
       + (alerteCarte ? " ⚠ Carte de situation cadrée par " + alerteCarte
           + " : le cadrage peut être approximatif sur une commune allongée." : ""), "warn");
@@ -2344,7 +2490,7 @@ async function doExportDocument(){
     // Dossier complet livre le document, elle ne cache pas les alertes.
     if(S.docAutoLance){
       S.docAutoLance = false;
-      if(doubles.length || sansExtrait.length || alerteCarte){
+      if(doubles.length || sansExtrait.length || sectionsSansPlan.length || alerteCarte){
         showHint("Réserves au statut — onglet laissé ouvert pour contrôle.");
       }else{
         showHint("Document téléchargé — l'onglet se referme dans 8 secondes.");
@@ -3309,6 +3455,17 @@ async function contourOrtho(p, rangs, total){
   const auto = p.get("auto") === "1" || p.get("diaggeo") === "1";
   setGenStatus("Références reçues : " + selectedCommune2.nom + " — section " + section
     + " nº " + parcelle + (auto ? " — génération de l'extrait…" : "."), "");
+  // Dossier complet sur une commune dont l'ENSEMBLE déborde du cadre : REDPAR
+  // retire auto, l'écran ne génère rien — mais les plans PAR SECTION du
+  // document, eux, tiennent chacun dans leur cadre. Lancement direct : le
+  // document n'a plus besoin du plan de l'écran dès que poly est présent.
+  if(!auto && (p.get("doc") || "") === "1" && (p.get("docauto") || "") === "1"
+     && ((p.get("poly") || "").trim())){
+    S.docAutoLance = true;
+    showHint("Dossier complet : plans par section — génération directe du document…");
+    setTimeout(() => { doExportDocument(); }, 800);
+    return;
+  }
   if(!auto) return;
 
   (async () => {
@@ -4273,6 +4430,10 @@ async function contourOrtho(p, rangs, total){
         + ". Le plan reste prêt : cliquez dans la parcelle avec l'outil « Remplir », "
         + "déjà sélectionné. Détail technique dans la console du navigateur (F12).", "err");
     }finally{
+      // Drapeau lu par capturerPlanSection depuis la page MÈRE (iframes de même
+      // origine) : le pipeline automatique est terminé — quel que soit son
+      // chemin —, le canvas est dans son état final, capturable.
+      S.capturePret = true;
       // ---- docauto : DÉCLENCHEMENT UNIQUE, à la fin du chemin automatique.
       // Un finally attrape TOUS les return de la chaîne — succès, repli, refus,
       // erreur — c'est ce que veut l'exception du Dossier complet (voir le
