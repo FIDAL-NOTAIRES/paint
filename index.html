@@ -958,8 +958,25 @@ async function loadPDFData(buf){
     // ⚠ Le destroy() reste nécessaire pour un autre motif : pdf.js partage son
     // cache de polices entre documents, et la boucle par parcelle en charge cinq.
     if(S.pdf){ try{ await S.pdf.destroy(); }catch(e){} S.pdf = null; }
+    // ⚠⚠ disableFontFace — LE CORRECTIF DU CHARABIA, posé le 01/08 APRÈS MESURE.
+    // Établi par élimination instrumentée : PDF prouvé sain (octets exacts reçus
+    // par PAINT, bouton « PDF reçu », empreinte 3adab25d), rendus JUSTES par le
+    // même pdf.js 3.11.174 au banc Node ; charabia dans Chrome (profil ET fenêtre
+    // Invité), lisible dans Firefox → le défaut est dans le CHROME du poste,
+    // vraisemblablement sa mise à jour de fin juillet 2026.
+    // MÉCANISME : pour une police non embarquée, pdf.js RÉ-ENCODE le texte puis
+    // installe dans la page une police traduite (FontFace) portant la table
+    // inverse. Quand Chrome rate cette installation, le canvas retombe sur une
+    // police système qui lit les codes ré-encodés LITTÉRALEMENT : « Ü7°¿®³ ».
+    // disableFontFace:true supprime toute la mécanique FontFace : les glyphes
+    // sont DESSINÉS EN TRACÉS depuis les fichiers de standardFontDataUrl —
+    // exactement le mode du banc Node, qui rend juste. Chrome n'a plus voix.
+    // COÛT : rendu un peu plus lourd ; sans objet ici, le canvas est déjà tout.
+    // ⚠ standardFontDataUrl devient INDISPENSABLE à ce mode : sans lui, plus
+    // aucun repli local — ne retirer NI l'un NI l'autre.
     S.pdf = await pdfjsLib.getDocument({
       data: buf,
+      disableFontFace: true,
       standardFontDataUrl: "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/standard_fonts/"
     }).promise;
     S.pageCount = S.pdf.numPages; S.page=1;
