@@ -928,16 +928,26 @@ async function loadPDFData(buf){
     // par session. Révélé le 01/08 par la boucle par parcelle, qui en charge cinq.
     // C'est le second défaut de la même racine que S.recentrage : faire boucler
     // une chaîne conçue pour un seul passage expose ce qu'elle mémorisait.
-    // ⚠⚠ NE PAS RÉINTRODUIRE standardFontDataUrl SANS AVOIR VÉRIFIÉ L'URL.
-    // Ajouté le 01/08 « en ceinture et bretelles » vers
-    // cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/standard_fonts/, il a
-    // AGGRAVÉ le défaut au lieu de le corriger : le cartouche de la PAGE 1, qui
-    // était lisible, est passé en charabia à son tour. Le chemin n'existe
-    // vraisemblablement pas chez cdnjs, et pdf.js se rabat plus mal en échouant à
-    // charger les polices qu'en n'essayant pas. Retiré le jour même.
-    // Leçon : une précaution non vérifiée n'est pas une précaution.
+    // ⚠⚠ standardFontDataUrl EST INDISPENSABLE, ET SON CHEMIN A ÉTÉ VÉRIFIÉ.
+    // Le service du cadastre a cessé, entre le 31/07 et le 01/08, d'embarquer les
+    // polices de son cartouche : sans ces fichiers, pdf.js rend le TEXTE en
+    // charabia (« Ü7°¿®³ »²¬æ » pour « Département ») tandis que le PLAN reste
+    // juste, étant du tracé vectoriel. Diagnostic établi en constatant que le
+    // défaut touchait un extrait ISOLÉ, hors de toute boucle, sur des communes
+    // qui sortaient lisibles la veille — donc ni le code ni l'enchaînement.
+    // ⚠ LE CHEMIN COMPTE. Une première tentative vers cdnjs a ÉCHOUÉ : cdnjs
+    // distribue pdf.js sans le dossier standard_fonts. Vérifié depuis le registre
+    // npm : le paquet pdfjs-dist@3.11.174 contient bien standard_fonts/ avec ses
+    // seize fichiers Foxit et Liberation, servis par jsdelivr et unpkg.
+    // NE PAS changer d'hébergeur sans refaire cette vérification : une précaution
+    // non vérifiée n'est pas une précaution, elle aggrave.
+    // ⚠ Le destroy() reste nécessaire pour un autre motif : pdf.js partage son
+    // cache de polices entre documents, et la boucle par parcelle en charge cinq.
     if(S.pdf){ try{ await S.pdf.destroy(); }catch(e){} S.pdf = null; }
-    S.pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+    S.pdf = await pdfjsLib.getDocument({
+      data: buf,
+      standardFontDataUrl: "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/standard_fonts/"
+    }).promise;
     S.pageCount = S.pdf.numPages; S.page=1;
     S.notes=[]; anno.innerHTML=""; S.legendLabels={}; S.couleursAnnot=null;
     await renderPage();
