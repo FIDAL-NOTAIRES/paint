@@ -928,13 +928,16 @@ async function loadPDFData(buf){
     // par session. Révélé le 01/08 par la boucle par parcelle, qui en charge cinq.
     // C'est le second défaut de la même racine que S.recentrage : faire boucler
     // une chaîne conçue pour un seul passage expose ce qu'elle mémorisait.
-    // standardFontDataUrl en ceinture et bretelles : les polices standard non
-    // embarquées ont besoin de ces fichiers pour être rendues correctement.
+    // ⚠⚠ NE PAS RÉINTRODUIRE standardFontDataUrl SANS AVOIR VÉRIFIÉ L'URL.
+    // Ajouté le 01/08 « en ceinture et bretelles » vers
+    // cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/standard_fonts/, il a
+    // AGGRAVÉ le défaut au lieu de le corriger : le cartouche de la PAGE 1, qui
+    // était lisible, est passé en charabia à son tour. Le chemin n'existe
+    // vraisemblablement pas chez cdnjs, et pdf.js se rabat plus mal en échouant à
+    // charger les polices qu'en n'essayant pas. Retiré le jour même.
+    // Leçon : une précaution non vérifiée n'est pas une précaution.
     if(S.pdf){ try{ await S.pdf.destroy(); }catch(e){} S.pdf = null; }
-    S.pdf = await pdfjsLib.getDocument({
-      data: buf,
-      standardFontDataUrl: "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/standard_fonts/"
-    }).promise;
+    S.pdf = await pdfjsLib.getDocument({ data: buf }).promise;
     S.pageCount = S.pdf.numPages; S.page=1;
     S.notes=[]; anno.innerHTML=""; S.legendLabels={}; S.couleursAnnot=null;
     await renderPage();
