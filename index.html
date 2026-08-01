@@ -1845,7 +1845,7 @@ async function extraitBrutDe(pp){
    à l'œil : mêmes largeurs, même graisse, même retrait. */
 function grille(pdf, x, y, cols, cells, gras, hauteur, lignes, iMulti){
   const gx = (i) => x + cols.slice(0, i).reduce((a, b) => a + b, 0);
-  pdf.setFont("times", gras ? "bold" : "normal");
+  pdf.setFont(S.fonteDoc || "helvetica", gras ? "bold" : "normal");
   cells.forEach((txt, i) => {
     pdf.rect(gx(i), y, cols[i], hauteur);
     if(!(lignes && i === iMulti)) pdf.text(String(txt || ""), gx(i) + 4, y + 10);
@@ -1879,24 +1879,24 @@ function composerDesignation(pdf, y, p, infoCom, rangs, total, M, L, entrees){
     ? infoCom.departement.nom.toUpperCase() : "";
   const cpsT = (infoCom && Array.isArray(infoCom.codesPostaux)) ? infoCom.codesPostaux : [];
   const cpT = (cpsT.length === 1) ? cpsT[0] : "";
-  pdf.setFont("helvetica", "normal"); pdf.setFontSize(8); pdf.setTextColor(GRISDOC);
+  pdf.setFont(S.fonteDoc || "helvetica", "normal"); pdf.setFontSize(8); pdf.setTextColor(GRISDOC);
   pdf.text("PLAN CADASTRAL & VUES AÉRIENNES", M, y + 10, { charSpace: 1.6 });
   pdf.text("Édité le " + new Date().toLocaleDateString("fr-FR",
     { day: "numeric", month: "long", year: "numeric" }), M + L, y + 10, { align: "right" });
   pdf.setDrawColor(CANARD); pdf.setLineWidth(0.9); pdf.line(M, y + 18, M + L, y + 18);
   y += 62;
-  pdf.setFont("times", "bold"); pdf.setFontSize(26); pdf.setTextColor(NUIT);
+  pdf.setFont(S.fonteDoc || "helvetica", "bold"); pdf.setFontSize(26); pdf.setTextColor(NUIT);
   pdf.text(nomVille, M, y);
   let xT = M + pdf.getTextWidth(nomVille) + 14;
-  pdf.setFont("times", "normal"); pdf.setFontSize(13); pdf.setTextColor(CANARD);
+  pdf.setFont(S.fonteDoc || "helvetica", "normal"); pdf.setFontSize(13); pdf.setTextColor(CANARD);
   if(deptNom){ pdf.text(deptNom, xT, y); xT += pdf.getTextWidth(deptNom) + 8; }
-  if(cpT){ pdf.setFont("helvetica", "normal"); pdf.setFontSize(10.5);
+  if(cpT){ pdf.setFont(S.fonteDoc || "helvetica", "normal"); pdf.setFontSize(10.5);
     pdf.setTextColor(GRISDOC); pdf.text("· " + cpT, xT, y); }
   pdf.setDrawColor(CANARD); pdf.setLineWidth(1.2); pdf.line(M, y + 10, M + L, y + 10);
   y += 36;
   pdf.setTextColor(0, 0, 0);
 
-  pdf.setFont("times", "normal"); pdf.setFontSize(10.5);
+  pdf.setFont(S.fonteDoc || "helvetica", "normal"); pdf.setFontSize(10.5);
   // ATTAQUE, forme arrêtée par JFD sur pièce :
   //   « Un actif immobilier situé à COMMUNE (DÉPARTEMENT) (CODE POSTAL) ADRESSE. »
   // au singulier, « Un ensemble de biens immobiliers situés à … » au pluriel.
@@ -1930,6 +1930,22 @@ function composerDesignation(pdf, y, p, infoCom, rangs, total, M, L, entrees){
   const aLieudit = rangs.some((r) => (r[3] || "").trim() !== "");
   const cols = colonnesCadastre(L, aLieudit);
   pdf.setLineWidth(0.5); pdf.setFontSize(9.5);
+  // ⚠ PAGINATION DU TABLEAU — constaté le 01/08 sur Watten (150 parcelles et
+  // plus) : les rangs débordaient du feuillet, le pied de page les barrait.
+  // Saut de page avant tout rang qui ne tient pas, EN-TÊTE REPRIS en haut de
+  // chaque page, et le compte des pages (pagesLocales) ALIMENTE LA NUMÉROTATION
+  // DU SOMMAIRE : l'oublier décalerait tous les numéros d'autant.
+  const basTableau = pdf.internal.pageSize.getHeight() - 56;
+  let pagesLocales = 1;
+  const sautTableau = (h) => {
+    if(y + h > basTableau){
+      pdf.addPage("a4", "portrait"); pagesLocales += 1; y = M;
+      pdf.setLineWidth(0.5); pdf.setFontSize(9.5);
+      y = grille(pdf, M, y, cols,
+        aLieudit ? ["Section", "N°", "Lieudit", "Surface"] : ["Section", "N°", "Surface"],
+        true, 14, null, 2);
+    }
+  };
   y = grille(pdf, M, y, cols,
     aLieudit ? ["Section", "N°", "Lieudit", "Surface"] : ["Section", "N°", "Surface"],
     true, 14, null, 2);
@@ -1939,15 +1955,18 @@ function composerDesignation(pdf, y, p, infoCom, rangs, total, M, L, entrees){
       lignes = pdf.splitTextToSize((r[3] || "").trim(), cols[2] - 8);
       h = Math.max(14, lignes.length * 12 + 4);
     }
+    sautTableau(h);
     y = grille(pdf, M, y, cols,
       aLieudit ? [r[0], r[1], "", r[2]] : [r[0], r[1], r[2]], false, h, lignes, 2);
   });
   // Total UNIQUEMENT à partir de deux parcelles, et pris du paramètre « total »
   // plutôt que recalculé : c'est REDPAR qui somme, en mètres carrés, pas PAINT
   // à partir de chaînes déjà mises en forme.
-  if(rangs.length > 1 && total)
+  if(rangs.length > 1 && total){
+    sautTableau(14);
     y = grille(pdf, M, y, cols,
       aLieudit ? ["", "", "Total", total] : ["", "Total", total], true, 14, null, -1);
+  }
   // ---- SOMMAIRE — remplace « Composition du document » (décision JFD 01/08) :
   // une ligne par PARCELLE avec le NUMÉRO DE PAGE de sa fiche, précédée du plan
   // d'ensemble. Points durs, à ne pas défaire :
@@ -1963,16 +1982,20 @@ function composerDesignation(pdf, y, p, infoCom, rangs, total, M, L, entrees){
   // l'ordre exact des pages) : une entrée = une page, la numérotation est
   // séquentielle — pagesDes + 1 + rang de l'entrée.
   const items = entrees || [];
+  // Le titre SOMMAIRE ne s'orpheline pas en bas de page : s'il ne tient pas
+  // avec au moins une ligne, il passe à la page suivante — et pagesLocales
+  // suit, la simulation partant du même état que le tracé.
+  if(y + 26 + 15 > basUtile){ pdf.addPage("a4", "portrait"); pagesLocales += 1; y = M; }
   y += 26;
-  let ySim = y + 15, pagesDes = 1;
+  let ySim = y + 15, pagesDes = pagesLocales;
   for(let n = 0; n < items.length; n++){
     if(ySim + 13 > basUtile){ pagesDes += 1; ySim = M + 15; }
     ySim += 13;
   }
-  pdf.setFont("helvetica", "bold"); pdf.setFontSize(9); pdf.setTextColor("#33838B");
+  pdf.setFont(S.fonteDoc || "helvetica", "bold"); pdf.setFontSize(9); pdf.setTextColor("#33838B");
   pdf.text("SOMMAIRE", M, y, { charSpace: 1.2 });
   y += 15;
-  pdf.setFont("helvetica", "normal"); pdf.setFontSize(9.5);
+  pdf.setFont(S.fonteDoc || "helvetica", "normal"); pdf.setFontSize(9.5);
   const ligneSommaire = (label, page) => {
     if(y + 13 > basUtile){ pdf.addPage("a4", "portrait"); y = M + 15; }
     pdf.setTextColor("#0F2238");
@@ -2017,7 +2040,7 @@ function composerBlocParcelle(pdf, y, vue, M, L, budget, aLieudit){
   // trait de séparation a donc disparu — la page fait la séparation.
   pdf.addPage("a4", "portrait"); y = M;
 
-  pdf.setFont("times", "bold"); pdf.setFontSize(11);
+  pdf.setFont(S.fonteDoc || "helvetica", "bold"); pdf.setFontSize(11);
   pdf.text(vue.ref, M, y);
   const lw = pdf.getTextWidth(vue.ref);
   pdf.setLineWidth(0.7); pdf.line(M, y + 2.5, M + lw, y + 2.5);
@@ -2057,8 +2080,12 @@ function composerBlocParcelle(pdf, y, vue, M, L, budget, aLieudit){
     y += ih;
   }else{
     // On le DIT plutôt que de laisser un blanc : un vide se lit comme un oubli.
-    pdf.setFont("times", "italic"); pdf.setFontSize(9);
+    // ⚠ Selawik n'a PAS d'italique (la famille n'en comporte pas) : mention en
+    // normal GRIS — la couleur distingue, sans risquer un style absent.
+    pdf.setFont(S.fonteDoc || "helvetica", "normal"); pdf.setFontSize(9);
+    pdf.setTextColor("#657D96");
     pdf.text("Extrait du plan cadastral non disponible pour cette parcelle.", M, y + 12);
+    pdf.setTextColor(0, 0, 0);
     y += 20;
   }
   return y;
@@ -2070,11 +2097,11 @@ function composerLocaux(pdf, y, p, M, L){
   if(!mB) return y;
   const nbBat = parseInt(mB[1], 10), nbLots = parseInt(mB[2], 10);
   if(y + 60 > ph - 48){ pdf.addPage("a4", "portrait"); y = M; }
-  pdf.setFont("times", "bold"); pdf.setFontSize(11);
+  pdf.setFont(S.fonteDoc || "helvetica", "bold"); pdf.setFontSize(11);
   pdf.text("LOCAUX BÂTIS", M, y); y += 6;
   pdf.setLineWidth(0.6); pdf.line(M, y, M + L, y); y += 16;
 
-  pdf.setFont("times", "normal"); pdf.setFontSize(10.5);
+  pdf.setFont(S.fonteDoc || "helvetica", "normal"); pdf.setFontSize(10.5);
   const pl = (n, mot) => n + " " + mot + (n > 1 ? "s" : "");
   // ⚠ AUCUNE SUPERFICIE : le volet bâti IDENTIFIE les locaux (bâtiment, entrée,
   // niveau, porte), il ne les MESURE pas. Cette donnée n'existe pas dans la
@@ -2119,7 +2146,7 @@ function composerLocaux(pdf, y, p, M, L){
   lots.forEach((r) => {
     if(y + hL2 > ph - 48){
       pdf.addPage("a4", "portrait"); y = M;
-      pdf.setFont("times", "bold"); pdf.setFontSize(11);
+      pdf.setFont(S.fonteDoc || "helvetica", "bold"); pdf.setFontSize(11);
       pdf.text("LOCAUX BÂTIS (suite)", M, y); y += 6;
       pdf.setLineWidth(0.6); pdf.line(M, y, M + L, y); y += 16;
       pdf.setLineWidth(0.5); pdf.setFontSize(9.5);
@@ -2131,6 +2158,43 @@ function composerLocaux(pdf, y, p, M, L){
   return y;
 }
 
+// ---- POLICE DU DOCUMENT : SELAWIK, LE SEGOE UI LIBRE (JFD, 01/08) ----------
+// Segoe UI est propriétaire : l'embarquer violerait sa licence. Selawik est le
+// substitut PUBLIÉ PAR MICROSOFT sous licence SIL OFL, métriques compatibles.
+// Éprouvé au banc sur jsPDF 2.5.1 : embarqué en CID TrueType Identity-H, les
+// accents français passent en pleine fidélité. ~115 ko chargés du CDN UNE FOIS
+// par session (cache S.selawikB64) ; en échec, REPLI HELVETICA, dit à l'écran,
+// jamais silencieux. Les TITRES restent en Times — le tenant-lieu de Georgia.
+S.fonteDoc = "helvetica";
+async function chargerPolicesDoc(pdf){
+  try{
+    if(!S.selawikB64){
+      const b64 = async (url) => {
+        const r = await fetch(url);
+        if(!r.ok) throw new Error("HTTP " + r.status);
+        const buf = new Uint8Array(await r.arrayBuffer());
+        let s = "";
+        for(let i = 0; i < buf.length; i += 8192)
+          s += String.fromCharCode.apply(null, buf.subarray(i, i + 8192));
+        return btoa(s);
+      };
+      const [reg, gras] = await Promise.all([
+        b64("https://cdn.jsdelivr.net/gh/fontfen/selawik/Selawik-Regular.ttf"),
+        b64("https://cdn.jsdelivr.net/gh/fontfen/selawik/Selawik-Bold.ttf"),
+      ]);
+      S.selawikB64 = { reg, gras };
+    }
+    pdf.addFileToVFS("Selawik-Regular.ttf", S.selawikB64.reg);
+    pdf.addFont("Selawik-Regular.ttf", "Selawik", "normal");
+    pdf.addFileToVFS("Selawik-Bold.ttf", S.selawikB64.gras);
+    pdf.addFont("Selawik-Bold.ttf", "Selawik", "bold");
+    S.fonteDoc = "Selawik";
+  }catch(e){
+    S.fonteDoc = "helvetica";
+    console.warn("Selawik indisponible :", e);
+    showHint("Police Selawik indisponible (CDN) — le document sort en Helvetica.");
+  }
+}
 // ---- PLANS PAR SECTION — outillage (mode B, décision JFD du 01/08) ---------
 // Emprises terrain des formats au 1/1000, en mètres — mêmes valeurs que
 // MAP_SIZES d'api/extrait.js (qui les tient en centièmes de mm). Sert à choisir
@@ -2382,6 +2446,7 @@ async function doExportDocument(){
     // donc en PORTRAIT ; le plan, seul à pouvoir être en paysage, porte sa
     // propre orientation sur SA page (jsPDF le permet page par page).
     const pdf = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4", compress: true });
+    await chargerPolicesDoc(pdf);
     // ⚠ BUDGET DE COMPRESSION RÉPARTI ENTRE LES VUES. Chaque image consommait le
     // budget complet : six parcelles auraient fait douze images et un PDF de
     // trente mégaoctets, impossible à envoyer. Porté de 8 à VINGT mégaoctets
@@ -2435,7 +2500,7 @@ async function doExportDocument(){
         const pw2 = pdf.internal.pageSize.getWidth(), ph2 = pdf.internal.pageSize.getHeight();
         pdf.setDrawColor("#d8dee6"); pdf.setLineWidth(0.5);
         pdf.line(M, ph2 - 40, pw2 - M, ph2 - 40);
-        pdf.setFont("helvetica", "normal"); pdf.setFontSize(7.5); pdf.setTextColor("#657D96");
+        pdf.setFont(S.fonteDoc || "helvetica", "normal"); pdf.setFontSize(7.5); pdf.setTextColor("#657D96");
         pdf.text(gauche, M, ph2 - 29);
         pdf.text(i + " / " + nb, pw2 - M, ph2 - 29, { align: "right" });
       }
