@@ -3240,6 +3240,19 @@ async function contourOrtho(p, rangs, total){
         // chargé, puisque c'est lui qui fait la page 1.
         if((p.get("doc") || "") === "1")
           document.getElementById("docbtn").style.display = "inline-flex";
+        // docauto=1 — Dossier complet de REDPAR. ⚠ EXCEPTION ASSUMÉE, décision
+        // JFD du 01/08 : le livrable part TOUT SEUL, quelle que soit l'issue de
+        // la colorisation — succès, avertissement, repli ou refus. Le principe
+        // du 31/07 (« le contrôle humain est une pièce du dispositif ») reste
+        // la règle pour TOUT LE RESTE : liens unitaires, panier du plan à la
+        // carte — seul le Dossier complet, production en série, y déroge. Les
+        // statuts et le détecteur d'extraits identiques continuent de DIRE
+        // leurs réserves dans l'onglet et au statut final du document : ils ne
+        // RETIENNENT plus l'export, ils ne se taisent pas pour autant.
+        // Le déclenchement est dans le finally de cette chaîne : il part à la
+        // FIN du chemin automatique, quel que soit le return emprunté.
+        // Sans doc=1, docauto est ignoré.
+        S.docAuto = ((p.get("doc") || "") === "1") && ((p.get("docauto") || "") === "1");
       }
 
       // ================== COLORISATION AUTOMATIQUE ==========================
@@ -4170,6 +4183,17 @@ async function contourOrtho(p, rangs, total){
       setStatus("Colorisation automatique interrompue : " + ((err && err.message) || err)
         + ". Le plan reste prêt : cliquez dans la parcelle avec l'outil « Remplir », "
         + "déjà sélectionné. Détail technique dans la console du navigateur (F12).", "err");
+    }finally{
+      // ---- docauto : DÉCLENCHEMENT UNIQUE, à la fin du chemin automatique.
+      // Un finally attrape TOUS les return de la chaîne — succès, repli, refus,
+      // erreur — c'est ce que veut l'exception du Dossier complet (voir le
+      // commentaire de S.docAuto). Garde S.pdf : sans plan chargé il n'y a pas
+      // de page 1, doExportDocument le dirait mais autant ne pas le lancer.
+      if(S.docAuto && S.pdf){
+        S.docAuto = false;   // un seul déclenchement par chargement
+        showHint("Dossier complet : le document se génère automatiquement…");
+        setTimeout(() => { doExportDocument(); }, 600);
+      }
     }
   })();
 })();
