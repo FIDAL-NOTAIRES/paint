@@ -248,6 +248,7 @@
     <button class="hbtn" id="genbtn" title="Générer un extrait depuis des références" style="display:none">🗺 Références</button>
     <button class="hbtn" id="pngbtn" disabled>⬇ PNG</button>
     <button class="hbtn primary" id="pdfbtn" disabled>⬇ PDF</button>
+    <button class="hbtn" id="brutbtn" title="Diagnostic : enregistre le PDF exactement tel que PAINT l'a reçu du service, octet pour octet — la pièce qui manquait à chaque rendu fautif" style="display:none">💾 PDF reçu</button>
     <button class="hbtn primary" id="docbtn" title="Un seul PDF : le plan cadastral colorié puis la vue aérienne" style="display:none">⬇ Document 2 pages</button>
   </div>
 </header>
@@ -895,6 +896,19 @@ async function generateExtrait(mode){
     }
     const buf=await r.arrayBuffer();
     if(buf.byteLength<1000) throw new Error("réponse vide");
+    // ⚠⚠ DIAGNOSTIC — CONSERVER LES OCTETS REÇUS, ET LES CONSERVER *ICI*,
+    // AVANT loadPDFData : pdf.js transfère le tampon à son worker et le
+    // NEUTRALISE (byteLength 0) — après l'appel il n'y a plus rien à saisir.
+    // Motif, 01/08 après-midi : charabia REPRODUCTIBLE à l'écran (Saint-Omer
+    // AV 1, Watten 0A 188) pendant que le téléchargement direct de la même URL
+    // livrait un PDF sain, rendu juste par le même pdf.js 3.11.174 au banc
+    // d'essai. On n'a donc JAMAIS tenu les octets exacts d'un rendu fautif :
+    // Adobe, Firefox et le banc regardaient tous une AUTRE copie que celle du
+    // symptôme. Le bouton « PDF reçu » livre CELLE-LÀ, octet pour octet.
+    // En boucle multi-parcelles, c'est le DERNIER extrait reçu qui est conservé.
+    S.brutRecu = buf.slice(0);
+    S.brutInfo = { qs: qs, quand: new Date().toISOString() };
+    montrerBoutonBrut();
     setGenStatus("","");
     await loadPDFData(buf);
   }catch(err){
@@ -2185,6 +2199,32 @@ async function doExportDocument(){
 document.getElementById("docbtn").onclick = doExportDocument;
 document.getElementById("pngbtn").onclick=()=>doExport("png");
 document.getElementById("pdfbtn").onclick=()=>doExport("pdf");
+// ---- DIAGNOSTIC « PDF reçu » : la pièce du rendu fautif, à l'écran ----
+// Leçon du mémo (§ 8 b) : le diagnostic S'AFFICHE, il ne se logge pas.
+// L'empreinte (8 premiers hexas du SHA-256) est écrite SUR le bouton : deux
+// générations qui montrent la même empreinte ont reçu les mêmes octets, et une
+// empreinte différente du fichier téléchargé à part prouve une copie différente.
+async function montrerBoutonBrut(){
+  const b = document.getElementById("brutbtn");
+  if(!b || !S.brutRecu) return;
+  b.style.display = "inline-flex";
+  b.textContent = "💾 PDF reçu · " + Math.round(S.brutRecu.byteLength/1024) + " Ko";
+  try{
+    const h = await crypto.subtle.digest("SHA-256", S.brutRecu);
+    const hex = [...new Uint8Array(h)].slice(0,4).map(x=>x.toString(16).padStart(2,"0")).join("");
+    b.textContent = "💾 PDF reçu · " + hex + " · " + Math.round(S.brutRecu.byteLength/1024) + " Ko";
+  }catch(e){} // crypto.subtle absent hors https : le bouton reste utile sans empreinte
+}
+document.getElementById("brutbtn").onclick = () => {
+  if(!S.brutRecu) return;
+  const blob = new Blob([S.brutRecu], {type:"application/pdf"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  const quand = (S.brutInfo && S.brutInfo.quand ? S.brutInfo.quand : new Date().toISOString()).replace(/[:.]/g,"-");
+  a.download = "recu-par-paint_" + quand + ".pdf";
+  document.body.appendChild(a); a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+};
 
 /* ---------- Recherche de parcelles par numéro (OCR multi-angles) ---------- */
 let ocrWorker=null;
