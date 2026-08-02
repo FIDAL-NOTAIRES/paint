@@ -322,6 +322,26 @@
   60%{transform:translate(68vw,50vh) rotate(2deg)}
   78%{transform:translate(90vw,58vh) rotate(10deg)}
   88%,100%{transform:translate(112vw,44vh) rotate(6deg)}}
+/* Pluie de documents (JFD, 01/08 soir) : sur TOUTE la largeur, des feuilles
+   tombent du haut avec la trajectoire d'un papier lâché — produit de DEUX
+   mouvements : chute verticale linéaire (porteur .vchute) × balancement
+   pendulaire avec bascule (feuille .vfeuillet). Paramètres tirés au sort en JS
+   (variables CSS), DÉLAIS NÉGATIFS pour un ciel déjà plein à l'ouverture.
+   Transform uniquement : compositeur GPU, coût nul sur la production. */
+#vchutes{position:absolute;inset:0;z-index:0;overflow:hidden;pointer-events:none}
+.vchute{position:absolute;top:-90px;will-change:transform;
+  animation:vtombe var(--dur,14s) linear var(--del,0s) infinite}
+@keyframes vtombe{to{transform:translateY(118vh)}}
+.vfeuillet{position:relative;width:var(--tail,36px);height:calc(var(--tail,36px)*1.3);
+  background:#fff;border-radius:2px;opacity:.5;box-shadow:0 2px 6px rgba(0,0,0,.3);
+  animation:vbalance var(--bal,2.2s) ease-in-out infinite alternate}
+@keyframes vbalance{from{transform:translateX(calc(var(--amp,30px)*-1)) rotate(-16deg)}
+  to{transform:translateX(var(--amp,30px)) rotate(16deg)}}
+.vfeuillet::before{content:"";position:absolute;left:15%;right:15%;top:20%;height:50%;
+  background:repeating-linear-gradient(0deg,#c7d2de 0 2px,transparent 2px 8px)}
+.vfeuillet::after{content:"";position:absolute;top:0;right:0;
+  border:6px solid #0F2238;border-left-color:transparent;border-bottom-color:transparent;
+  border-radius:0 2px 0 0}
 /* Bouton musique : fantôme, discret */
 #vmusique{margin-top:6px;background:transparent;color:#8fa5bb;border:1px solid #33838B;
   border-radius:99px;padding:5px 14px;font-size:12.5px;cursor:pointer}
@@ -329,12 +349,13 @@
 /* Accessibilité : qui demande moins de mouvement l'obtient */
 @media (prefers-reduced-motion:reduce){
   #voile::before,.vparc,.vcercle,.vcroix::before,.vcroix::after,
-  .vtampon,.vencre,.f3,.vfantome,.vavion{animation:none}
+  .vtampon,.vencre,.f3,.vfantome,.vavion,.vchute,.vfeuillet{animation:none}
 }
 </style>
 </head>
 <body>
 <div id="voile">
+  <div id="vchutes" aria-hidden="true"></div>
   <!-- Quatre coins animés (JFD, 01/08 au soir) : la parcelle qui se dessine
        puis se peint en carmin ; la croix d'amorce sous son cercle de visée ;
        le tampon qui tamponne ; les pages qui s'empilent. CSS pur, zéro coût
@@ -2347,6 +2368,34 @@ const QUIPS_VOILE = [
 // L'AUDIO EN EST EXEMPTÉ : la musique protège la cadence du traitement en
 // arrière-plan. Les animations, elles, vivent sur le compositeur (transform/
 // opacity) et se mettent seules en pause hors écran : coût nul sur les plans.
+// ---- RADIO CLASSIQUE D'ABORD, MUSIQUE MAISON EN REPLI (JFD, 01/08 soir) ----
+// Le flux est celui que la station diffuse publiquement (Infomaniak). ⚠ Adresse
+// NON CONTRACTUELLE : elle peut changer ou tomber sans préavis — d'où le REPLI
+// AUTOMATIQUE sur la musique générée, et l'état DIT sur le bouton. L'usage est
+// celui d'un poste de radio au bureau : écoute personnelle dans l'outil
+// interne. Un flux audible exempte l'onglet de l'étranglement d'arrière-plan
+// exactement comme la synthèse (voir la note de performance ci-dessous).
+const FLUX_RADIO_CLASSIQUE = "https://radioclassique.ice.infomaniak.ch/radioclassique-high.mp3";
+let vRadio = null;
+function radioDemarrer(){
+  return new Promise((res) => {
+    try{
+      if(!vRadio){
+        vRadio = new Audio(FLUX_RADIO_CLASSIQUE);
+        vRadio.volume = 0.35;
+      }
+      let tranche = false;
+      const echec = () => { if(!tranche){ tranche = true; res(false); } };
+      vRadio.addEventListener("error", echec, { once: true });
+      // Un flux en direct peut mettre 2-3 s à démarrer : on tranche sur play().
+      vRadio.play().then(() => { if(!tranche){ tranche = true; res(true); } }).catch(echec);
+      setTimeout(echec, 6000);   // flux muet au-delà de 6 s = échec, repli
+    }catch(e){ res(false); }
+  });
+}
+function radioArreter(){
+  if(vRadio){ try{ vRadio.pause(); vRadio.src = ""; }catch(e){} vRadio = null; }
+}
 let vAudio = null;
 function musiqueDemarrer(){
   try{
@@ -2393,16 +2442,51 @@ function musiqueBrancher(){
   const b = document.getElementById("vmusique");
   if(!b || b.dataset.pret) return;
   b.dataset.pret = "1";
-  const maj = (on) => { b.classList.toggle("on", on); b.textContent = on ? "♪ musique — en cours" : "♪ musique"; };
+  const maj = (etat) => {   // etat : "radio" | "maison" | false
+    b.classList.toggle("on", !!etat);
+    b.textContent = etat === "radio" ? "♪ Radio Classique — en direct"
+      : etat === "maison" ? "♪ musique maison (flux radio indisponible)"
+      : "♪ Radio Classique";
+  };
+  const demarrerTout = () => radioDemarrer().then((ok) => {
+    if(ok) return "radio";
+    return musiqueDemarrer().then((ok2) => (ok2 ? "maison" : false));
+  });
+  const arreterTout = () => { radioArreter(); musiqueArreter(); };
   b.addEventListener("click", () => {
-    if(vAudio && vAudio.ctx.state === "running"){
-      musiqueArreter(); maj(false); localStorage.setItem("paint_voile_musique", "0");
+    const enCours = (vRadio && !vRadio.paused) || (vAudio && vAudio.ctx.state === "running");
+    if(enCours){
+      arreterTout(); maj(false); localStorage.setItem("paint_voile_musique", "0");
     }else{
-      musiqueDemarrer().then((ok) => { maj(ok); if(ok) localStorage.setItem("paint_voile_musique", "1"); });
+      demarrerTout().then((etat) => { maj(etat); if(etat) localStorage.setItem("paint_voile_musique", "1"); });
     }
   });
   if(localStorage.getItem("paint_voile_musique") === "1")
-    musiqueDemarrer().then(maj);   // retenté sans geste : accepté ou refusé, c'est dit par l'état du bouton
+    demarrerTout().then(maj);   // retenté sans geste : accepté ou refusé, l'état du bouton le dit
+  else
+    maj(false);
+}
+// Pluie de documents : 14 feuilles semées sur toute la largeur, paramètres
+// tirés au sort. Délai NÉGATIF = la feuille est déjà en l'air à l'ouverture.
+function chutesLancer(){
+  if(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const c = document.getElementById("vchutes");
+  if(!c || c.childElementCount) return;
+  for(let i = 0; i < 14; i++){
+    const d = document.createElement("div"); d.className = "vchute";
+    const f = document.createElement("div"); f.className = "vfeuillet";
+    d.style.left = (2 + Math.random() * 96).toFixed(1) + "vw";
+    d.style.setProperty("--dur", (10 + Math.random() * 9).toFixed(1) + "s");
+    d.style.setProperty("--del", (-Math.random() * 18).toFixed(1) + "s");
+    f.style.setProperty("--tail", Math.round(24 + Math.random() * 26) + "px");
+    f.style.setProperty("--amp", Math.round(18 + Math.random() * 46) + "px");
+    f.style.setProperty("--bal", (1.6 + Math.random() * 1.6).toFixed(2) + "s");
+    d.appendChild(f); c.appendChild(d);
+  }
+}
+function chutesArreter(){
+  const c = document.getElementById("vchutes");
+  if(c) c.innerHTML = "";
 }
 let voileTimers = null;
 function montrerVoile(titre, sousTitre){
@@ -2429,6 +2513,7 @@ function montrerVoile(titre, sousTitre){
   };
   voileTimers = { quip: setInterval(tourneQuip, 7000), suit: setInterval(suit, 400) };
   musiqueBrancher();
+  chutesLancer();
 }
 function voileFinal(message){
   const v = document.getElementById("voile");
@@ -2442,7 +2527,8 @@ function masquerVoile(){
   const v = document.getElementById("voile");
   if(v) v.classList.remove("on", "fin");
   if(voileTimers){ clearInterval(voileTimers.quip); clearInterval(voileTimers.suit); voileTimers = null; }
-  musiqueArreter();   // le voile parti, le silence revient — l'écran normal reste sobre
+  radioArreter(); musiqueArreter();   // le voile parti, le silence revient
+  chutesArreter();
 }
 // ---- POLICE DU DOCUMENT : SELAWIK, LE SEGOE UI LIBRE (JFD, 01/08) ----------
 // Segoe UI est propriétaire : l'embarquer violerait sa licence. Selawik est le
