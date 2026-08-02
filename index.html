@@ -282,7 +282,16 @@
 #vchutes{position:absolute;inset:0;z-index:0;overflow:hidden;pointer-events:none}
 .vchute{position:absolute;top:-110px;will-change:transform;perspective:600px;
   animation:vtombe var(--dur,14s) linear var(--del,0s) infinite}
-@keyframes vtombe{to{transform:translateY(120vh)}}
+/* Vent de côté : la chute dérive latéralement (--vent, même sens pour toutes
+   les feuilles d'une session, force tirée au sort par feuille). */
+@keyframes vtombe{to{transform:translate(var(--vent,90px),120vh)}}
+/* Virevolte à DEUX PÉRIODES : le tangage court (.vtangue) se superpose au
+   balancement long (.vfeuillet) — deux périodes incommensurables, la
+   trajectoire ne se répète jamais, c'est ça l'aléatoire d'une vraie feuille. */
+.vtangue{animation:vtangue var(--bal2,1.1s) ease-in-out infinite alternate}
+@keyframes vtangue{
+  from{transform:translateX(calc(var(--amp2,10px)*-1)) rotateZ(-5deg)}
+  to{transform:translateX(var(--amp2,10px)) rotateZ(5deg)}}
 /* Feuille réaliste : grain de lumière en diagonale, VOLTIGE 3D (rotateY sous
    perspective — le papier montre sa tranche en tombant), coin corné ombré,
    et un CONTENU composé au hasard en JS : titre, paragraphes inégaux, parfois
@@ -293,8 +302,10 @@
   padding:14% 12% 10%;box-sizing:border-box;overflow:hidden;
   animation:vbalance var(--bal,2.2s) ease-in-out infinite alternate}
 @keyframes vbalance{
-  from{transform:translateX(calc(var(--amp,30px)*-1)) rotateZ(-14deg) rotateY(-38deg)}
-  to{transform:translateX(var(--amp,30px)) rotateZ(14deg) rotateY(38deg)}}
+  from{transform:translateX(calc(var(--amp,30px)*-1))
+    rotateZ(calc(var(--gite,0deg) - 14deg)) rotateY(calc(var(--tourn,38deg)*-1))}
+  to{transform:translateX(var(--amp,30px))
+    rotateZ(calc(var(--gite,0deg) + 14deg)) rotateY(var(--tourn,38deg))}}
 .vfeuillet::before{content:"";position:absolute;top:0;right:0;width:0;height:0;
   border:7px solid #d3dbe4;border-right-color:transparent;border-top-color:transparent;
   filter:drop-shadow(-1px 1px 1px rgba(0,0,0,.18))}
@@ -315,7 +326,7 @@
 #vmusique.on{color:#0F2238;background:#6DD5DC;border-color:#6DD5DC}
 /* Accessibilité : qui demande moins de mouvement l'obtient */
 @media (prefers-reduced-motion:reduce){
-  .vcercle,.vcroix::before,.vcroix::after,.vchute,.vfeuillet{animation:none}
+  .vcercle,.vcroix::before,.vcroix::after,.vchute,.vtangue,.vfeuillet{animation:none}
 }
 </style>
 </head>
@@ -327,7 +338,7 @@
        Compteur « dossiers classés sans suite ». Tout autre décor a été retiré
        à la demande — ne pas réintroduire coins, fantômes ni avion. -->
   <div id="viseur" aria-hidden="true"><div class="vcercle"></div><div class="vcroix"></div></div>
-  <div id="vscore" aria-hidden="true">Dossiers classés sans suite : <b>0</b></div>
+  <div id="vscore" aria-hidden="true">Impressions évitées : <b>0</b></div>
   <div class="vlogo">FIDAL NOTAIRES</div>
   <div class="vtitre" id="vtitre">Production en cours</div>
   <div class="vvol" id="vvol"></div>
@@ -2421,17 +2432,27 @@ function musiqueBrancher(){
 }
 // Pluie de documents : 14 feuilles semées sur toute la largeur, paramètres
 // tirés au sort. Délai NÉGATIF = la feuille est déjà en l'air à l'ouverture.
+// Le VENT de la session : un sens tiré au sort à l'ouverture, commun à toutes
+// les feuilles (un vent souffle d'un côté) ; la force varie par feuille.
+let vVent = 0;
 function semerFeuille(c, enChute){
+  if(!vVent) vVent = Math.random() < 0.5 ? -1 : 1;
   const d = document.createElement("div"); d.className = "vchute";
+  const g = document.createElement("div"); g.className = "vtangue";
   const f = document.createElement("div"); f.className = "vfeuillet";
   d.style.left = (2 + Math.random() * 96).toFixed(1) + "vw";
   d.style.setProperty("--dur", (10 + Math.random() * 9).toFixed(1) + "s");
   // enChute : délai NÉGATIF, la feuille est déjà en l'air (ciel plein à
   // l'ouverture). Sinon (réapparition après un tir) : elle repart du haut.
   d.style.setProperty("--del", enChute ? (-Math.random() * 18).toFixed(1) + "s" : "0s");
+  d.style.setProperty("--vent", Math.round(vVent * (40 + Math.random() * 170)) + "px");
+  g.style.setProperty("--bal2", (0.8 + Math.random() * 0.9).toFixed(2) + "s");
+  g.style.setProperty("--amp2", Math.round(6 + Math.random() * 14) + "px");
   f.style.setProperty("--tail", Math.round(30 + Math.random() * 30) + "px");
   f.style.setProperty("--amp", Math.round(18 + Math.random() * 46) + "px");
   f.style.setProperty("--bal", (1.8 + Math.random() * 1.8).toFixed(2) + "s");
+  f.style.setProperty("--gite", Math.round(vVent * (3 + Math.random() * 6)) + "deg");
+  f.style.setProperty("--tourn", Math.round(22 + Math.random() * 34) + "deg");
   // Contenu composé au hasard : ligne de titre, 3 à 5 paragraphes de largeurs
   // inégales (la dernière plus courte, comme une fin d'alinéa), et une chance
   // sur deux de porter un sceau carmin, une sur deux un paraphe.
@@ -2448,7 +2469,7 @@ function semerFeuille(c, enChute){
   }
   if(Math.random() < 0.5){ const s = document.createElement("div"); s.className = "vsceau"; f.appendChild(s); }
   if(Math.random() < 0.5){ const s = document.createElement("div"); s.className = "vsign"; f.appendChild(s); }
-  d.appendChild(f); c.appendChild(d);
+  g.appendChild(f); d.appendChild(g); c.appendChild(d);
 }
 function chutesLancer(){
   if(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches) return;
@@ -2490,7 +2511,8 @@ function tirer(x, y){
   if(!c) return;
   const feuilles = c.querySelectorAll(".vchute");
   for(const d of feuilles){
-    const f = d.firstChild;
+    const f = d.querySelector(".vfeuillet");   // la feuille est sous le tangage
+    if(!f) continue;
     const r = f.getBoundingClientRect();
     if(x >= r.left - 6 && x <= r.right + 6 && y >= r.top - 6 && y <= r.bottom + 6){
       exploserFeuille(c, d, x, y);
