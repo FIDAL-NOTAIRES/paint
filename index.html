@@ -295,10 +295,41 @@
   .vcoin{width:64px;height:64px}
   .vc-tr,.vc-bl{display:none}
 }
+/* Le contenu central passe DEVANT les promeneurs */
+#voile>.vlogo,#voile>.vtitre,#voile>.vvol,#voile>.vbarre,#voile>.vphase,
+#voile>.vquip,#voile>.vnote,#voile>#vmusique{position:relative;z-index:2}
+.vcoin{z-index:1}
+/* Parcelles fantômes en dérive lente, derrière tout */
+.vfantome{position:absolute;z-index:0;opacity:.07;pointer-events:none}
+.vfantome polygon{fill:none;stroke-width:2}
+.vf1{width:34vmin;top:8%;left:-6%;animation:vderive1 110s ease-in-out infinite alternate}
+.vf1 polygon{stroke:#6DD5DC}
+.vf2{width:26vmin;bottom:6%;right:-4%;animation:vderive2 90s ease-in-out infinite alternate}
+.vf2 polygon{stroke:#FFE764}
+.vf3{width:42vmin;top:40%;left:60%;animation:vderive3 130s ease-in-out infinite alternate}
+.vf3 polygon{stroke:#33838B}
+@keyframes vderive1{to{transform:translate(24vw,10vh) rotate(9deg)}}
+@keyframes vderive2{to{transform:translate(-20vw,-12vh) rotate(-7deg)}}
+@keyframes vderive3{to{transform:translate(-26vw,8vh) rotate(6deg)}}
+/* L'avion en papier traverse l'écran en ondulant, puis revient plus tard */
+.vavion{position:absolute;z-index:1;width:38px;top:0;left:0;opacity:.9;
+  filter:drop-shadow(0 3px 5px rgba(0,0,0,.35));
+  animation:vvole 19s linear infinite}
+@keyframes vvole{
+  0%{transform:translate(-8vw,72vh) rotate(10deg)}
+  20%{transform:translate(18vw,58vh) rotate(4deg)}
+  40%{transform:translate(44vw,66vh) rotate(12deg)}
+  60%{transform:translate(68vw,50vh) rotate(2deg)}
+  78%{transform:translate(90vw,58vh) rotate(10deg)}
+  88%,100%{transform:translate(112vw,44vh) rotate(6deg)}}
+/* Bouton musique : fantôme, discret */
+#vmusique{margin-top:6px;background:transparent;color:#8fa5bb;border:1px solid #33838B;
+  border-radius:99px;padding:5px 14px;font-size:12.5px;cursor:pointer}
+#vmusique.on{color:#0F2238;background:#6DD5DC;border-color:#6DD5DC}
 /* Accessibilité : qui demande moins de mouvement l'obtient */
 @media (prefers-reduced-motion:reduce){
   #voile::before,.vparc,.vcercle,.vcroix::before,.vcroix::after,
-  .vtampon,.vencre,.f3{animation:none}
+  .vtampon,.vencre,.f3,.vfantome,.vavion{animation:none}
 }
 </style>
 </head>
@@ -314,6 +345,15 @@
   <div class="vcoin vc-tr" aria-hidden="true"><div class="vcercle"></div><div class="vcroix"></div></div>
   <div class="vcoin vc-bl" aria-hidden="true"><div class="vtampon">✓</div><div class="vencre"></div></div>
   <div class="vcoin vc-br" aria-hidden="true"><div class="vfeuille f1"></div><div class="vfeuille f2"></div><div class="vfeuille f3"></div></div>
+  <!-- Promeneurs : un avion en papier qui traverse, des parcelles fantômes qui
+       dérivent DERRIÈRE le contenu (z-index). CSS pur, compositeur GPU. -->
+  <svg class="vfantome vf1" viewBox="0 0 100 100" aria-hidden="true"><polygon points="10,35 55,12 90,40 78,88 25,80"/></svg>
+  <svg class="vfantome vf2" viewBox="0 0 100 100" aria-hidden="true"><polygon points="20,20 80,15 88,60 50,90 12,65"/></svg>
+  <svg class="vfantome vf3" viewBox="0 0 100 100" aria-hidden="true"><polygon points="15,50 50,10 85,45 65,85 28,82"/></svg>
+  <svg class="vavion" viewBox="0 0 40 40" aria-hidden="true">
+    <path d="M2 22 L38 4 L22 38 L17 25 Z" fill="#ffffff"/>
+    <path d="M17 25 L38 4 L13 19 Z" fill="#c7d2de"/>
+  </svg>
   <div class="vlogo">FIDAL NOTAIRES · PAINT</div>
   <div class="vtitre" id="vtitre">Production en cours</div>
   <div class="vvol" id="vvol"></div>
@@ -321,6 +361,7 @@
   <div class="vphase" id="vphase">Préparation…</div>
   <div class="vquip" id="vquip"></div>
   <div class="vnote">Ne fermez pas cet onglet — il travaille seul et se refermera tout seul.</div>
+  <button id="vmusique" type="button" title="Petite musique générée, volume de bibliothèque — et l'onglet en arrière-plan garde sa pleine vitesse">♪ musique</button>
 </div>
 
 <header>
@@ -2294,6 +2335,75 @@ const QUIPS_VOILE = [
   "Chaque plan sort nu, pleine page : c'est la pièce qui fait foi.",
   "Le sommaire se calcule avant d'exister — les pages tiennent parole.",
 ];
+// ---- MUSIQUE GÉNÉRÉE (Web Audio) — aucune œuvre protégée, tout est
+// synthétisé : nappe grave + arpèges pentatoniques doux, volume de
+// bibliothèque. ⚠ L'autoplay sans geste est interdit par Chrome dans un onglet
+// ouvert par script : d'où le bouton ♪ ; la préférence est retenue
+// (localStorage) et RETENTÉE au volume suivant — si le navigateur refuse
+// encore, le bouton reste éteint, un clic suffit.
+// ⚠⚠ BONUS DE PERFORMANCE, mesurable : Chrome ÉTRANGLE les minuteries des
+// onglets en arrière-plan (jusqu'à 1/minute après 5 min) — ce qui ralentirait
+// le sondage des iframes et les pauses de reprise SCPC. Un onglet QUI JOUE DE
+// L'AUDIO EN EST EXEMPTÉ : la musique protège la cadence du traitement en
+// arrière-plan. Les animations, elles, vivent sur le compositeur (transform/
+// opacity) et se mettent seules en pause hors écran : coût nul sur les plans.
+let vAudio = null;
+function musiqueDemarrer(){
+  try{
+    if(!vAudio){
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const maitre = ctx.createGain(); maitre.gain.value = 0.055; maitre.connect(ctx.destination);
+      const nappe = ctx.createOscillator(); nappe.type = "sine"; nappe.frequency.value = 110;
+      const gNappe = ctx.createGain(); gNappe.gain.value = 0.22;
+      nappe.connect(gNappe); gNappe.connect(maitre); nappe.start();
+      vAudio = { ctx, maitre, prochaine: 0, minuterie: null };
+      // Planification avec AVANCE (30 s de notes posées d'avance, resservies
+      // toutes les 10 s) : même si la minuterie est étranglée en arrière-plan,
+      // l'horloge AUDIO, elle, ne s'arrête jamais — la musique reste fluide.
+      const GAMME = [220, 261.6, 293.7, 329.6, 392, 440, 523.3];
+      const poserNotes = () => {
+        const t0 = Math.max(vAudio.prochaine, vAudio.ctx.currentTime + 0.1);
+        let t = t0;
+        while(t < vAudio.ctx.currentTime + 30){
+          const f = GAMME[Math.floor(Math.random() * GAMME.length)];
+          const o = vAudio.ctx.createOscillator(); o.type = "triangle"; o.frequency.value = f;
+          const g = vAudio.ctx.createGain();
+          g.gain.setValueAtTime(0, t);
+          g.gain.linearRampToValueAtTime(0.5, t + 0.06);
+          g.gain.exponentialRampToValueAtTime(0.001, t + 1.9);
+          o.connect(g); g.connect(vAudio.maitre);
+          o.start(t); o.stop(t + 2);
+          t += 1.4 + Math.random() * 1.2;
+        }
+        vAudio.prochaine = t;
+      };
+      poserNotes();
+      vAudio.minuterie = setInterval(poserNotes, 10000);
+    }
+    return vAudio.ctx.resume().then(() => vAudio.ctx.state === "running");
+  }catch(e){ console.warn("musique :", e); return Promise.resolve(false); }
+}
+function musiqueArreter(){
+  if(!vAudio) return;
+  clearInterval(vAudio.minuterie);
+  try{ vAudio.ctx.close(); }catch(e){}
+  vAudio = null;
+}
+function musiqueBrancher(){
+  const b = document.getElementById("vmusique");
+  if(!b || b.dataset.pret) return;
+  b.dataset.pret = "1";
+  const maj = (on) => { b.classList.toggle("on", on); b.textContent = on ? "♪ musique — en cours" : "♪ musique"; };
+  b.addEventListener("click", () => {
+    if(vAudio && vAudio.ctx.state === "running"){
+      musiqueArreter(); maj(false); localStorage.setItem("paint_voile_musique", "0");
+    }else{
+      musiqueDemarrer().then((ok) => { maj(ok); if(ok) localStorage.setItem("paint_voile_musique", "1"); });
+    }
+  });
+  if(localStorage.getItem("paint_voile_musique") === "1")
+    musiqueDemarrer().then(maj);   // retenté sans geste : accepté ou refusé, c'est dit par l'état du bouton
+}
 let voileTimers = null;
 function montrerVoile(titre, sousTitre){
   const v = document.getElementById("voile");
@@ -2318,6 +2428,7 @@ function montrerVoile(titre, sousTitre){
     }
   };
   voileTimers = { quip: setInterval(tourneQuip, 7000), suit: setInterval(suit, 400) };
+  musiqueBrancher();
 }
 function voileFinal(message){
   const v = document.getElementById("voile");
@@ -2331,6 +2442,7 @@ function masquerVoile(){
   const v = document.getElementById("voile");
   if(v) v.classList.remove("on", "fin");
   if(voileTimers){ clearInterval(voileTimers.quip); clearInterval(voileTimers.suit); voileTimers = null; }
+  musiqueArreter();   // le voile parti, le silence revient — l'écran normal reste sobre
 }
 // ---- POLICE DU DOCUMENT : SELAWIK, LE SEGOE UI LIBRE (JFD, 01/08) ----------
 // Segoe UI est propriétaire : l'embarquer violerait sa licence. Selawik est le
