@@ -280,19 +280,35 @@
    (variables CSS), DÉLAIS NÉGATIFS pour un ciel déjà plein à l'ouverture.
    Transform uniquement : compositeur GPU, coût nul sur la production. */
 #vchutes{position:absolute;inset:0;z-index:0;overflow:hidden;pointer-events:none}
-.vchute{position:absolute;top:-90px;will-change:transform;
+.vchute{position:absolute;top:-110px;will-change:transform;perspective:600px;
   animation:vtombe var(--dur,14s) linear var(--del,0s) infinite}
-@keyframes vtombe{to{transform:translateY(118vh)}}
-.vfeuillet{position:relative;width:var(--tail,36px);height:calc(var(--tail,36px)*1.3);
-  background:#fff;border-radius:2px;opacity:.5;box-shadow:0 2px 6px rgba(0,0,0,.3);
+@keyframes vtombe{to{transform:translateY(120vh)}}
+/* Feuille réaliste : grain de lumière en diagonale, VOLTIGE 3D (rotateY sous
+   perspective — le papier montre sa tranche en tombant), coin corné ombré,
+   et un CONTENU composé au hasard en JS : titre, paragraphes inégaux, parfois
+   sceau carmin ou paraphe. Aucune feuille n'est la copie d'une autre. */
+.vfeuillet{position:relative;width:var(--tail,40px);height:calc(var(--tail,40px)*1.35);
+  background:linear-gradient(135deg,#ffffff 0%,#f4f7fa 55%,#e7edf3 100%);
+  border-radius:2px;opacity:.62;box-shadow:0 3px 8px rgba(0,0,0,.35);
+  padding:14% 12% 10%;box-sizing:border-box;overflow:hidden;
   animation:vbalance var(--bal,2.2s) ease-in-out infinite alternate}
-@keyframes vbalance{from{transform:translateX(calc(var(--amp,30px)*-1)) rotate(-16deg)}
-  to{transform:translateX(var(--amp,30px)) rotate(16deg)}}
-.vfeuillet::before{content:"";position:absolute;left:15%;right:15%;top:20%;height:50%;
-  background:repeating-linear-gradient(0deg,#c7d2de 0 2px,transparent 2px 8px)}
+@keyframes vbalance{
+  from{transform:translateX(calc(var(--amp,30px)*-1)) rotateZ(-14deg) rotateY(-38deg)}
+  to{transform:translateX(var(--amp,30px)) rotateZ(14deg) rotateY(38deg)}}
+.vfeuillet::before{content:"";position:absolute;top:0;right:0;width:0;height:0;
+  border:7px solid #d3dbe4;border-right-color:transparent;border-top-color:transparent;
+  filter:drop-shadow(-1px 1px 1px rgba(0,0,0,.18))}
 .vfeuillet::after{content:"";position:absolute;top:0;right:0;
-  border:6px solid #0F2238;border-left-color:transparent;border-bottom-color:transparent;
-  border-radius:0 2px 0 0}
+  border:7px solid #0F2238;border-left-color:transparent;border-bottom-color:transparent}
+.vlgn{height:2px;background:#c3cfdb;border-radius:2px;margin:0 0 14% 0}
+.vlgn.t{height:4px;background:#8fa3b8;margin-bottom:16%}
+.vsceau{position:absolute;bottom:7%;right:9%;width:24%;aspect-ratio:1;
+  border:2px solid rgba(160,16,64,.5);border-radius:50%;transform:rotate(-14deg)}
+.vsceau::before{content:"";position:absolute;inset:22%;
+  border:1px solid rgba(160,16,64,.35);border-radius:50%}
+.vsign{position:absolute;bottom:9%;left:12%;width:36%;height:16%;
+  border-bottom:2px solid #5b6f83;border-radius:0 0 70% 40%/0 0 100% 55%;
+  transform:rotate(-7deg);opacity:.75}
 /* Bouton musique : fantôme, discret */
 #vmusique{margin-top:6px;background:transparent;color:#8fa5bb;border:1px solid #33838B;
   border-radius:99px;padding:5px 14px;font-size:12.5px;cursor:pointer}
@@ -312,7 +328,7 @@
        à la demande — ne pas réintroduire coins, fantômes ni avion. -->
   <div id="viseur" aria-hidden="true"><div class="vcercle"></div><div class="vcroix"></div></div>
   <div id="vscore" aria-hidden="true">Dossiers classés sans suite : <b>0</b></div>
-  <div class="vlogo">FIDAL NOTAIRES · PAINT</div>
+  <div class="vlogo">FIDAL NOTAIRES</div>
   <div class="vtitre" id="vtitre">Production en cours</div>
   <div class="vvol" id="vvol"></div>
   <div class="vbarre"><div id="vbarrefill"></div></div>
@@ -2413,9 +2429,25 @@ function semerFeuille(c, enChute){
   // enChute : délai NÉGATIF, la feuille est déjà en l'air (ciel plein à
   // l'ouverture). Sinon (réapparition après un tir) : elle repart du haut.
   d.style.setProperty("--del", enChute ? (-Math.random() * 18).toFixed(1) + "s" : "0s");
-  f.style.setProperty("--tail", Math.round(24 + Math.random() * 26) + "px");
+  f.style.setProperty("--tail", Math.round(30 + Math.random() * 30) + "px");
   f.style.setProperty("--amp", Math.round(18 + Math.random() * 46) + "px");
-  f.style.setProperty("--bal", (1.6 + Math.random() * 1.6).toFixed(2) + "s");
+  f.style.setProperty("--bal", (1.8 + Math.random() * 1.8).toFixed(2) + "s");
+  // Contenu composé au hasard : ligne de titre, 3 à 5 paragraphes de largeurs
+  // inégales (la dernière plus courte, comme une fin d'alinéa), et une chance
+  // sur deux de porter un sceau carmin, une sur deux un paraphe.
+  const titre = document.createElement("div");
+  titre.className = "vlgn t";
+  titre.style.width = Math.round(45 + Math.random() * 30) + "%";
+  f.appendChild(titre);
+  const nl = 3 + Math.floor(Math.random() * 3);
+  for(let j = 0; j < nl; j++){
+    const l = document.createElement("div");
+    l.className = "vlgn";
+    l.style.width = Math.round(j === nl - 1 ? 35 + Math.random() * 30 : 62 + Math.random() * 34) + "%";
+    f.appendChild(l);
+  }
+  if(Math.random() < 0.5){ const s = document.createElement("div"); s.className = "vsceau"; f.appendChild(s); }
+  if(Math.random() < 0.5){ const s = document.createElement("div"); s.className = "vsign"; f.appendChild(s); }
   d.appendChild(f); c.appendChild(d);
 }
 function chutesLancer(){
