@@ -258,6 +258,36 @@
 .vcroix::before{left:50%;top:26%;bottom:26%;width:3px;margin-left:-1.5px}
 .vcroix::after{top:50%;left:26%;right:26%;height:3px;margin-top:-1.5px}
 @keyframes vpulse{0%,100%{opacity:.55}50%{opacity:1}}
+/* ---- LES CANARDS (JFD, 01/08 soir) — le défi de tir : traversée RAPIDE de
+   toute la largeur, altitude et sens tirés au sort, battement d'ailes, léger
+   tangage. Couleur canard, cela va de soi. Abattu : bascule et chute (la
+   position est figée en px au moment de l'impact, la traversée s'arrête, la
+   gravité prend le relais). Un canard vaut TROIS impressions évitées — c'est
+   la prime au tir difficile, ne cherchez pas d'autre logique. */
+.vcanard{position:absolute;z-index:1;pointer-events:none;left:0;top:var(--alt,30%);
+  animation:vvolcan var(--vit,4s) linear forwards;will-change:transform}
+@keyframes vvolcan{from{transform:translateX(-14vw)}to{transform:translateX(114vw)}}
+.vcanard.rg{animation-name:vvolcang}
+@keyframes vvolcang{from{transform:translateX(114vw)}to{transform:translateX(-14vw)}}
+.vbob{animation:vbob .5s ease-in-out infinite alternate}
+@keyframes vbob{from{transform:translateY(-6px)}to{transform:translateY(6px)}}
+.voiseau{position:relative;width:58px;height:36px}
+.rg .voiseau{transform:scaleX(-1)}
+.vcorps{position:absolute;left:0;top:11px;width:40px;height:20px;background:#33838B;
+  border-radius:52% 46% 42% 52%}
+.vqueue{position:absolute;left:-7px;top:13px;border-top:5px solid transparent;
+  border-bottom:5px solid transparent;border-right:10px solid #2a6d74}
+.vtete{position:absolute;right:4px;top:1px;width:16px;height:16px;background:#2a6d74;border-radius:50%}
+.voeil{position:absolute;right:8px;top:6px;width:3px;height:3px;background:#0F2238;border-radius:50%}
+.vbec{position:absolute;right:-7px;top:6px;border-top:4px solid transparent;
+  border-bottom:4px solid transparent;border-left:10px solid #FF982D}
+.vaile{position:absolute;left:11px;top:9px;width:19px;height:13px;background:#2a6d74;
+  border-radius:60% 60% 20% 60%;transform-origin:82% 18%;
+  animation:vbat .26s ease-in-out infinite alternate}
+@keyframes vbat{from{transform:rotate(-30deg)}to{transform:rotate(24deg)}}
+.vcanard.touche{animation:vchoit 1s ease-in forwards}
+.vcanard.touche .vbob,.vcanard.touche .vaile{animation:none}
+@keyframes vchoit{to{transform:translateY(110vh) rotate(160deg)}}
 /* ---- EXPLOSION : éclats de papier projetés depuis l'impact, bref éclair */
 .vfrag{position:absolute;z-index:1;pointer-events:none;border-radius:1px;
   animation:veclate .7s ease-out forwards}
@@ -299,34 +329,81 @@
 .vfeuillet{position:relative;width:var(--tail,40px);height:calc(var(--tail,40px)*1.35);
   background:linear-gradient(135deg,#ffffff 0%,#f4f7fa 55%,#e7edf3 100%);
   border-radius:2px;opacity:.62;box-shadow:0 3px 8px rgba(0,0,0,.35);
-  padding:14% 12% 10%;box-sizing:border-box;overflow:hidden;
+  box-sizing:border-box;overflow:hidden;
   animation:vbalance var(--bal,2.2s) ease-in-out infinite alternate}
 @keyframes vbalance{
   from{transform:translateX(calc(var(--amp,30px)*-1))
     rotateZ(calc(var(--gite,0deg) - 14deg)) rotateY(calc(var(--tourn,38deg)*-1))}
   to{transform:translateX(var(--amp,30px))
     rotateZ(calc(var(--gite,0deg) + 14deg)) rotateY(var(--tourn,38deg))}}
-.vfeuillet::before{content:"";position:absolute;top:0;right:0;width:0;height:0;
+/* ---- CINQ ESPÈCES de feuilles (choix JFD sur planches) : acte scellé,
+   mini-plan cadastral, chemise kraft, vue aérienne, carte de situation.
+   Chaque feuille tire son espèce au sort à la naissance (semerFeuille). ---- */
+/* Espèce ACTE : coin corné, titre, alinéas, sceau carmin, paraphe */
+.esp-acte{padding:14% 12% 10%}
+.esp-acte::before{content:"";position:absolute;top:0;right:0;width:0;height:0;
   border:7px solid #d3dbe4;border-right-color:transparent;border-top-color:transparent;
   filter:drop-shadow(-1px 1px 1px rgba(0,0,0,.18))}
-.vfeuillet::after{content:"";position:absolute;top:0;right:0;
+.esp-acte::after{content:"";position:absolute;top:0;right:0;
   border:7px solid #0F2238;border-left-color:transparent;border-bottom-color:transparent}
 .vlgn{height:2px;background:#c3cfdb;border-radius:2px;margin:0 0 14% 0}
 .vlgn.t{height:4px;background:#8fa3b8;margin-bottom:16%}
 .vsceau{position:absolute;bottom:7%;right:9%;width:24%;aspect-ratio:1;
-  border:2px solid rgba(160,16,64,.5);border-radius:50%;transform:rotate(-14deg)}
+  border:2px solid rgba(160,16,64,.55);border-radius:50%;transform:rotate(-14deg)}
 .vsceau::before{content:"";position:absolute;inset:22%;
-  border:1px solid rgba(160,16,64,.35);border-radius:50%}
+  border:1px solid rgba(160,16,64,.4);border-radius:50%}
 .vsign{position:absolute;bottom:9%;left:12%;width:36%;height:16%;
   border-bottom:2px solid #5b6f83;border-radius:0 0 70% 40%/0 0 100% 55%;
   transform:rotate(-7deg);opacity:.75}
+/* Espèce MINI-PLAN : cadre, parcelles jaunes/blanche, LA parcelle en carmin,
+   trait bleu du canal, croix d'amorce */
+.esp-plan{background:#fff;border:2px solid #b9c4cf}
+.vpar{position:absolute;border:1px solid rgba(120,110,60,.6)}
+.vpar.j{background:#FFE764}
+.vpar.b{background:#fff;border-color:#aeb9c4}
+.vpar.c{background:#d1729a;border-color:#A01040}
+.vcanal{position:absolute;left:-6%;right:-6%;height:8%;background:#4682B4;
+  transform:rotate(-7deg)}
+.vamorce{position:absolute;width:14%;aspect-ratio:1}
+.vamorce::before,.vamorce::after{content:"";position:absolute;background:#5b6f83}
+.vamorce::before{left:0;right:0;top:46%;height:8%}
+.vamorce::after{top:0;bottom:0;left:46%;width:8%}
+/* Espèce KRAFT : chemise, onglet, étiquette */
+.esp-kraft{background:linear-gradient(150deg,#dcc6a2,#c9b28a);border:1px solid #ab946f}
+.vonglet{position:absolute;top:0;left:6%;width:38%;height:9%;
+  background:#d3bc96;border:1px solid #ab946f;border-bottom:none;border-radius:3px 3px 0 0}
+.vetiq{position:absolute;top:36%;left:16%;right:16%;height:20%;
+  background:#fff;border:1px solid #b9b9b9;border-radius:2px}
+.vetiq::before,.vetiq::after{content:"";position:absolute;left:12%;height:12%;
+  background:#8fa3b8;border-radius:2px}
+.vetiq::before{top:24%;right:20%}
+.vetiq::after{top:58%;right:40%;background:#c3cfdb}
+/* Espèce VUE AÉRIENNE : mosaïque de verts, route, toits, anneau carmin, échelle */
+.esp-aerien{background:#46603c;border:1px solid #2c3e28}
+.vtuile{position:absolute;opacity:.9}
+.vroute{position:absolute;left:-6%;right:-6%;height:6%;background:#a8a28c;transform:rotate(6deg)}
+.vtoit{position:absolute;width:14%;height:8%;background:#b26050}
+.vanneau{position:absolute;width:34%;aspect-ratio:1;border:3px solid #A01040;border-radius:50%}
+.vechel{position:absolute;left:6%;bottom:5%;width:40%;height:9%;background:rgba(0,0,0,.45)}
+.vechel::before{content:"";position:absolute;left:12%;right:20%;top:38%;height:24%;background:#fff}
+/* Espèce CARTE DE SITUATION : fond crème, rivière, contour communal orange,
+   croix cerclée carmin */
+.esp-carte{background:#f4f2e8;border:1px solid #c8c8bc}
+.vriviere{position:absolute;left:-8%;right:-8%;height:7%;background:#96bedc;transform:rotate(-9deg)}
+.vcontour{position:absolute;inset:12% 14% 20% 12%;border:3px solid #FF982D;
+  border-radius:46% 54% 58% 42%/52% 44% 56% 48%;transform:rotate(-6deg)}
+.vcible{position:absolute;width:26%;aspect-ratio:1;border:2.5px solid #A01040;border-radius:50%}
+.vcible::before,.vcible::after{content:"";position:absolute;background:#A01040}
+.vcible::before{left:14%;right:14%;top:46%;height:9%}
+.vcible::after{top:14%;bottom:14%;left:46%;width:9%}
 /* Bouton musique : fantôme, discret */
 #vmusique{margin-top:6px;background:transparent;color:#8fa5bb;border:1px solid #33838B;
   border-radius:99px;padding:5px 14px;font-size:12.5px;cursor:pointer}
 #vmusique.on{color:#0F2238;background:#6DD5DC;border-color:#6DD5DC}
 /* Accessibilité : qui demande moins de mouvement l'obtient */
 @media (prefers-reduced-motion:reduce){
-  .vcercle,.vcroix::before,.vcroix::after,.vchute,.vtangue,.vfeuillet{animation:none}
+  .vcercle,.vcroix::before,.vcroix::after,.vchute,.vtangue,.vfeuillet,
+  .vcanard,.vbob,.vaile{animation:none}
 }
 </style>
 </head>
@@ -2453,22 +2530,48 @@ function semerFeuille(c, enChute){
   f.style.setProperty("--bal", (1.8 + Math.random() * 1.8).toFixed(2) + "s");
   f.style.setProperty("--gite", Math.round(vVent * (3 + Math.random() * 6)) + "deg");
   f.style.setProperty("--tourn", Math.round(22 + Math.random() * 34) + "deg");
-  // Contenu composé au hasard : ligne de titre, 3 à 5 paragraphes de largeurs
-  // inégales (la dernière plus courte, comme une fin d'alinéa), et une chance
-  // sur deux de porter un sceau carmin, une sur deux un paraphe.
-  const titre = document.createElement("div");
-  titre.className = "vlgn t";
-  titre.style.width = Math.round(45 + Math.random() * 30) + "%";
-  f.appendChild(titre);
-  const nl = 3 + Math.floor(Math.random() * 3);
-  for(let j = 0; j < nl; j++){
-    const l = document.createElement("div");
-    l.className = "vlgn";
-    l.style.width = Math.round(j === nl - 1 ? 35 + Math.random() * 30 : 62 + Math.random() * 34) + "%";
-    f.appendChild(l);
+  // CINQ ESPÈCES (choix JFD sur planches) : acte scellé, mini-plan, chemise
+  // kraft, vue aérienne, carte de situation. Tirage au sort à la naissance,
+  // contenu composé au hasard — aucune feuille n'est la copie d'une autre.
+  const el = (cls, css) => {
+    const e = document.createElement("div");
+    e.className = cls;
+    if(css) for(const k in css) e.style[k] = css[k];
+    f.appendChild(e); return e;
+  };
+  const pc = (a, b) => Math.round(a + Math.random() * (b - a)) + "%";
+  const espece = ["acte", "plan", "kraft", "aerien", "carte"][Math.floor(Math.random() * 5)];
+  f.classList.add("esp-" + espece);
+  if(espece === "acte"){
+    el("vlgn t", { width: pc(45, 75) });
+    const nl = 3 + Math.floor(Math.random() * 3);
+    for(let j = 0; j < nl; j++)
+      el("vlgn", { width: (j === nl - 1) ? pc(35, 65) : pc(62, 96) });
+    el("vsceau"); el("vsign");
+  }else if(espece === "plan"){
+    el("vpar j", { left: pc(8, 14), top: pc(10, 16), width: pc(26, 36), height: pc(16, 24), transform: "rotate(-8deg)" });
+    el("vpar b", { right: pc(8, 14), top: pc(12, 20), width: pc(24, 34), height: pc(18, 24), transform: "rotate(5deg)" });
+    el("vpar j", { left: pc(10, 18), top: pc(44, 52), width: pc(22, 30), height: pc(16, 22), transform: "rotate(4deg)" });
+    el("vpar c", { right: pc(12, 22), top: pc(42, 50), width: pc(26, 34), height: pc(20, 26), transform: "rotate(-5deg)" });
+    el("vcanal", { top: pc(76, 84) });
+    el("vamorce", { left: pc(40, 52), top: pc(28, 36) });
+  }else if(espece === "kraft"){
+    el("vonglet"); el("vetiq");
+  }else if(espece === "aerien"){
+    const verts = ["#587448", "#3c5434", "#687c54", "#7a8060"];
+    for(let j = 0; j < 9; j++)
+      el("vtuile", { left: pc(2, 78), top: pc(2, 80), width: pc(10, 24), height: pc(7, 16),
+        background: verts[Math.floor(Math.random() * verts.length)] });
+    el("vroute", { top: pc(58, 70) });
+    el("vtoit", { left: pc(12, 30), top: pc(20, 34) });
+    el("vtoit", { left: pc(46, 62), top: pc(14, 28) });
+    el("vanneau", { left: pc(30, 48), top: pc(34, 48) });
+    el("vechel");
+  }else{ // carte de situation
+    el("vriviere", { top: pc(66, 78) });
+    el("vcontour");
+    el("vcible", { left: pc(32, 44), top: pc(34, 46) });
   }
-  if(Math.random() < 0.5){ const s = document.createElement("div"); s.className = "vsceau"; f.appendChild(s); }
-  if(Math.random() < 0.5){ const s = document.createElement("div"); s.className = "vsign"; f.appendChild(s); }
   g.appendChild(f); d.appendChild(g); c.appendChild(d);
 }
 function chutesLancer(){
@@ -2480,6 +2583,26 @@ function chutesLancer(){
 function chutesArreter(){
   const c = document.getElementById("vchutes");
   if(c) c.innerHTML = "";
+}
+// Un canard traverse — vite. Sens, altitude, vitesse tirés au sort ; il se
+// retire tout seul au bout de sa course. Ne vole pas si le mouvement réduit
+// est demandé, ni si le voile est déjà tombé.
+function semerCanard(){
+  if(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const v = document.getElementById("voile"), c = document.getElementById("vchutes");
+  if(!v || !v.classList.contains("on") || !c) return;
+  const d = document.createElement("div");
+  d.className = "vcanard" + (Math.random() < 0.5 ? " rg" : "");
+  d.style.setProperty("--alt", Math.round(10 + Math.random() * 55) + "%");
+  const vit = 3 + Math.random() * 2.5;
+  d.style.setProperty("--vit", vit.toFixed(2) + "s");
+  const b = document.createElement("div"); b.className = "vbob";
+  const o = document.createElement("div"); o.className = "voiseau";
+  ["vqueue", "vcorps", "vtete", "voeil", "vbec", "vaile"].forEach((cl) => {
+    const e = document.createElement("div"); e.className = cl; o.appendChild(e);
+  });
+  b.appendChild(o); d.appendChild(b); c.appendChild(d);
+  setTimeout(() => d.remove(), vit * 1000 + 300);   // bout de course, sans trophée
 }
 // ---- STAND DE TIR (JFD, 01/08 soir) : la croix suit le pointeur, clic gauche
 // = tir. Test d'impact MANUEL (getBoundingClientRect sur ~14 feuilles — les
@@ -2509,6 +2632,16 @@ function viseurArmer(){
 function tirer(x, y){
   const c = document.getElementById("vchutes");
   if(!c) return;
+  // Les CANARDS d'abord : cible prioritaire (et plus dure). Un canard touché
+  // fige sa position en px, bascule, chute — et vaut TROIS impressions.
+  for(const d of c.querySelectorAll(".vcanard:not(.touche)")){
+    const o = d.querySelector(".voiseau");
+    const r = o.getBoundingClientRect();
+    if(x >= r.left - 6 && x <= r.right + 6 && y >= r.top - 6 && y <= r.bottom + 6){
+      abattreCanard(c, d, r, x, y);
+      return;
+    }
+  }
   const feuilles = c.querySelectorAll(".vchute");
   for(const d of feuilles){
     const f = d.querySelector(".vfeuillet");   // la feuille est sous le tangage
@@ -2519,6 +2652,38 @@ function tirer(x, y){
       return;   // un tir, un dossier — pas de carton double
     }
   }
+}
+function abattreCanard(c, d, r, x, y){
+  // Figer la position (la traversée s'arrête), puis laisser tomber.
+  d.style.left = r.left + "px";
+  d.style.top = r.top + "px";
+  d.style.setProperty("--alt", "0");
+  d.classList.add("touche");
+  setTimeout(() => d.remove(), 1100);
+  const flash = document.createElement("div");
+  flash.className = "vflash";
+  flash.style.left = (x - 5) + "px"; flash.style.top = (y - 5) + "px";
+  c.appendChild(flash);
+  setTimeout(() => flash.remove(), 350);
+  const plumes = ["#33838B", "#2a6d74", "#ffffff", "#ffffff", "#FF982D"];
+  for(let k = 0; k < 12; k++){
+    const fr = document.createElement("div");
+    fr.className = "vfrag";
+    const a = Math.random() * 2 * Math.PI, dist = 35 + Math.random() * 70;
+    fr.style.left = x + "px"; fr.style.top = y + "px";
+    fr.style.width = (3 + Math.random() * 6) + "px";
+    fr.style.height = (6 + Math.random() * 9) + "px";
+    fr.style.borderRadius = "50% 50% 50% 0";
+    fr.style.background = plumes[Math.floor(Math.random() * plumes.length)];
+    fr.style.setProperty("--dx", Math.round(Math.cos(a) * dist) + "px");
+    fr.style.setProperty("--dy", Math.round(Math.sin(a) * dist + 24) + "px");
+    fr.style.setProperty("--rot", Math.round((Math.random() - 0.5) * 540) + "deg");
+    c.appendChild(fr);
+    setTimeout(() => fr.remove(), 750);
+  }
+  vTirs.score += 3;
+  const sc = document.querySelector("#vscore b");
+  if(sc) sc.textContent = String(vTirs.score);
 }
 function exploserFeuille(c, d, x, y){
   d.remove();
@@ -2571,7 +2736,9 @@ function montrerVoile(titre, sousTitre){
       document.getElementById("vbarrefill").style.width = Math.round(frac * 100) + "%";
     }
   };
-  voileTimers = { quip: setInterval(tourneQuip, 7000), suit: setInterval(suit, 400) };
+  voileTimers = { quip: setInterval(tourneQuip, 7000), suit: setInterval(suit, 400),
+    canard: setInterval(() => { if(Math.random() < 0.6) semerCanard(); }, 7000) };
+  setTimeout(semerCanard, 3500);   // le premier ne se fait pas attendre
   musiqueBrancher();
   chutesLancer();
   viseurArmer();
@@ -2587,7 +2754,8 @@ function voileFinal(message){
 function masquerVoile(){
   const v = document.getElementById("voile");
   if(v) v.classList.remove("on", "fin");
-  if(voileTimers){ clearInterval(voileTimers.quip); clearInterval(voileTimers.suit); voileTimers = null; }
+  if(voileTimers){ clearInterval(voileTimers.quip); clearInterval(voileTimers.suit);
+    clearInterval(voileTimers.canard); voileTimers = null; }
   radioArreter(); musiqueArreter();   // le voile parti, le silence revient
   chutesArreter();
 }
