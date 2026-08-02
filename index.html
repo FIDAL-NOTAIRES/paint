@@ -240,88 +240,39 @@
 #voile .vnote{font-size:12px;color:#657D96;margin-top:14px}
 #voile.fin .vbarre>div{background:#4caf7d}
 #voile{overflow:hidden}
-/* Trame cadastrale de fond, à peine visible, en dérive lente */
-#voile::before{content:"";position:absolute;inset:-120px;opacity:.05;pointer-events:none;
+#voile.on{cursor:none}   /* la croix de visée remplace la souris */
+/* Trame cadastrale de fond, STATIQUE (les décors animés ont été retirés) */
+#voile::before{content:"";position:absolute;inset:0;opacity:.05;pointer-events:none;
   background:repeating-linear-gradient(0deg,transparent 0 79px,#6DD5DC 79px 80px),
-             repeating-linear-gradient(90deg,transparent 0 79px,#6DD5DC 79px 80px);
-  animation:vgrille 80s linear infinite}
-@keyframes vgrille{to{transform:translate(80px,80px)}}
-.vcoin{position:absolute;width:96px;height:96px;pointer-events:none}
-.vc-tl{top:26px;left:26px}.vc-tr{top:26px;right:26px}
-.vc-bl{bottom:26px;left:26px}.vc-br{bottom:26px;right:26px}
-/* Haut-gauche : la parcelle se trace en canard puis se peint en carmin */
-.vparc{fill:#A01040;fill-opacity:0;stroke:#33838B;stroke-width:2.5;stroke-linejoin:round;
-  stroke-dasharray:300;stroke-dashoffset:300;animation:vtrace 7s ease-in-out infinite}
-@keyframes vtrace{0%{stroke-dashoffset:300;fill-opacity:0}
-  45%{stroke-dashoffset:0;fill-opacity:0}
-  60%,85%{stroke-dashoffset:0;fill-opacity:.85}
-  100%{stroke-dashoffset:300;fill-opacity:0}}
-/* Haut-droit : croix d'amorce jaune (forme) sous un cercle de visée en rotation */
-.vcercle{position:absolute;inset:8px;border:2px dashed #6DD5DC;border-radius:50%;
-  opacity:.65;animation:vtourne 16s linear infinite}
+             repeating-linear-gradient(90deg,transparent 0 79px,#6DD5DC 79px 80px)}
+/* ---- LE VISEUR : croix d'amorce jaune sous son cercle de visée, il SUIT la
+   souris (transform posé en JS). Recul bref à chaque tir. */
+#viseur{position:absolute;left:0;top:0;width:64px;height:64px;z-index:3;
+  pointer-events:none;transform:translate(-100px,-100px);will-change:transform}
+#viseur.recul .vcercle{transform:scale(.82)}
+.vcercle{position:absolute;inset:6px;border:2px dashed #6DD5DC;border-radius:50%;
+  opacity:.75;animation:vtourne 16s linear infinite;transition:transform .12s ease}
 @keyframes vtourne{to{transform:rotate(360deg)}}
 .vcroix::before,.vcroix::after{content:"";position:absolute;background:#FFE764;border-radius:2px;
   animation:vpulse 2.4s ease-in-out infinite}
-.vcroix::before{left:50%;top:30%;bottom:30%;width:3px;margin-left:-1.5px}
-.vcroix::after{top:50%;left:30%;right:30%;height:3px;margin-top:-1.5px}
-@keyframes vpulse{0%,100%{opacity:.5}50%{opacity:1}}
-/* Bas-gauche : le tampon tamponne, l'encre s'estompe */
-.vtampon{position:absolute;left:18px;top:4px;width:60px;height:44px;border-radius:8px;
-  background:#33838B;color:#fff;font:700 22px/44px system-ui,sans-serif;text-align:center;
-  box-shadow:0 12px 16px rgba(0,0,0,.35);animation:vtamponne 4.2s ease-in-out infinite}
-@keyframes vtamponne{0%,55%,100%{transform:translateY(-14px) rotate(-4deg)}
-  63%,70%{transform:translateY(12px) rotate(0deg)}
-  82%{transform:translateY(-14px) rotate(-4deg)}}
-.vencre{position:absolute;left:26px;bottom:10px;width:46px;height:12px;border-radius:50%;
-  border:2px solid #A01040;opacity:0;animation:vencre 4.2s ease-out infinite}
-@keyframes vencre{0%,62%{opacity:0;transform:scale(.4)}68%{opacity:.9;transform:scale(1)}
-  100%{opacity:0;transform:scale(1.3)}}
-/* Bas-droit : les pages produites s'empilent, encore et encore */
-.vfeuille{position:absolute;right:14px;width:52px;height:66px;background:#fff;border-radius:3px;
-  box-shadow:0 3px 8px rgba(0,0,0,.35)}
-.vfeuille::before{content:"";position:absolute;left:8px;right:8px;top:12px;height:36px;
-  background:repeating-linear-gradient(0deg,#c7d2de 0 2px,transparent 2px 9px)}
-.vfeuille::after{content:"";position:absolute;top:0;right:0;
-  border:9px solid #0F2238;border-left-color:transparent;border-bottom-color:transparent;
-  border-radius:0 3px 0 0}
-.f1{bottom:4px;transform:rotate(-3deg)}
-.f2{bottom:9px;transform:rotate(2deg)}
-.f3{bottom:14px;animation:varrive 3.6s ease-in-out infinite}
-@keyframes varrive{0%{transform:translateY(-72px) rotate(6deg);opacity:0}
-  28%{opacity:1}
-  48%,100%{transform:translateY(0) rotate(-1deg);opacity:1}}
-/* Petit écran : deux scènes suffisent, et plus discrètes */
-@media (max-width:600px){
-  .vcoin{width:64px;height:64px}
-  .vc-tr,.vc-bl{display:none}
-}
+.vcroix::before{left:50%;top:26%;bottom:26%;width:3px;margin-left:-1.5px}
+.vcroix::after{top:50%;left:26%;right:26%;height:3px;margin-top:-1.5px}
+@keyframes vpulse{0%,100%{opacity:.55}50%{opacity:1}}
+/* ---- EXPLOSION : éclats de papier projetés depuis l'impact, bref éclair */
+.vfrag{position:absolute;z-index:1;pointer-events:none;border-radius:1px;
+  animation:veclate .7s ease-out forwards}
+@keyframes veclate{
+  0%{transform:translate(0,0) rotate(0deg);opacity:1}
+  100%{transform:translate(var(--dx,40px),var(--dy,40px)) rotate(var(--rot,220deg));opacity:0}}
+.vflash{position:absolute;z-index:1;pointer-events:none;border:2px solid #FFE764;
+  border-radius:50%;width:10px;height:10px;animation:vflash .3s ease-out forwards}
+@keyframes vflash{to{transform:scale(6);opacity:0}}
+/* ---- SCORE, clin d'œil de la maison */
+#vscore{position:absolute;top:22px;left:26px;z-index:2;font-size:13px;color:#8fa5bb}
+#vscore b{color:#6DD5DC;font-size:15px}
 /* Le contenu central passe DEVANT les promeneurs */
 #voile>.vlogo,#voile>.vtitre,#voile>.vvol,#voile>.vbarre,#voile>.vphase,
 #voile>.vquip,#voile>.vnote,#voile>#vmusique{position:relative;z-index:2}
-.vcoin{z-index:1}
-/* Parcelles fantômes en dérive lente, derrière tout */
-.vfantome{position:absolute;z-index:0;opacity:.07;pointer-events:none}
-.vfantome polygon{fill:none;stroke-width:2}
-.vf1{width:34vmin;top:8%;left:-6%;animation:vderive1 110s ease-in-out infinite alternate}
-.vf1 polygon{stroke:#6DD5DC}
-.vf2{width:26vmin;bottom:6%;right:-4%;animation:vderive2 90s ease-in-out infinite alternate}
-.vf2 polygon{stroke:#FFE764}
-.vf3{width:42vmin;top:40%;left:60%;animation:vderive3 130s ease-in-out infinite alternate}
-.vf3 polygon{stroke:#33838B}
-@keyframes vderive1{to{transform:translate(24vw,10vh) rotate(9deg)}}
-@keyframes vderive2{to{transform:translate(-20vw,-12vh) rotate(-7deg)}}
-@keyframes vderive3{to{transform:translate(-26vw,8vh) rotate(6deg)}}
-/* L'avion en papier traverse l'écran en ondulant, puis revient plus tard */
-.vavion{position:absolute;z-index:1;width:38px;top:0;left:0;opacity:.9;
-  filter:drop-shadow(0 3px 5px rgba(0,0,0,.35));
-  animation:vvole 19s linear infinite}
-@keyframes vvole{
-  0%{transform:translate(-8vw,72vh) rotate(10deg)}
-  20%{transform:translate(18vw,58vh) rotate(4deg)}
-  40%{transform:translate(44vw,66vh) rotate(12deg)}
-  60%{transform:translate(68vw,50vh) rotate(2deg)}
-  78%{transform:translate(90vw,58vh) rotate(10deg)}
-  88%,100%{transform:translate(112vw,44vh) rotate(6deg)}}
 /* Pluie de documents (JFD, 01/08 soir) : sur TOUTE la largeur, des feuilles
    tombent du haut avec la trajectoire d'un papier lâché — produit de DEUX
    mouvements : chute verticale linéaire (porteur .vchute) × balancement
@@ -348,33 +299,19 @@
 #vmusique.on{color:#0F2238;background:#6DD5DC;border-color:#6DD5DC}
 /* Accessibilité : qui demande moins de mouvement l'obtient */
 @media (prefers-reduced-motion:reduce){
-  #voile::before,.vparc,.vcercle,.vcroix::before,.vcroix::after,
-  .vtampon,.vencre,.f3,.vfantome,.vavion,.vchute,.vfeuillet{animation:none}
+  .vcercle,.vcroix::before,.vcroix::after,.vchute,.vfeuillet{animation:none}
 }
 </style>
 </head>
 <body>
 <div id="voile">
   <div id="vchutes" aria-hidden="true"></div>
-  <!-- Quatre coins animés (JFD, 01/08 au soir) : la parcelle qui se dessine
-       puis se peint en carmin ; la croix d'amorce sous son cercle de visée ;
-       le tampon qui tamponne ; les pages qui s'empilent. CSS pur, zéro coût
-       sur la production. Le jaune n'apparaît QUE sur des formes (charte). -->
-  <svg class="vcoin vc-tl" viewBox="0 0 100 100" aria-hidden="true">
-    <polygon class="vparc" points="18,30 62,14 86,42 74,84 30,78 14,56"/>
-  </svg>
-  <div class="vcoin vc-tr" aria-hidden="true"><div class="vcercle"></div><div class="vcroix"></div></div>
-  <div class="vcoin vc-bl" aria-hidden="true"><div class="vtampon">✓</div><div class="vencre"></div></div>
-  <div class="vcoin vc-br" aria-hidden="true"><div class="vfeuille f1"></div><div class="vfeuille f2"></div><div class="vfeuille f3"></div></div>
-  <!-- Promeneurs : un avion en papier qui traverse, des parcelles fantômes qui
-       dérivent DERRIÈRE le contenu (z-index). CSS pur, compositeur GPU. -->
-  <svg class="vfantome vf1" viewBox="0 0 100 100" aria-hidden="true"><polygon points="10,35 55,12 90,40 78,88 25,80"/></svg>
-  <svg class="vfantome vf2" viewBox="0 0 100 100" aria-hidden="true"><polygon points="20,20 80,15 88,60 50,90 12,65"/></svg>
-  <svg class="vfantome vf3" viewBox="0 0 100 100" aria-hidden="true"><polygon points="15,50 50,10 85,45 65,85 28,82"/></svg>
-  <svg class="vavion" viewBox="0 0 40 40" aria-hidden="true">
-    <path d="M2 22 L38 4 L22 38 L17 25 Z" fill="#ffffff"/>
-    <path d="M17 25 L38 4 L13 19 Z" fill="#c7d2de"/>
-  </svg>
+  <!-- STAND DE TIR (JFD, 01/08 soir) : la croix de visée SUIT LA SOURIS, les
+       dossiers qui tombent sont les cibles, le clic gauche les fait exploser.
+       Compteur « dossiers classés sans suite ». Tout autre décor a été retiré
+       à la demande — ne pas réintroduire coins, fantômes ni avion. -->
+  <div id="viseur" aria-hidden="true"><div class="vcercle"></div><div class="vcroix"></div></div>
+  <div id="vscore" aria-hidden="true">Dossiers classés sans suite : <b>0</b></div>
   <div class="vlogo">FIDAL NOTAIRES · PAINT</div>
   <div class="vtitre" id="vtitre">Production en cours</div>
   <div class="vvol" id="vvol"></div>
@@ -2468,25 +2405,94 @@ function musiqueBrancher(){
 }
 // Pluie de documents : 14 feuilles semées sur toute la largeur, paramètres
 // tirés au sort. Délai NÉGATIF = la feuille est déjà en l'air à l'ouverture.
+function semerFeuille(c, enChute){
+  const d = document.createElement("div"); d.className = "vchute";
+  const f = document.createElement("div"); f.className = "vfeuillet";
+  d.style.left = (2 + Math.random() * 96).toFixed(1) + "vw";
+  d.style.setProperty("--dur", (10 + Math.random() * 9).toFixed(1) + "s");
+  // enChute : délai NÉGATIF, la feuille est déjà en l'air (ciel plein à
+  // l'ouverture). Sinon (réapparition après un tir) : elle repart du haut.
+  d.style.setProperty("--del", enChute ? (-Math.random() * 18).toFixed(1) + "s" : "0s");
+  f.style.setProperty("--tail", Math.round(24 + Math.random() * 26) + "px");
+  f.style.setProperty("--amp", Math.round(18 + Math.random() * 46) + "px");
+  f.style.setProperty("--bal", (1.6 + Math.random() * 1.6).toFixed(2) + "s");
+  d.appendChild(f); c.appendChild(d);
+}
 function chutesLancer(){
   if(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches) return;
   const c = document.getElementById("vchutes");
   if(!c || c.childElementCount) return;
-  for(let i = 0; i < 14; i++){
-    const d = document.createElement("div"); d.className = "vchute";
-    const f = document.createElement("div"); f.className = "vfeuillet";
-    d.style.left = (2 + Math.random() * 96).toFixed(1) + "vw";
-    d.style.setProperty("--dur", (10 + Math.random() * 9).toFixed(1) + "s");
-    d.style.setProperty("--del", (-Math.random() * 18).toFixed(1) + "s");
-    f.style.setProperty("--tail", Math.round(24 + Math.random() * 26) + "px");
-    f.style.setProperty("--amp", Math.round(18 + Math.random() * 46) + "px");
-    f.style.setProperty("--bal", (1.6 + Math.random() * 1.6).toFixed(2) + "s");
-    d.appendChild(f); c.appendChild(d);
-  }
+  for(let i = 0; i < 14; i++) semerFeuille(c, true);
 }
 function chutesArreter(){
   const c = document.getElementById("vchutes");
   if(c) c.innerHTML = "";
+}
+// ---- STAND DE TIR (JFD, 01/08 soir) : la croix suit le pointeur, clic gauche
+// = tir. Test d'impact MANUEL (getBoundingClientRect sur ~14 feuilles — les
+// feuilles restent pointer-events:none, donc elementsFromPoint ne les voit
+// pas ; le calcul direct est trivial et sûr). Une feuille touchée explose en
+// éclats de papier, une nouvelle repart du haut 1,5 à 3 s plus tard : la
+// densité du ciel est constante. Le bouton ♪ reste cliquable : un pointerdown
+// dont la cible est le bouton n'est PAS un tir. #voile étant fixed inset:0,
+// clientX/Y sont directement les coordonnées dans le voile.
+let vTirs = { score: 0, arme: false };
+function viseurArmer(){
+  const v = document.getElementById("voile"), s = document.getElementById("viseur");
+  if(!v || !s || vTirs.arme) return;
+  vTirs.arme = true;
+  v.addEventListener("pointermove", (e) => {
+    s.style.transform = "translate(" + (e.clientX - 32) + "px," + (e.clientY - 32) + "px)";
+  });
+  v.addEventListener("pointerdown", (e) => {
+    if(e.target && e.target.closest && e.target.closest("#vmusique")) return;   // le bouton se clique, ne se tire pas
+    if(e.button !== undefined && e.button !== 0) return;                        // clic gauche seulement
+    s.style.transform = "translate(" + (e.clientX - 32) + "px," + (e.clientY - 32) + "px)";
+    s.classList.add("recul");
+    setTimeout(() => s.classList.remove("recul"), 130);
+    tirer(e.clientX, e.clientY);
+  });
+}
+function tirer(x, y){
+  const c = document.getElementById("vchutes");
+  if(!c) return;
+  const feuilles = c.querySelectorAll(".vchute");
+  for(const d of feuilles){
+    const f = d.firstChild;
+    const r = f.getBoundingClientRect();
+    if(x >= r.left - 6 && x <= r.right + 6 && y >= r.top - 6 && y <= r.bottom + 6){
+      exploserFeuille(c, d, x, y);
+      return;   // un tir, un dossier — pas de carton double
+    }
+  }
+}
+function exploserFeuille(c, d, x, y){
+  d.remove();
+  const flash = document.createElement("div");
+  flash.className = "vflash";
+  flash.style.left = (x - 5) + "px"; flash.style.top = (y - 5) + "px";
+  c.appendChild(flash);
+  setTimeout(() => flash.remove(), 350);
+  const teintes = ["#ffffff", "#ffffff", "#c7d2de", "#FFE764", "#A01040"];
+  for(let k = 0; k < 10; k++){
+    const fr = document.createElement("div");
+    fr.className = "vfrag";
+    const a = Math.random() * 2 * Math.PI, dist = 45 + Math.random() * 85;
+    fr.style.left = x + "px"; fr.style.top = y + "px";
+    fr.style.width = (4 + Math.random() * 8) + "px";
+    fr.style.height = (5 + Math.random() * 10) + "px";
+    fr.style.background = teintes[Math.floor(Math.random() * teintes.length)];
+    fr.style.setProperty("--dx", Math.round(Math.cos(a) * dist) + "px");
+    fr.style.setProperty("--dy", Math.round(Math.sin(a) * dist + 30) + "px");
+    fr.style.setProperty("--rot", Math.round((Math.random() - 0.5) * 720) + "deg");
+    c.appendChild(fr);
+    setTimeout(() => fr.remove(), 750);
+  }
+  vTirs.score += 1;
+  const sc = document.querySelector("#vscore b");
+  if(sc) sc.textContent = String(vTirs.score);
+  setTimeout(() => { const cc = document.getElementById("vchutes"); if(cc && cc.childElementCount) semerFeuille(cc, false); },
+    1500 + Math.random() * 1500);
 }
 let voileTimers = null;
 function montrerVoile(titre, sousTitre){
@@ -2514,6 +2520,7 @@ function montrerVoile(titre, sousTitre){
   voileTimers = { quip: setInterval(tourneQuip, 7000), suit: setInterval(suit, 400) };
   musiqueBrancher();
   chutesLancer();
+  viseurArmer();
 }
 function voileFinal(message){
   const v = document.getElementById("voile");
