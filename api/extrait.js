@@ -95,12 +95,18 @@ function variantesCommune(base) {
   const arrondissement = [];
   const m = liaisons[3].match(/^(.+?)\s+(\d{1,2})\s*(?:ER|EME|E)?\s+ARRONDISSEMENT$/);
   if (m) {
-    const ville = m[1].trim(), n = m[2];
-    arrondissement.push(`${ville} ${n}`, `${ville} ${n}E`, `${ville} ${n}EME`);
-    // « PARIS 1ER » plutôt que « PARIS 1E » : le premier arrondissement est le
-    // seul dont l'ordinal s'écrit autrement, et l'oublier ferait échouer les
-    // trois premiers arrondissements de chaque ville sans raison visible.
-    if (n === '1') arrondissement.push(`${ville} 1ER`);
+    const ville = m[1].trim(), n = parseInt(m[2], 10);
+    const ordinal = n === 1 ? '1ER' : `${n}EME`;
+    // ORDRE MESURÉ le 27/08/2026, un appel par forme (voir § 5 de l'addendum
+    // PAINT v12) : PARIS 10 et PARIS 20 passent sous la forme NUE, LYON 3EME et
+    // MARSEILLE 8EME sous la forme ORDINALE, LYON 1ER et MARSEILLE 1ER sous
+    // « 1ER », et les arrondissements de Paris à UN SEUL CHIFFRE ne passent sous
+    // AUCUNE des cinq — d'où la forme à DEUX CHIFFRES essayée en premier pour
+    // eux. Le premier nom qui rend un résultat arrête la boucle : l'ordre est
+    // donc un coût, jamais une correction.
+    if (n < 10) arrondissement.push(`${ville} 0${n}`, `${ville} ${ordinal}`);
+    else arrondissement.push(`${ville} ${n}`, `${ville} ${ordinal}`);
+    arrondissement.push(`${ville} ${n}`, `${ville} ${n}E`);
   }
   return [...new Set([...arrondissement, ...liaisons].map(s => s.trim()))].filter(Boolean);
 }
@@ -172,7 +178,23 @@ async function fetchExtrait(params, mode = 'pdf') {
     // On teste plusieurs noms et on garde le PREMIER qui rend un résultat. Voir
     // variantesCommune : tirets, apostrophes, et arrondissements municipaux de
     // Paris, Lyon et Marseille.
-    const variantes = variantesCommune(base);
+    //
+    // ⚠ SURCHARGE « ville » — MODES debug ET diag SEULEMENT. Le SCPC n'expose
+    // AUCUNE liste de communes, et son champ de saisie est du texte libre
+    // apparié côté serveur : la seule façon de savoir sous quel nom il connaît
+    // une commune est de le lui demander. Sans ce paramètre, chaque hypothèse de
+    // nommage coûtait un DÉPLOIEMENT — c'est ce qui a fait traîner le cas des
+    // arrondissements de Paris à un seul chiffre. Le paramètre est REFUSÉ sur le
+    // chemin du PDF : un extrait produit sous un nom de commune imposé à la main
+    // n'aurait aucune valeur de pièce, et le nom retenu doit toujours être celui
+    // qu'une exécution normale aurait trouvé.
+    if (params.ville && mode === 'pdf') {
+      const e = new Error("le paramètre 'ville' n'est admis qu'avec debug=1 ou diag=1");
+      e.statusCode = 400; throw e;
+    }
+    const variantes = params.ville
+      ? [deburr(String(params.ville)).toUpperCase().trim()]
+      : variantesCommune(base);
  
     const agent = request.agent();
  
