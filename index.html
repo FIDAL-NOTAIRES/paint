@@ -2824,6 +2824,30 @@ function choisirEchelleDoc(w, h){
 // on les exécute là où elles vivent. Le parent attend window.capturePret (posé au
 // finally de la chaîne automatique), capture base + overlay, détruit l'iframe.
 // Rend null au bout de 120 s : la réserve est portée au statut, jamais tue.
+// ----------------------------------------------------------------------
+// ZONE CONIQUE CONFORME LUE DANS UN Y — 27/08/2026
+// ----------------------------------------------------------------------
+// Les neuf zones CC42 à CC50 ont leur constante en Y espacée d'un MILLION de
+// mètres, pour une étendue de ±111 km chacune. Un Y projeté désigne donc sa
+// zone SANS AMBIGUÏTÉ — là où la LATITUDE, elle, est ambiguë dans la bande de
+// recouvrement d'un degré. Marge la plus faible mesurée sur les 96
+// départements de métropole et Corse : 0,085, très loin du 0,5 qui signalerait
+// un doute.
+// C'est ce qui permet de COMPARER la zone du contour reçu à celle du plan
+// servi, et donc de NOMMER le défaut au lieu d'afficher « le point projeté
+// tombe hors du rendu », qui n'apprend rien à personne.
+const zoneDeY = (y) => Math.round((y - 200000) / 1e6) + 41;
+
+// ⚠⚠ SUR WINDOW, PAS SUR S — même leçon que window.chargesIframe du 01/08 au
+// soir : « const S » ne crée AUCUNE propriété window, donc le parent ne peut
+// pas lire S dans le contentWindow de son iframe. La réserve de colorisation
+// doit traverser la frontière des cadres : elle se pose donc EXPLICITEMENT sur
+// window. Sans elle, un renoncement pourtant motivé mourait avec l'iframe,
+// détruite juste après la capture — c'est ce qui a rendu le défaut de zone de
+// Toulouse INVISIBLE le 27/08/2026, alors que le code disait précisément
+// pourquoi il renonçait.
+window.captureReserve = null;
+
 async function capturerPlanSection(p, g, blocs, rangs, pps){
   const sommets = [];
   g.idx.forEach((i) => (blocs[i] || "").split(";").forEach((c) => {
@@ -2885,6 +2909,10 @@ async function capturerPlanSection(p, g, blocs, rangs, pps){
         const ctx = cv.getContext("2d");
         ctx.drawImage(b, 0, 0);
         if(o && o.width) ctx.drawImage(o, 0, 0);
+        // Le plan est capturé ; reste à savoir s'il a été COLORIÉ. La réserve
+        // éventuelle est posée sur le window de l'iframe par aLaMain.
+        try{ g.reserve = ifr.contentWindow.captureReserve || null; }
+        catch(e){ g.reserve = null; }
         return cv;
       }
     }
@@ -3071,6 +3099,11 @@ async function doExportDocument(){
         plan: imgCompressee(c1, PDF_MAX_BYTES) });
     }
     const sectionsSansPlan = groupes.filter((g) => !g.plan).map((g) => g.label);
+    // PLAN PRODUIT MAIS NON COLORIÉ — distinction nouvelle du 27/08/2026, et
+    // c'est tout l'objet du correctif : jusqu'ici une capture réussie mais non
+    // coloriée était comptée comme une réussite. Le motif vient de l'iframe.
+    const sectionsAvecReserve = groupes.filter((g) => g.plan && g.reserve)
+      .map((g) => g.label + " — " + g.reserve);
 
     // ---- SOMMAIRE INTERCALÉ : plan de section puis ses fiches, dans l'ordre
     // exact des pages. Un plan non produit N'A PAS d'entrée (pas de page) : la
@@ -3190,6 +3223,10 @@ async function doExportDocument(){
           ? " ⚠ Plan(s) de section NON PRODUIT(S) : " + sectionsSansPlan.join(" ; ")
             + " — capture en échec, le document ne les contient pas."
           : "")
+      + (sectionsAvecReserve.length
+          ? " ⚠⚠ Plan(s) de section PRÉSENT(S) MAIS NON COLORIÉ(S) : "
+            + sectionsAvecReserve.join(" ; ") + "."
+          : "")
       + " — Journal des extraits : " + journal.join(" | ")
       + (alerteCarte ? " ⚠ Carte de situation cadrée par " + alerteCarte
           + " : le cadrage peut être approximatif sur une commune allongée." : ""), "warn");
@@ -3200,7 +3237,8 @@ async function doExportDocument(){
     // Dossier complet livre le document, elle ne cache pas les alertes.
     if(S.docAutoLance){
       S.docAutoLance = false;
-      if(doubles.length || sansExtrait.length || sectionsSansPlan.length || alerteCarte){
+      if(doubles.length || sansExtrait.length || sectionsSansPlan.length
+         || sectionsAvecReserve.length || alerteCarte){
         // Les réserves DOIVENT se lire : le voile s'efface, le statut apparaît.
         masquerVoile();
         showHint("Réserves au statut — onglet laissé ouvert pour contrôle.");
@@ -4189,6 +4227,9 @@ function preremplirDepuisURL(){
   }
   if(!auto) return;
 
+  // Une réserve d'un chargement précédent ne doit pas être imputée à celui-ci.
+  window.captureReserve = null;
+
   (async () => {
     try{
       // BASCULE VUE AÉRIENNE. Le chargement doit avoir lieu ICI, et non plus
@@ -4243,6 +4284,9 @@ function preremplirDepuisURL(){
       const W = S.W, H = S.H, thr = S.threshold, NPIX = W * H;
 
       const aLaMain = (msg) => {
+        // ⚠ Trace lisible par le parent quand cette page tourne dans l'iframe
+        // de capture d'un plan de section. Voir window.captureReserve.
+        window.captureReserve = msg;
         S.tool = "fill";
         setStatus(msg + " Cliquez dans la parcelle avec l'outil « Remplir », déjà sélectionné.", "warn");
         showHint("Cliquez dans la parcelle, au centre de la carte.");
@@ -4811,6 +4855,29 @@ function preremplirDepuisURL(){
             const dansPlage = X >= g.fx.min - margeX && X <= g.fx.max + margeX
                            && Y >= g.fy.min - margeY && Y <= g.fy.max + margeY;
             const dansRendu = px >= 0 && py >= 0 && px < W && py < H;
+            // ---- ZONES CONIQUES CONFRONTÉES — 27/08/2026 -----------------
+            // ⚠⚠ NE PAS SUPPRIMER en croyant la table par département de
+            // REDPAR suffisante : la DGFiP choisit la zone FEUILLE PAR FEUILLE,
+            // donc une table par département sera fausse quelque part, et ce
+            // jour-là c'est ce contrôle qui le dira. Le Y du contour reçu et
+            // celui des étiquettes lues en marge nomment chacun leur zone.
+            // Défaut vécu à TOULOUSE le 27/08/2026 : contour en CC44, plan servi
+            // en CC43, 888 931 m d'écart en Y — polygones hors cadre, overlay
+            // vide, plan correct mais non recentré, et pas un mot de lisible.
+            const zonePoly = zoneDeY(Y);
+            const zonePlan = zoneDeY((g.fy.min + g.fy.max) / 2);
+            if(zonePoly !== zonePlan){
+              replPourquoi = "ZONE CONIQUE CONFORME DISCORDANTE — le contour reçu est "
+                + "projeté en CC" + zonePoly + " (Y " + Math.round(Y) + ") tandis que le "
+                + "plan servi est géoréférencé en CC" + zonePlan + " (étiquettes "
+                + Math.round(g.fy.min) + " à " + Math.round(g.fy.max) + "), soit environ "
+                + Math.round(Math.abs(Y - (g.fy.min + g.fy.max) / 2) / 1000) + " km d'écart. "
+                + "La table ZONE_CC_PAR_DEPARTEMENT de REDPAR est donc fausse pour CETTE "
+                + "FEUILLE — la DGFiP tranche feuille par feuille. Corriger la ligne du "
+                + "département concerné, puis regénérer";
+              console.warn("PAINT : zones coniques discordantes",
+                { zonePoly, zonePlan, Y, fy: g.fy });
+            }
             // L'OCR AVERTIT, IL NE TRANCHE PAS — correctif du 29/07/2026.
             // La plage des étiquettes servait à INVALIDER le point projeté. Or
             // ce point vient d'une projection validée à 4 cm contre la source,
@@ -4843,7 +4910,10 @@ function preremplirDepuisURL(){
             // sur un même plan, l'extrait ayant été recentré sur l'unité par les
             // paramètres x et y côté REDPAR.
             const brutPoly = (p.get("poly") || "").trim();
-            if(dansRendu && brutPoly){
+            // zonePoly === zonePlan : peindre sous deux zones différentes
+            // poserait la couleur à côté de la parcelle, ce qui est pire qu'une
+            // absence de couleur sur une pièce destinée à un acte.
+            if(dansRendu && brutPoly && zonePoly === zonePlan){
               const enPixels = (bloc) => bloc.split(";").map((c) => {
                 const [a, b] = c.split(",").map(parseFloat);
                 return [Math.round((a - g.fx.b) / g.fx.a), Math.round((b - g.fy.b) / g.fy.a)];
