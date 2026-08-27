@@ -1,5 +1,3 @@
-
-Extrait · JS
 // Fonction serverless Vercel — génère un extrait de plan cadastral officiel
 // en pilotant le Service de Consultation du Plan Cadastral (cadastre.gouv.fr).
 // Logique adaptée de @etalab/api-scpc (MIT). Aucune donnée n'est stockée.
