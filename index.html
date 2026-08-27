@@ -2838,6 +2838,146 @@ function choisirEchelleDoc(w, h){
 // tombe hors du rendu », qui n'apprend rien à personne.
 const zoneDeY = (y) => Math.round((y - 200000) / 1e6) + 41;
 
+// ======================================================================
+// CALAGE ANALYTIQUE DU PLAN CADASTRAL — 27/08/2026
+// ======================================================================
+// Éprouvé AVANT insertion sur le plan de section MARSEILLE 16EME 911 0B 271,
+// contre les traits du cadastre eux-mêmes — distance médiane du bord du
+// polygone au trait le plus proche :
+//     calage ANALYTIQUE          0,26 m   95,1 % du bord à moins d'1 m
+//     OCR simulé, décalé de 3 m  1,8  m   25   % du bord à moins d'1 m
+// Le cadre est retrouvé avec un écart d'aspect de 1 pour 10 000, la pente sort
+// isotrope (0,2604 m/px sur les deux axes) et le contour retombe centré sur le
+// cadre à 4 cm près.
+//
+// POURQUOI. Le polygone était placé par le géoréférencement LU PAR OCR sur les
+// étiquettes de marge, régression linéaire acceptée dès que |r| > 0,99. Or 1 %
+// d'erreur de pente sur un cadre de 300 m fait 3 m sur le terrain — mesuré le
+// 27/08 : recouvrement 0,945 et décalage de 3,0 m vers le sud sur le 271. Le
+// défaut est dans la MÉTHODE, donc partout et depuis l'origine.
+//
+// Or les deux inconnues sont en fait connues :
+//   la PENTE  = EMPRISES_1000[format] × échelle / 1000, divisée par la taille
+//               du cadre en pixels ;
+//   l'ORIGINE = le centre x / y que PAINT IMPOSE au service, et qu'api/extrait
+//               confirme dans centre_utilise.
+// Il ne manquait que les dimensions utiles du cadre dans la page — l'objection
+// du § 3 de l'addendum v6. Ce cadre est un RECTANGLE NOIR dans le rendu : il se
+// détecte par comptage de pixels sombres.
+//
+// ⚠⚠ RÈGLE DE SÛRETÉ, À NE PAS DÉFAIRE : ce calage NE REMPLACE PAS l'OCR, il
+// s'y AJOUTE. L'OCR reste calculé et sert de TÉMOIN. Le calage analytique n'est
+// retenu que s'il CONCORDE avec lui à moins de SEUIL_CALAGE_M. En cas de
+// désaccord, on garde l'OCR et on le DIT. Raison : si le centre imposé a été
+// REFUSÉ par le garde-fou de zone d'api/extrait (cas de Boue, 29/07), l'origine
+// analytique est fausse de centaines de kilomètres — et c'est précisément ce
+// désaccord qui le révèle, sans avoir à faire traverser un en-tête HTTP.
+
+// Tolérance de concordance entre les deux calages, en mètres de terrain.
+// 25 m : très au-dessus de l'écart attendu (l'OCR est juste à ~1 %, soit 3 m sur
+// un cadre de 300 m) et très au-dessous de tout accident de zone ou de centre.
+const SEUIL_CALAGE_M = 25;
+
+/**
+ * Repère le cadre du plan dans le rendu : le grand rectangle noir sous le
+ * cartouche. Rend { x0, x1, y0, y1 } en pixels, ou null.
+ *
+ * MÉTHODE. Les bords verticaux du cadre sont les deux colonnes sombres les plus
+ * hautes de la page — le cartouche, lui, ne descend que sur ~15 % de la hauteur.
+ * Les bords horizontaux sont ensuite cherchés parmi les lignes sombres couvrant
+ * au moins 90 % de la largeur ainsi trouvée.
+ *
+ * ⚠ A4 ET A3 ONT PRESQUE LE MÊME RAPPORT D'ASPECT — 0,927 contre 0,935. La
+ * détection ne peut donc PAS servir à deviner le format : elle le REÇOIT, et ne
+ * s'en sert que pour VALIDER le rectangle trouvé. Le format vient de l'URL.
+ */
+function detecterCadre(ctx, W, H, rapportAttendu){
+  let d;
+  try{ d = ctx.getImageData(0, 0, W, H).data; }catch(e){ return null; }
+  const sombre = (x, y) => {
+    const i = (y * W + x) * 4;
+    return (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]) < 110;
+  };
+  // Colonnes : on échantillonne une ligne sur deux, c'est deux fois moins de
+  // travail pour un résultat identique sur un trait plein.
+  const hauteurs = new Array(W).fill(0);
+  for(let x = 0; x < W; x++){
+    let n = 0;
+    for(let y = 0; y < H; y += 2) if(sombre(x, y)) n++;
+    hauteurs[x] = n * 2;
+  }
+  const seuilV = H * 0.30;
+  const colonnes = [];
+  for(let x = 0; x < W; x++) if(hauteurs[x] > seuilV) colonnes.push(x);
+  if(colonnes.length < 2) return null;
+  const x0 = colonnes[0], x1 = colonnes[colonnes.length - 1];
+  const larg = x1 - x0;
+  if(larg < W * 0.5) return null;                 // pas le cadre du plan
+
+  // Lignes couvrant presque toute la largeur du cadre.
+  const candidates = [];
+  for(let y = 0; y < H; y++){
+    let n = 0;
+    for(let x = x0; x <= x1; x += 2) if(sombre(x, y)) n++;
+    if(n * 2 > larg * 0.90) candidates.push(y);
+  }
+  if(candidates.length < 2) return null;
+  // Regroupement des traits épais : un bord fait un à trois pixels.
+  const groupes = [];
+  for(const y of candidates){
+    const g = groupes[groupes.length - 1];
+    if(g && y - g[g.length - 1] <= 3) g.push(y); else groupes.push([y]);
+  }
+  const rangs = groupes.map((g) => Math.round((g[0] + g[g.length - 1]) / 2));
+  if(rangs.length < 2) return null;
+
+  // ⚠ LE CARTOUCHE EST AUSSI LARGE QUE LE CADRE : prendre la première et la
+  // dernière ligne donnerait la page entière. On retient donc la PAIRE dont le
+  // rapport d'aspect s'approche le plus de celui du format demandé, et l'on
+  // exige 4 % d'accord — faute de quoi on renonce.
+  let meilleur = null;
+  for(let i = 0; i < rangs.length - 1; i++)
+    for(let j = i + 1; j < rangs.length; j++){
+      const h = rangs[j] - rangs[i];
+      if(h < H * 0.35) continue;
+      const ecart = Math.abs(larg / h - rapportAttendu) / rapportAttendu;
+      if(ecart < 0.04 && (!meilleur || ecart < meilleur.ecart))
+        meilleur = { y0: rangs[i], y1: rangs[j], ecart };
+    }
+  if(!meilleur) return null;
+  return { x0, x1, y0: meilleur.y0, y1: meilleur.y1, ecartAspect: meilleur.ecart };
+}
+
+/**
+ * Calage analytique complet. Rend { fx:{a,b}, fy:{a,b}, cadre, source } ou null.
+ * fx / fy suivent la convention de l'OCR : px = (X - b) / a.
+ *
+ * ⚠ SANS x ET y DANS L'URL, PAS DE CALAGE : l'origine est le centre imposé, il
+ * n'y a rien pour le remplacer. Les liens qui ne portent que « pt » retombent
+ * donc sur l'OCR, comme avant — aucune régression.
+ */
+function calageAnalytique(p, ctx, W, H){
+  const fmt = p.get("format") || "";
+  const emp = EMPRISES_1000[fmt];
+  const ech = parseFloat(p.get("echelle") || "0");
+  const x0 = parseFloat(p.get("x") || ""), y0 = parseFloat(p.get("y") || "");
+  if(!emp || !(ech > 0) || !Number.isFinite(x0) || !Number.isFinite(y0)) return null;
+  const empW = emp[0] * ech / 1000, empH = emp[1] * ech / 1000;
+  const cadre = detecterCadre(ctx, W, H, empW / empH);
+  if(!cadre) return null;
+  const mW = empW / (cadre.x1 - cadre.x0);        // mètres par pixel en X
+  const mH = empH / (cadre.y1 - cadre.y0);        // mètres par pixel en Y
+  const cxPx = (cadre.x0 + cadre.x1) / 2, cyPx = (cadre.y0 + cadre.y1) / 2;
+  return {
+    // X = mW·px + (x0 - cxPx·mW)          -> px = (X - b) / a
+    fx: { a: mW, b: x0 - cxPx * mW },
+    // Y décroît quand py croît : Y = -mH·py + (y0 + cyPx·mH)
+    fy: { a: -mH, b: y0 + cyPx * mH },
+    cadre, empW, empH, fmt, ech
+  };
+}
+
+
 // ⚠⚠ SUR WINDOW, PAS SUR S — même leçon que window.chargesIframe du 01/08 au
 // soir : « const S » ne crée AUCUNE propriété window, donc le parent ne peut
 // pas lire S dans le contentWindow de son iframe. La réserve de colorisation
@@ -4843,8 +4983,35 @@ function preremplirDepuisURL(){
           if(!mesureAberrante && g.fx && g.fy
              && (g.fx.cale || Math.abs(g.fx.r) > 0.99)
              && (g.fy.cale || Math.abs(g.fy.r) > 0.99)){
-            const px = Math.round((X - g.fx.b) / g.fx.a);
-            const py = Math.round((Y - g.fy.b) / g.fy.a);
+            // ---- CALAGE RETENU — analytique si l'OCR le corrobore ---------
+            // Voir calageAnalytique. L'OCR n'est PAS remplacé : il reste le
+            // TÉMOIN qui autorise ou refuse le calage analytique. Un centre
+            // imposé qui aurait été refusé par le garde-fou de zone
+            // d'api/extrait rendrait l'origine analytique fausse de centaines
+            // de kilomètres — et c'est ce désaccord qui le révèle, sans avoir
+            // à faire traverser un en-tête HTTP.
+            const cal = calageAnalytique(p, baseCtx, W, H);
+            let cfx = g.fx, cfy = g.fy, calageDit = "étiquettes lues (OCR)";
+            if(cal){
+              const dxm = Math.abs((X - cal.fx.b) / cal.fx.a - (X - g.fx.b) / g.fx.a)
+                          * Math.abs(cal.fx.a);
+              const dym = Math.abs((Y - cal.fy.b) / cal.fy.a - (Y - g.fy.b) / g.fy.a)
+                          * Math.abs(cal.fy.a);
+              if(dxm <= SEUIL_CALAGE_M && dym <= SEUIL_CALAGE_M){
+                cfx = cal.fx; cfy = cal.fy;
+                calageDit = "ANALYTIQUE (" + cal.fmt + " au 1/" + cal.ech
+                  + ", cadre " + (cal.cadre.x1 - cal.cadre.x0) + "\u00d7"
+                  + (cal.cadre.y1 - cal.cadre.y0) + " px, écart à l'OCR "
+                  + dxm.toFixed(1) + " / " + dym.toFixed(1) + " m)";
+              }else{
+                calageDit = "étiquettes lues (OCR) — calage analytique ÉCARTÉ, "
+                  + "désaccord de " + Math.round(dxm) + " / " + Math.round(dym)
+                  + " m, à instruire";
+                console.warn("PAINT : calage analytique écarté", { dxm, dym, cal, g });
+              }
+            }
+            const px = Math.round((X - cfx.b) / cfx.a);
+            const py = Math.round((Y - cfy.b) / cfy.a);
             // Contrôles de vraisemblance : le point doit tomber dans le rendu, et
             // ses coordonnées dans la plage des étiquettes lues. Un mauvais choix
             // de zone de projection, ou l'outre-mer, échouent ici — et l'on
@@ -4916,7 +5083,7 @@ function preremplirDepuisURL(){
             if(dansRendu && brutPoly && zonePoly === zonePlan){
               const enPixels = (bloc) => bloc.split(";").map((c) => {
                 const [a, b] = c.split(",").map(parseFloat);
-                return [Math.round((a - g.fx.b) / g.fx.a), Math.round((b - g.fy.b) / g.fy.a)];
+                return [Math.round((a - cfx.b) / cfx.a), Math.round((b - cfy.b) / cfy.a)];
               }).filter((q) => Number.isFinite(q[0]) && Number.isFinite(q[1]));
               const polygones = brutPoly.split("|").map(enPixels).filter((a) => a.length >= 3);
               const sommets = polygones.flat();
@@ -4947,8 +5114,9 @@ function preremplirDepuisURL(){
                   + "remplissage : insensible aux traits de limite interrompus. "
                   + sommets.length + " sommets, emprise "
                   + (Math.max(...xs) - Math.min(...xs)) + "×" + (Math.max(...ys) - Math.min(...ys))
-                  + " px. Géoréférencement " + Math.abs(g.fx.a).toFixed(6) + " m/px, "
-                  + "corrélations " + g.fx.r.toFixed(4) + " et " + g.fy.r.toFixed(4) + "."
+                  + " px. Calage : " + calageDit + " — "
+                  + Math.abs(cfx.a).toFixed(6) + " m/px, corrélations OCR "
+                  + g.fx.r.toFixed(4) + " et " + g.fy.r.toFixed(4) + "."
                   + (nbAnnot ? " " + nbAnnot + " ligne(s) de tableau : " + annotMethode + "." : ""), "ok");
                 return;
               }
