@@ -2276,6 +2276,23 @@ function composerBlocParcelle(pdf, y, vue, M, L, budget, aLieudit){
     y += 6;
   }
 
+  // ⚠ UN EXTRAIT NON COLORIÉ SE DIT SUR LA PAGE, pas seulement au statut : la
+  // pièce part au dossier, le statut reste dans l'onglet. Sans cette mention,
+  // une page sans carmin est indistinguable d'une page correcte — ou pire, se lit
+  // comme « la parcelle n'a pas été retrouvée au plan ». Placée ICI, au-dessus
+  // des vues : la place est sûre, et la réserve précède la pièce qu'elle grève.
+  if(vue.reserve){
+    pdf.setFont(S.fonteDoc || "helvetica", "normal"); pdf.setFontSize(8);
+    pdf.setTextColor("#A01040");
+    // Pas de pictogramme : le glyphe « ⚠ » n'est pas garanti par la police du
+    // document (Selawik) — la couleur carmin et les capitales suffisent.
+    const lignesR = pdf.splitTextToSize("EXTRAIT DU PLAN NON COLORIÉ — la parcelle "
+      + "n'y est pas surlignée. " + vue.reserve, L);
+    pdf.text(lignesR, M, y + 8);
+    pdf.setTextColor(0, 0, 0);
+    y += lignesR.length * 10 + 8;
+  }
+
   if(vue.ortho){
     pdf.addImage(vue.ortho.data, "JPEG", M, y, w, w);
   }else{
@@ -2317,7 +2334,10 @@ function composerLocaux(pdf, y, p, M, L){
   const mB = (p.get("bati") || "").match(/^(\d+),(\d+)$/);
   if(!mB) return y;
   const nbBat = parseInt(mB[1], 10), nbLots = parseInt(mB[2], 10);
-  if(y + 60 > ph - 48){ pdf.addPage("a4", "portrait"); y = M; }
+  // ⚠ TOUJOURS SA PROPRE PAGE : c'est ce qui rend le renvoi du sommaire exact
+  // (une entrée = une page), et cela évite d'ouvrir le tableau des lots sous
+  // l'extrait cadastral de la dernière parcelle.
+  pdf.addPage("a4", "portrait"); y = M;
   pdf.setFont(S.fonteDoc || "helvetica", "bold"); pdf.setFontSize(11);
   pdf.text("LOCAUX BÂTIS", M, y); y += 6;
   pdf.setLineWidth(0.6); pdf.line(M, y, M + L, y); y += 16;
@@ -2990,7 +3010,7 @@ window.captureReserve = null;
 
 async function capturerPlanSection(p, g, blocs, rangs, pps){
   const sommets = [];
-  g.idx.forEach((i) => (blocs[i] || "").split(";").forEach((c) => {
+  g.idx.forEach((i) => (blocs[i] || "").replace(/~/g, ";").split(";").forEach((c) => {
     const [a, b] = c.split(",").map(parseFloat);
     if(Number.isFinite(a) && Number.isFinite(b)) sommets.push([a, b]);
   }));
@@ -3105,13 +3125,20 @@ async function doExportDocument(){
     // dernière parcelle — ce qu'on avait déjà accepté au premier jet. Le gain est
     // de NE PAS retoucher quatre fonctions validées : c'était le seul endroit où
     // une refonte pouvait introduire des erreurs invisibles.
-    const blocs = (p.get("poly") || "").split("|").map((b) => b.trim()).filter(Boolean);
+    // ⚠⚠ PLUS DE filter(Boolean) — correctif du 03/09/2026. Un bloc VIDE est la
+    // PLACE d'une parcelle sans contour cadastral. La retirer décalait poly d'un
+    // cran par rapport à pp et à tab : chaque parcelle suivante recevait le
+    // polygone de la précédente (donc hors cadre, overlay vide, aucune
+    // colorisation) ET la boucle, qui tourne blocs.length fois, faisait tomber
+    // la dernière parcelle du document. Sans un mot, sur ~74 % des volumes de
+    // 50 parcelles (2,7 % de références sans contour).
+    const blocs = aPoly ? (p.get("poly") || "").split("|").map((b) => b.trim()) : [];
     const aLieudit = rangs.some((r) => (r[3] || "").trim() !== "");
 
     // Zone déduite du premier sommet : il faut la connaître AVANT toute vue, pour
     // ne demander le fond communal qu'UNE SEULE FOIS. L'emprise de la commune ne
     // change pas d'une parcelle à l'autre, seule la croix se déplace.
-    const som0 = sommetsProjetes(blocs[0] || "");
+    const som0 = sommetsProjetes(blocs.find(Boolean) || "");
     const zz0 = som0.length ? (zoneCC(som0[0][1]) || {}).zz : null;
     let fond = null, infoCom = null;
     if(zz0){
@@ -3125,11 +3152,15 @@ async function doExportDocument(){
     // Paramètres par parcelle émis par REDPAR : prefixe, section, parcelle,
     // échelle, format. Sans eux, pas d'extrait — et surtout pas d'extrait à la
     // mauvaise échelle, ce qui serait pire.
+    // ⚠ Échelle et format VIDES = parcelle sans contour (suffixePP ne peut pas
+    // les calculer). Sans repli, extraitBrutDe laissait le formulaire à sa
+    // dernière valeur — celle de l'ENSEMBLE, jusqu'à 1/5000 en A3 — et la
+    // parcelle sortait en confetti. Repli sur la norme du cabinet.
     const pps = (p.get("pp") || "").split(";")
       .map((r) => r.split(",").map((c) => c.trim()))
       .filter((r) => r.length >= 3 && r[1] && r[2])
       .map((r) => ({ prefixe: r[0], section: r[1], parcelle: r[2],
-                     echelle: r[3] || "", format: r[4] || "" }));
+                     echelle: r[3] || "1000", format: r[4] || "A4|portrait" }));
 
     const journal = [];   // ce qui a été demandé pour chaque extrait, et sa signature
     // Budget PAR IMAGE, arrêté d'avance : cible 20 Mo répartis sur les trois
@@ -3162,20 +3193,37 @@ async function doExportDocument(){
       // extrait sans couleur vaut mieux qu'une page sans extrait, et le
       // journal dit lequel des deux est parti.
       spinmsg.textContent = "Extrait colorié " + (i + 1) + " sur " + blocs.length + "…";
-      let extrait = null, exDemande = "pas de pp", exSig = "—";
+      let extrait = null, exDemande = "pas de pp", exSig = "—", reserveParc = "";
       if(pps[i]){
         const gP = { label: "", sec: pps[i].section, idx: [i] };
         const cap = await capturerPlanSection(p, gP, blocs, rangs, pps);
         if(cap){
           extrait = cap;
-          exDemande = pps[i].prefixe + "/" + pps[i].section + "/" + pps[i].parcelle + " (colorié, iframe)";
+          // ⚠⚠ LA RÉSERVE EST LUE ICI — correctif du 03/09/2026. capturerPlanSection
+          // pose gP.reserve, et gP était un objet JETÉ dans la foulée : un extrait
+          // par parcelle rendu NON COLORIÉ ne disait donc RIEN, ni au statut ni sur
+          // la page. Vécu sur DUNKERQUE 248 AB 620 le 03/09/2026 : la page 6 portait
+          // un extrait parfaitement valide mais sans un gramme de carmin, et rien ne
+          // distinguait cette page d'une page correcte. C'est le même défaut de
+          // sourdine que Toulouse le 27/08 — le code savait pourquoi il renonçait.
+          reserveParc = gP.reserve || "";
+          exDemande = pps[i].prefixe + "/" + pps[i].section + "/" + pps[i].parcelle
+            + (reserveParc ? " (iframe OK, NON COLORIÉ : " + reserveParc + ")" : " (colorié, iframe)");
           exSig = signatureCanvas(cap);
         }else{
           const ex = await extraitBrutDe(pps[i]);
           extrait = ex ? ex.canvas : null;
-          exDemande = (ex ? ex.demande : "?") + " (repli BRUT, iframe en échec)";
+          reserveParc = blocs[i]
+            ? "capture coloriée en échec (service du cadastre ou délai de 120 s) : "
+              + "extrait BRUT, sans aucune colorisation."
+            : "parcelle SANS CONTOUR au plan cadastral Etalab (millésimes du plan et de "
+              + "la matrice non synchrones) : extrait BRUT, sans colorisation ni vue aérienne.";
+          exDemande = (ex ? ex.demande : "?") + (blocs[i] ? " (repli BRUT, iframe en échec)" : " (BRUT, sans contour)");
           exSig = ex ? ex.sig : "—";
         }
+      }else{
+        reserveParc = (blocs[i] ? "" : "parcelle sans contour cadastral : ")
+          + "aucun paramètre de parcelle transmis, extrait cadastral absent.";
       }
       journal.push((r ? r[0] + " " + r[1] : "?") + " → demandé " + exDemande + " → " + exSig);
       spin.classList.add("show");
@@ -3184,7 +3232,11 @@ async function doExportDocument(){
       // (« vue aérienne indisponible »). Avant, la parcelle sortait du document
       // en silence ET décalait toutes les pages du sommaire — deux torts.
       let orthoImg = null;
-      if(await chargerOrtho(q)){
+      // ⚠ SANS CONTOUR, PAS DE VUE AÉRIENNE : chargerOrtho se rabattrait sur le
+      // « pt » du lien, qui est le centre de l'ENSEMBLE — la page montrerait la
+      // bonne désignation, le bon extrait, et le ciel d'un AUTRE endroit, avec un
+      // rond dessus. Le cadre gris « Vue aérienne indisponible » dit la vérité.
+      if(blocs[i] && await chargerOrtho(q)){
         await contourOrtho(q, r ? [[r[0], r[1]]] : [], "");
         orthoImg = imgCompressee(buildExportCanvas(null), budgetImg);
       }
@@ -3195,6 +3247,7 @@ async function doExportDocument(){
                  ellipsesDe(blocs[i], "rond").map((e) => [e.cx, e.cy])), budgetImg) : null,
         ref: r ? (r[0] + " " + r[1]) : ("Parcelle " + (i + 1)),
         rang: r,
+        reserve: reserveParc,
         extrait: imgCompressee(extrait, budgetImg)
       });
       spin.classList.remove("show");
@@ -3256,6 +3309,12 @@ async function doExportDocument(){
           ? (v.rang[0] + " " + v.rang[1] + ((v.rang[3] || "").trim() ? " — " + v.rang[3].trim() : ""))
           : v.ref }));
     });
+    // ⚠ LE VOLET BÂTI MANQUAIT AU SOMMAIRE — correctif du 03/09/2026. Sur
+    // DUNKERQUE, le sommaire s'arrêtait p. 6 alors que le document comptait
+    // 9 pages : les trois pages LOCAUX BÂTIS n'y figuraient pas. La règle du
+    // sommaire est « une entrée = une page, numérotation séquentielle » : pour
+    // qu'elle tienne, composerLocaux ouvre DÉSORMAIS TOUJOURS sa propre page.
+    if(/^\d+,\d+$/.test((p.get("bati") || "").trim())) entrees.push({ label: "LOCAUX BÂTIS" });
 
     // ---- assemblage -----------------------------------------------------
     const { jsPDF } = window.jspdf;
@@ -3342,6 +3401,10 @@ async function doExportDocument(){
     const sigs = journal.map((l) => l.split(" → ").pop());
     const doubles = sigs.filter((v, i) => sigs.indexOf(v) !== i && v !== "—");
     const sansExtrait = vues.filter((v) => !v.extrait).map((v) => v.ref);
+    // EXTRAIT PRÉSENT MAIS NON COLORIÉ, par parcelle : la même distinction que
+    // sectionsAvecReserve, qui manquait aux pages de parcelle.
+    const parcellesAvecReserve = vues.filter((v) => v.extrait && v.reserve)
+      .map((v) => v.ref + " — " + v.reserve);
     setStatus("DOCUMENT généré (" + (blob.size / 1e6).toFixed(1) + " Mo, "
       + pdf.internal.getNumberOfPages() + " pages) — la désignation, "
       + groupes.filter((g) => g.plan).length + " plan(s) pleine page intercalé(s) "
@@ -3366,6 +3429,10 @@ async function doExportDocument(){
       + (sectionsAvecReserve.length
           ? " ⚠⚠ Plan(s) de section PRÉSENT(S) MAIS NON COLORIÉ(S) : "
             + sectionsAvecReserve.join(" ; ") + "."
+          : "")
+      + (parcellesAvecReserve.length
+          ? " ⚠⚠ Extrait(s) de parcelle PRÉSENT(S) MAIS NON COLORIÉ(S) : "
+            + parcellesAvecReserve.join(" ; ") + "."
           : "")
       + " — Journal des extraits : " + journal.join(" | ")
       + (alerteCarte ? " ⚠ Carte de situation cadrée par " + alerteCarte
@@ -3780,8 +3847,11 @@ function zoneCC(Y){
 
 /* Sommets projetés transmis par REDPAR, tous polygones confondus. */
 function sommetsProjetes(brut){
+  // ⚠ CONTRAT ÉTENDU LE 03/09/2026 : dans un bloc, les anneaux d'une MÊME
+  // parcelle sont séparés par « ~ » (une parcelle peut être en plusieurs
+  // morceaux). Ici seuls les sommets comptent : on aplatit les anneaux.
   return (brut || "").trim().split("|")
-    .flatMap(b => b.split(";").map(c => c.split(",").map(parseFloat)))
+    .flatMap(b => b.split("~").flatMap(a => a.split(";")).map(c => c.split(",").map(parseFloat)))
     .filter(q => q.length === 2 && Number.isFinite(q[0]) && Number.isFinite(q[1]));
 }
 
@@ -3804,8 +3874,10 @@ function sommetsProjetes(brut){
    Demi-axes en w/√2 et h/√2 : c'est l'ellipse qui passe par les quatre coins
    de la boîte. Plancher de 6 m pour qu'une parcelle de 10 ca reste visible. */
 function ellipsesDe(brut, mode){
+  // Un repère par PARCELLE, sur l'ensemble de ses anneaux (« ~ ») : deux ronds
+  // sur une parcelle en deux morceaux désigneraient deux biens.
   const blocs = (brut || "").trim().split("|")
-    .map(b => b.split(";").map(c => c.split(",").map(parseFloat))
+    .map(b => b.split("~").flatMap(a => a.split(";")).map(c => c.split(",").map(parseFloat))
                 .filter(q => q.length === 2 && Number.isFinite(q[0]) && Number.isFinite(q[1])))
     .filter(a => a.length >= 3);
   if(!blocs.length) return [];
@@ -5081,11 +5153,20 @@ function preremplirDepuisURL(){
             // poserait la couleur à côté de la parcelle, ce qui est pire qu'une
             // absence de couleur sur une pièce destinée à un acte.
             if(dansRendu && brutPoly && zonePoly === zonePlan){
-              const enPixels = (bloc) => bloc.split(";").map((c) => {
+              const enPixels = (anneau) => anneau.split(";").map((c) => {
                 const [a, b] = c.split(",").map(parseFloat);
                 return [Math.round((a - cfx.b) / cfx.a), Math.round((b - cfy.b) / cfy.a)];
               }).filter((q) => Number.isFinite(q[0]) && Number.isFinite(q[1]));
-              const polygones = brutPoly.split("|").map(enPixels).filter((a) => a.length >= 3);
+              // ⚠ TOUS LES ANNEAUX D'UN BLOC — correctif du 03/09/2026. Une
+              // parcelle en plusieurs morceaux (MultiPolygon) n'était coloriée
+              // que sur son plus gros morceau, REDPAR n'en transmettant qu'un.
+              // Les morceaux d'une même parcelle arrivent séparés par « ~ », les
+              // parcelles par « | ». Un bloc VIDE est la place d'une parcelle
+              // sans contour : il ne produit aucun anneau, et c'est correct.
+              const polygones = brutPoly.split("|")
+                .flatMap((bloc) => bloc.split("~"))
+                .map(enPixels)
+                .filter((a) => a.length >= 3);
               const sommets = polygones.flat();
               if(polygones.length){
                 oCtx.save();
