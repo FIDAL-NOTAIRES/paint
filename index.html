@@ -7,6 +7,16 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<!-- ATTENTE — écran d'attente partagé des outils FIDAL Notaires (dépôt
+     FIDAL-NOTAIRES/attente). Successeur direct du « voile de production »
+     écrit ici le 01/08/2026 et retiré le 09/09/2026 : PAINT en est le premier
+     consommateur.
+     ⚠ DOMAINE : attente.vercel.app, ET LUI SEUL. L'URL longue
+     attente-<compte>.vercel.app est couverte par l'authentification Vercel et
+     répond une redirection SSO au lieu du script — vérifié le 09/09/2026.
+     ⚠ « defer » : si le module tombe, PAINT démarre quand même et ne perd que
+     son écran d'attente. Rien ici ne doit pouvoir arrêter l'outil. -->
+<script defer src="https://attente.vercel.app/attente.js?v=4.3"></script>
 <style>
   :root{
     --navy-1:#16314f; --navy-2:#091525;
@@ -222,208 +232,32 @@
     filter:drop-shadow(0 1px 2px rgba(9,21,37,.45));
   }
   #toolring .badge svg{width:22px;height:22px}
-/* ---- VOILE DE PRODUCTION (docauto) — l'onglet travaille, on ne touche pas.
-   Demandé par JFD le 01/08 : l'interface qui se manipule toute seule appelait
-   la souris. Le voile couvre TOUT, dit où on en est, et sourit un peu. */
-#voile{position:fixed;inset:0;z-index:9999;display:none;flex-direction:column;
-  align-items:center;justify-content:center;gap:18px;background:#0F2238;
-  color:#fff;text-align:center;padding:32px;font-family:"Segoe UI",Selawik,system-ui,sans-serif}
-#voile.on{display:flex}
-#voile .vlogo{font-size:15px;letter-spacing:5px;color:#6DD5DC;font-weight:600}
-#voile .vtitre{font-size:34px;font-weight:700;letter-spacing:1px}
-#voile .vvol{font-size:15px;color:#9fb3c8;margin-top:-10px}
-#voile .vphase{font-size:15px;color:#e8eef5;min-height:22px}
-#voile .vbarre{width:min(520px,80vw);height:8px;border-radius:99px;background:rgba(255,255,255,.14);overflow:hidden}
-#voile .vbarre>div{height:100%;width:0%;background:#33838B;border-radius:99px;transition:width .6s ease}
-#voile .vquip{font-size:13.5px;color:#8fa5bb;font-style:italic;max-width:560px;min-height:20px;
-  opacity:1;transition:opacity .5s ease}
-#voile .vnote{font-size:12px;color:#657D96;margin-top:14px}
-#voile.fin .vbarre>div{background:#4caf7d}
-#voile{overflow:hidden}
-#voile.on{cursor:none}   /* la croix de visée remplace la souris */
-/* Trame cadastrale de fond, STATIQUE (les décors animés ont été retirés) */
-#voile::before{content:"";position:absolute;inset:0;opacity:.05;pointer-events:none;
-  background:repeating-linear-gradient(0deg,transparent 0 79px,#6DD5DC 79px 80px),
-             repeating-linear-gradient(90deg,transparent 0 79px,#6DD5DC 79px 80px)}
-/* ---- LE VISEUR : croix d'amorce jaune sous son cercle de visée, il SUIT la
-   souris (transform posé en JS). Recul bref à chaque tir. */
-#viseur{position:absolute;left:0;top:0;width:64px;height:64px;z-index:3;
-  pointer-events:none;transform:translate(-100px,-100px);will-change:transform}
-#viseur.recul .vcercle{transform:scale(.82)}
-.vcercle{position:absolute;inset:6px;border:2px dashed #6DD5DC;border-radius:50%;
-  opacity:.75;animation:vtourne 16s linear infinite;transition:transform .12s ease}
-@keyframes vtourne{to{transform:rotate(360deg)}}
-.vcroix::before,.vcroix::after{content:"";position:absolute;background:#FFE764;border-radius:2px;
-  animation:vpulse 2.4s ease-in-out infinite}
-.vcroix::before{left:50%;top:26%;bottom:26%;width:3px;margin-left:-1.5px}
-.vcroix::after{top:50%;left:26%;right:26%;height:3px;margin-top:-1.5px}
-@keyframes vpulse{0%,100%{opacity:.55}50%{opacity:1}}
-/* ---- LES CANARDS (JFD, 01/08 soir) — le défi de tir : traversée RAPIDE de
-   toute la largeur, altitude et sens tirés au sort, battement d'ailes, léger
-   tangage. Couleur canard, cela va de soi. Abattu : bascule et chute (la
-   position est figée en px au moment de l'impact, la traversée s'arrête, la
-   gravité prend le relais). Un canard vaut TROIS impressions évitées — c'est
-   la prime au tir difficile, ne cherchez pas d'autre logique. */
-.vcanard{position:absolute;z-index:1;pointer-events:none;left:0;top:var(--alt,30%);
-  animation:vvolcan var(--vit,4s) linear forwards;will-change:transform}
-@keyframes vvolcan{from{transform:translateX(-14vw)}to{transform:translateX(114vw)}}
-.vcanard.rg{animation-name:vvolcang}
-@keyframes vvolcang{from{transform:translateX(114vw)}to{transform:translateX(-14vw)}}
-.vbob{animation:vbob .5s ease-in-out infinite alternate}
-@keyframes vbob{from{transform:translateY(-6px)}to{transform:translateY(6px)}}
-.voiseau{position:relative;width:58px;height:36px}
-.rg .voiseau{transform:scaleX(-1)}
-.vcorps{position:absolute;left:0;top:11px;width:40px;height:20px;background:#33838B;
-  border-radius:52% 46% 42% 52%}
-.vqueue{position:absolute;left:-7px;top:13px;border-top:5px solid transparent;
-  border-bottom:5px solid transparent;border-right:10px solid #2a6d74}
-.vtete{position:absolute;right:4px;top:1px;width:16px;height:16px;background:#2a6d74;border-radius:50%}
-.voeil{position:absolute;right:8px;top:6px;width:3px;height:3px;background:#0F2238;border-radius:50%}
-.vbec{position:absolute;right:-7px;top:6px;border-top:4px solid transparent;
-  border-bottom:4px solid transparent;border-left:10px solid #FF982D}
-.vaile{position:absolute;left:11px;top:9px;width:19px;height:13px;background:#2a6d74;
-  border-radius:60% 60% 20% 60%;transform-origin:82% 18%;
-  animation:vbat .26s ease-in-out infinite alternate}
-@keyframes vbat{from{transform:rotate(-30deg)}to{transform:rotate(24deg)}}
-.vcanard.touche{animation:vchoit 1s ease-in forwards}
-.vcanard.touche .vbob,.vcanard.touche .vaile{animation:none}
-@keyframes vchoit{to{transform:translateY(110vh) rotate(160deg)}}
-/* ---- EXPLOSION : éclats de papier projetés depuis l'impact, bref éclair */
-.vfrag{position:absolute;z-index:1;pointer-events:none;border-radius:1px;
-  animation:veclate .7s ease-out forwards}
-@keyframes veclate{
-  0%{transform:translate(0,0) rotate(0deg);opacity:1}
-  100%{transform:translate(var(--dx,40px),var(--dy,40px)) rotate(var(--rot,220deg));opacity:0}}
-.vflash{position:absolute;z-index:1;pointer-events:none;border:2px solid #FFE764;
-  border-radius:50%;width:10px;height:10px;animation:vflash .3s ease-out forwards}
-@keyframes vflash{to{transform:scale(6);opacity:0}}
-/* ---- SCORE, clin d'œil de la maison */
-#vscore{position:absolute;top:22px;left:26px;z-index:2;font-size:13px;color:#8fa5bb}
-#vscore b{color:#6DD5DC;font-size:15px}
-/* Le contenu central passe DEVANT les promeneurs */
-#voile>.vlogo,#voile>.vtitre,#voile>.vvol,#voile>.vbarre,#voile>.vphase,
-#voile>.vquip,#voile>.vnote,#voile>#vmusique{position:relative;z-index:2}
-/* Pluie de documents (JFD, 01/08 soir) : sur TOUTE la largeur, des feuilles
-   tombent du haut avec la trajectoire d'un papier lâché — produit de DEUX
-   mouvements : chute verticale linéaire (porteur .vchute) × balancement
-   pendulaire avec bascule (feuille .vfeuillet). Paramètres tirés au sort en JS
-   (variables CSS), DÉLAIS NÉGATIFS pour un ciel déjà plein à l'ouverture.
-   Transform uniquement : compositeur GPU, coût nul sur la production. */
-#vchutes{position:absolute;inset:0;z-index:0;overflow:hidden;pointer-events:none}
-.vchute{position:absolute;top:-110px;will-change:transform;perspective:600px;
-  animation:vtombe var(--dur,14s) linear var(--del,0s) infinite}
-/* Vent de côté : la chute dérive latéralement (--vent, même sens pour toutes
-   les feuilles d'une session, force tirée au sort par feuille). */
-@keyframes vtombe{to{transform:translate(var(--vent,90px),120vh)}}
-/* Virevolte à DEUX PÉRIODES : le tangage court (.vtangue) se superpose au
-   balancement long (.vfeuillet) — deux périodes incommensurables, la
-   trajectoire ne se répète jamais, c'est ça l'aléatoire d'une vraie feuille. */
-.vtangue{animation:vtangue var(--bal2,1.1s) ease-in-out infinite alternate}
-@keyframes vtangue{
-  from{transform:translateX(calc(var(--amp2,10px)*-1)) rotateZ(-5deg)}
-  to{transform:translateX(var(--amp2,10px)) rotateZ(5deg)}}
-/* Feuille réaliste : grain de lumière en diagonale, VOLTIGE 3D (rotateY sous
-   perspective — le papier montre sa tranche en tombant), coin corné ombré,
-   et un CONTENU composé au hasard en JS : titre, paragraphes inégaux, parfois
-   sceau carmin ou paraphe. Aucune feuille n'est la copie d'une autre. */
-.vfeuillet{position:relative;width:var(--tail,40px);height:calc(var(--tail,40px)*1.35);
-  background:linear-gradient(135deg,#ffffff 0%,#f4f7fa 55%,#e7edf3 100%);
-  border-radius:2px;opacity:.62;box-shadow:0 3px 8px rgba(0,0,0,.35);
-  box-sizing:border-box;overflow:hidden;
-  animation:vbalance var(--bal,2.2s) ease-in-out infinite alternate}
-@keyframes vbalance{
-  from{transform:translateX(calc(var(--amp,30px)*-1))
-    rotateZ(calc(var(--gite,0deg) - 14deg)) rotateY(calc(var(--tourn,38deg)*-1))}
-  to{transform:translateX(var(--amp,30px))
-    rotateZ(calc(var(--gite,0deg) + 14deg)) rotateY(var(--tourn,38deg))}}
-/* ---- CINQ ESPÈCES de feuilles (choix JFD sur planches) : acte scellé,
-   mini-plan cadastral, chemise kraft, vue aérienne, carte de situation.
-   Chaque feuille tire son espèce au sort à la naissance (semerFeuille). ---- */
-/* Espèce ACTE : coin corné, titre, alinéas, sceau carmin, paraphe */
-.esp-acte{padding:14% 12% 10%}
-.esp-acte::before{content:"";position:absolute;top:0;right:0;width:0;height:0;
-  border:7px solid #d3dbe4;border-right-color:transparent;border-top-color:transparent;
-  filter:drop-shadow(-1px 1px 1px rgba(0,0,0,.18))}
-.esp-acte::after{content:"";position:absolute;top:0;right:0;
-  border:7px solid #0F2238;border-left-color:transparent;border-bottom-color:transparent}
-.vlgn{height:2px;background:#c3cfdb;border-radius:2px;margin:0 0 14% 0}
-.vlgn.t{height:4px;background:#8fa3b8;margin-bottom:16%}
-.vsceau{position:absolute;bottom:7%;right:9%;width:24%;aspect-ratio:1;
-  border:2px solid rgba(160,16,64,.55);border-radius:50%;transform:rotate(-14deg)}
-.vsceau::before{content:"";position:absolute;inset:22%;
-  border:1px solid rgba(160,16,64,.4);border-radius:50%}
-.vsign{position:absolute;bottom:9%;left:12%;width:36%;height:16%;
-  border-bottom:2px solid #5b6f83;border-radius:0 0 70% 40%/0 0 100% 55%;
-  transform:rotate(-7deg);opacity:.75}
-/* Espèce MINI-PLAN : cadre, parcelles jaunes/blanche, LA parcelle en carmin,
-   trait bleu du canal, croix d'amorce */
-.esp-plan{background:#fff;border:2px solid #b9c4cf}
-.vpar{position:absolute;border:1px solid rgba(120,110,60,.6)}
-.vpar.j{background:#FFE764}
-.vpar.b{background:#fff;border-color:#aeb9c4}
-.vpar.c{background:#d1729a;border-color:#A01040}
-.vcanal{position:absolute;left:-6%;right:-6%;height:8%;background:#4682B4;
-  transform:rotate(-7deg)}
-.vamorce{position:absolute;width:14%;aspect-ratio:1}
-.vamorce::before,.vamorce::after{content:"";position:absolute;background:#5b6f83}
-.vamorce::before{left:0;right:0;top:46%;height:8%}
-.vamorce::after{top:0;bottom:0;left:46%;width:8%}
-/* Espèce KRAFT : chemise, onglet, étiquette */
-.esp-kraft{background:linear-gradient(150deg,#dcc6a2,#c9b28a);border:1px solid #ab946f}
-.vonglet{position:absolute;top:0;left:6%;width:38%;height:9%;
-  background:#d3bc96;border:1px solid #ab946f;border-bottom:none;border-radius:3px 3px 0 0}
-.vetiq{position:absolute;top:36%;left:16%;right:16%;height:20%;
-  background:#fff;border:1px solid #b9b9b9;border-radius:2px}
-.vetiq::before,.vetiq::after{content:"";position:absolute;left:12%;height:12%;
-  background:#8fa3b8;border-radius:2px}
-.vetiq::before{top:24%;right:20%}
-.vetiq::after{top:58%;right:40%;background:#c3cfdb}
-/* Espèce VUE AÉRIENNE : mosaïque de verts, route, toits, anneau carmin, échelle */
-.esp-aerien{background:#46603c;border:1px solid #2c3e28}
-.vtuile{position:absolute;opacity:.9}
-.vroute{position:absolute;left:-6%;right:-6%;height:6%;background:#a8a28c;transform:rotate(6deg)}
-.vtoit{position:absolute;width:14%;height:8%;background:#b26050}
-.vanneau{position:absolute;width:34%;aspect-ratio:1;border:3px solid #A01040;border-radius:50%}
-.vechel{position:absolute;left:6%;bottom:5%;width:40%;height:9%;background:rgba(0,0,0,.45)}
-.vechel::before{content:"";position:absolute;left:12%;right:20%;top:38%;height:24%;background:#fff}
-/* Espèce CARTE DE SITUATION : fond crème, rivière, contour communal orange,
-   croix cerclée carmin */
-.esp-carte{background:#f4f2e8;border:1px solid #c8c8bc}
-.vriviere{position:absolute;left:-8%;right:-8%;height:7%;background:#96bedc;transform:rotate(-9deg)}
-.vcontour{position:absolute;inset:12% 14% 20% 12%;border:3px solid #FF982D;
-  border-radius:46% 54% 58% 42%/52% 44% 56% 48%;transform:rotate(-6deg)}
-.vcible{position:absolute;width:26%;aspect-ratio:1;border:2.5px solid #A01040;border-radius:50%}
-.vcible::before,.vcible::after{content:"";position:absolute;background:#A01040}
-.vcible::before{left:14%;right:14%;top:46%;height:9%}
-.vcible::after{top:14%;bottom:14%;left:46%;width:9%}
-/* Bouton musique : fantôme, discret */
-#vmusique{margin-top:6px;background:transparent;color:#8fa5bb;border:1px solid #33838B;
-  border-radius:99px;padding:5px 14px;font-size:12.5px;cursor:pointer}
-#vmusique.on{color:#0F2238;background:#6DD5DC;border-color:#6DD5DC}
+/* ---- TÉMOIN D'ATTENTE DES PREMIÈRES SECONDES ----------------------------
+   Le voile de production complet a quitté ce fichier le 09/09/2026 : son décor
+   entier (radio, canards, feuilles, viseur, score) vit dans le module ATTENTE.
+   Ne reste ici que le témoin des premières secondes — NON BLOQUANT
+   (pointer-events:none), il dit que l'onglet travaille sans rien couvrir. Au
+   delà de ATTENTE_SEUIL_MS, ATTENTE prend le relais et le témoin s'efface. */
+#attbadge{position:fixed;right:18px;bottom:18px;z-index:9998;display:none;
+  align-items:center;gap:9px;max-width:min(420px,80vw);
+  padding:10px 15px;border-radius:99px;pointer-events:none;
+  background:rgba(15,34,56,.94);color:#e8eef5;font-size:12.5px;line-height:1.35;
+  box-shadow:0 6px 22px rgba(9,21,37,.35)}
+#attbadge.on{display:flex}
+#attbadge .pt{flex:0 0 auto;width:9px;height:9px;border-radius:50%;background:#6DD5DC;
+  animation:attpouls 1.4s ease-in-out infinite}
+#attbadge b{color:#6DD5DC;font-weight:600}
+@keyframes attpouls{0%,100%{opacity:1}50%{opacity:.25}}
 /* Accessibilité : qui demande moins de mouvement l'obtient */
-@media (prefers-reduced-motion:reduce){
-  .vcercle,.vcroix::before,.vcroix::after,.vchute,.vtangue,.vfeuillet,
-  .vcanard,.vbob,.vaile{animation:none}
-}
+@media (prefers-reduced-motion:reduce){ #attbadge .pt{animation:none} }
 </style>
 </head>
 <body>
-<div id="voile">
-  <div id="vchutes" aria-hidden="true"></div>
-  <!-- STAND DE TIR (JFD, 01/08 soir) : la croix de visée SUIT LA SOURIS, les
-       dossiers qui tombent sont les cibles, le clic gauche les fait exploser.
-       Compteur « dossiers classés sans suite ». Tout autre décor a été retiré
-       à la demande — ne pas réintroduire coins, fantômes ni avion. -->
-  <div id="viseur" aria-hidden="true"><div class="vcercle"></div><div class="vcroix"></div></div>
-  <div id="vscore" aria-hidden="true">Impressions évitées : <b>0</b></div>
-  <div class="vlogo">FIDAL NOTAIRES</div>
-  <div class="vtitre" id="vtitre">Production en cours</div>
-  <div class="vvol" id="vvol"></div>
-  <div class="vbarre"><div id="vbarrefill"></div></div>
-  <div class="vphase" id="vphase">Préparation…</div>
-  <div class="vquip" id="vquip"></div>
-  <div class="vnote">Ne fermez pas cet onglet — il travaille seul et se refermera tout seul.</div>
-  <button id="vmusique" type="button" title="Petite musique générée, volume de bibliothèque — et l'onglet en arrière-plan garde sa pleine vitesse">♪ musique</button>
+<!-- Témoin d'attente des premières secondes. L'écran complet n'est plus dans
+     ce fichier : le module ATTENTE monte lui-même son #att-voile dans le body
+     au premier appel. -->
+<div id="attbadge" aria-hidden="true"><span class="pt"></span>
+  <span><b>Génération en cours</b> — cet onglet travaille seul, ne le fermez pas.</span>
 </div>
 
 <header>
@@ -642,6 +476,15 @@
 <div id="toolring"><div class="badge"></div></div>
 
 <script>
+
+/* ---- ATTENTE : SEUIL DE DÉCLENCHEMENT ------------------------------------
+   Durée pendant laquelle un traitement long reste discret — témoin #attbadge
+   et sablier de PAINT — avant que l'écran d'attente ATTENTE ne prenne le
+   relais. 30 000 ms en production (décision du 02/09/2026).
+   ⚠ POUR LES ESSAIS : descendre à 2000, vérifier à l'écran, PUIS REMONTER À
+   30000. C'est la seule valeur à toucher : tout le reste est dans attente.js. */
+const ATTENTE_SEUIL_MS = 30000;
+
 pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 
 /* ---------- État ---------- */
@@ -2399,385 +2242,80 @@ function composerLocaux(pdf, y, p, M, L){
   return y;
 }
 
-// ---- VOILE DE PRODUCTION (docauto) — JFD, 01/08 au soir --------------------
-// L'onglet du Dossier complet manipulait ses champs sous les yeux de
-// l'utilisateur : on croyait devoir interagir. Le voile couvre tout, SUIT LE
-// SABLIER (il relit spinmsg toutes les 400 ms et en extrait « i sur N » pour la
-// barre — zéro instrumentation des boucles, elles parlent déjà), et tourne une
-// pointe d'humour toutes les 7 s. Il s'efface si des RÉSERVES doivent se lire.
-const QUIPS_VOILE = [
-  "Le carmin, jamais le jaune : convention du plan cadastral oblige.",
-  "Chaque parcelle se fait tirer le portrait — trois poses par parcelle.",
-  "Tesseract relit les coordonnées en marge, à la loupe.",
-  "Un conservateur des hypothèques aurait demandé trois semaines et deux timbres.",
-  "Le service du cadastre a son rythme ; nous avons la patience.",
-  "Bornage au pixel près, sans convoquer le géomètre-expert.",
-  "Les contours sont projetés en conique conforme — la Terre est têtue, on s'adapte.",
-  "Pendant ce temps, votre café reste chaud. C'est le moment.",
-  "Chaque plan sort nu, pleine page : c'est la pièce qui fait foi.",
-  "Le sommaire se calcule avant d'exister — les pages tiennent parole.",
-];
-// ---- MUSIQUE GÉNÉRÉE (Web Audio) — aucune œuvre protégée, tout est
-// synthétisé : nappe grave + arpèges pentatoniques doux, volume de
-// bibliothèque. ⚠ L'autoplay sans geste est interdit par Chrome dans un onglet
-// ouvert par script : d'où le bouton ♪ ; la préférence est retenue
-// (localStorage) et RETENTÉE au volume suivant — si le navigateur refuse
-// encore, le bouton reste éteint, un clic suffit.
-// ⚠⚠ BONUS DE PERFORMANCE, mesurable : Chrome ÉTRANGLE les minuteries des
-// onglets en arrière-plan (jusqu'à 1/minute après 5 min) — ce qui ralentirait
-// le sondage des iframes et les pauses de reprise SCPC. Un onglet QUI JOUE DE
-// L'AUDIO EN EST EXEMPTÉ : la musique protège la cadence du traitement en
-// arrière-plan. Les animations, elles, vivent sur le compositeur (transform/
-// opacity) et se mettent seules en pause hors écran : coût nul sur les plans.
-// ---- RADIO CLASSIQUE D'ABORD, MUSIQUE MAISON EN REPLI (JFD, 01/08 soir) ----
-// Le flux est celui que la station diffuse publiquement (Infomaniak). ⚠ Adresse
-// NON CONTRACTUELLE : elle peut changer ou tomber sans préavis — d'où le REPLI
-// AUTOMATIQUE sur la musique générée, et l'état DIT sur le bouton. L'usage est
-// celui d'un poste de radio au bureau : écoute personnelle dans l'outil
-// interne. Un flux audible exempte l'onglet de l'étranglement d'arrière-plan
-// exactement comme la synthèse (voir la note de performance ci-dessous).
-const FLUX_RADIO_CLASSIQUE = "https://radioclassique.ice.infomaniak.ch/radioclassique-high.mp3";
-let vRadio = null;
-function radioDemarrer(){
-  return new Promise((res) => {
-    try{
-      if(!vRadio){
-        vRadio = new Audio(FLUX_RADIO_CLASSIQUE);
-        vRadio.volume = 0.35;
-      }
-      let tranche = false;
-      const echec = () => { if(!tranche){ tranche = true; res(false); } };
-      vRadio.addEventListener("error", echec, { once: true });
-      // Un flux en direct peut mettre 2-3 s à démarrer : on tranche sur play().
-      vRadio.play().then(() => { if(!tranche){ tranche = true; res(true); } }).catch(echec);
-      setTimeout(echec, 6000);   // flux muet au-delà de 6 s = échec, repli
-    }catch(e){ res(false); }
-  });
+// ---- ATTENTE — PASSERELLE VERS LE MODULE PARTAGÉ --------------------------
+// Le « voile de production » vivait ici : ~380 lignes écrites le 01/08/2026
+// (radio, musique de synthèse, canards, feuilles, viseur, score). Il a été
+// EXTRAIT en module autonome — dépôt FIDAL-NOTAIRES/attente, servi par
+// attente.vercel.app — et SUPPRIMÉ d'ici le 09/09/2026, SANS REPLI LOCAL :
+// décision du 01/09, on ne maintient pas deux fois la même mécanique. PAINT en
+// est le premier consommateur ; les autres outils appelleront le même module.
+// Le décor a beaucoup grandi entre-temps (dépêche, panneau de stade Ligue 1 +
+// Top 14, pellicule culturelle, compteurs, cadran de radio, stand de tir) : il
+// n'y a plus rien de tout cela à entretenir ici.
+//
+// Ce qui reste tient en trois noms — montrerVoile / voileFinal / masquerVoile
+// — CONSERVÉS EXPRÈS : les points d'appel historiques (préremplissage docauto,
+// fin d'export, catch d'échec) n'ont pas bougé d'une ligne, seul leur contenu a
+// changé. Un nom de plus ou de moins ici, et c'est une chasse dans 5 500 lignes.
+//
+// ⚠ LE SEUIL. ATTENTE ne se lève plus sur tout : montrerVoile ARME une
+// minuterie de ATTENTE_SEUIL_MS (réglée en haut de ce script). En deçà, le
+// témoin suffit — le sablier de PAINT dit déjà où on en est. Au-delà, ATTENTE
+// prend le relais et le témoin s'efface au même instant.
+//
+// ⚠ LA PROGRESSION. Aucune instrumentation des boucles, exactement comme
+// avant : ATTENTE relit #spinmsg toutes les 400 ms et y reconnaît « i sur N »
+// comme « 43 % ». Les messages du sablier n'ont donc rien à changer — mais ne
+// les privez pas de leur « i sur N », c'est la barre qui le lit.
+//
+// ⚠ ATTENTE.echec() EXISTE ET N'EST PAS APPELÉ ICI, volontairement : le module
+// affiche un bandeau par-dessus le décor qui continue de tourner, alors que la
+// règle de PAINT — écrite en capitales dans le catch de doExportDocument, et
+// payée le 31/07 — est qu'un échec doit SE LIRE. On lève donc l'écran au lieu
+// de le garder. Si un jour le bandeau est préféré, c'est là qu'il se branche.
+let attMinuterie = null;   // minuterie du seuil, armée entre montrer et lever
+let attLevee = false;      // ATTENTE est-il effectivement à l'écran ?
+function attTemoin(on){
+  const b = document.getElementById("attbadge");
+  if(b) b.classList.toggle("on", !!on);
 }
-function radioArreter(){
-  if(vRadio){ try{ vRadio.pause(); vRadio.src = ""; }catch(e){} vRadio = null; }
-}
-let vAudio = null;
-function musiqueDemarrer(){
-  try{
-    if(!vAudio){
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      const maitre = ctx.createGain(); maitre.gain.value = 0.055; maitre.connect(ctx.destination);
-      const nappe = ctx.createOscillator(); nappe.type = "sine"; nappe.frequency.value = 110;
-      const gNappe = ctx.createGain(); gNappe.gain.value = 0.22;
-      nappe.connect(gNappe); gNappe.connect(maitre); nappe.start();
-      vAudio = { ctx, maitre, prochaine: 0, minuterie: null };
-      // Planification avec AVANCE (30 s de notes posées d'avance, resservies
-      // toutes les 10 s) : même si la minuterie est étranglée en arrière-plan,
-      // l'horloge AUDIO, elle, ne s'arrête jamais — la musique reste fluide.
-      const GAMME = [220, 261.6, 293.7, 329.6, 392, 440, 523.3];
-      const poserNotes = () => {
-        const t0 = Math.max(vAudio.prochaine, vAudio.ctx.currentTime + 0.1);
-        let t = t0;
-        while(t < vAudio.ctx.currentTime + 30){
-          const f = GAMME[Math.floor(Math.random() * GAMME.length)];
-          const o = vAudio.ctx.createOscillator(); o.type = "triangle"; o.frequency.value = f;
-          const g = vAudio.ctx.createGain();
-          g.gain.setValueAtTime(0, t);
-          g.gain.linearRampToValueAtTime(0.5, t + 0.06);
-          g.gain.exponentialRampToValueAtTime(0.001, t + 1.9);
-          o.connect(g); g.connect(vAudio.maitre);
-          o.start(t); o.stop(t + 2);
-          t += 1.4 + Math.random() * 1.2;
-        }
-        vAudio.prochaine = t;
-      };
-      poserNotes();
-      vAudio.minuterie = setInterval(poserNotes, 10000);
-    }
-    return vAudio.ctx.resume().then(() => vAudio.ctx.state === "running");
-  }catch(e){ console.warn("musique :", e); return Promise.resolve(false); }
-}
-function musiqueArreter(){
-  if(!vAudio) return;
-  clearInterval(vAudio.minuterie);
-  try{ vAudio.ctx.close(); }catch(e){}
-  vAudio = null;
-}
-function musiqueBrancher(){
-  const b = document.getElementById("vmusique");
-  if(!b || b.dataset.pret) return;
-  b.dataset.pret = "1";
-  const maj = (etat) => {   // etat : "radio" | "maison" | false
-    b.classList.toggle("on", !!etat);
-    b.textContent = etat === "radio" ? "♪ Radio Classique — en direct"
-      : etat === "maison" ? "♪ musique maison (flux radio indisponible)"
-      : "♪ Radio Classique";
-  };
-  const demarrerTout = () => radioDemarrer().then((ok) => {
-    if(ok) return "radio";
-    return musiqueDemarrer().then((ok2) => (ok2 ? "maison" : false));
-  });
-  const arreterTout = () => { radioArreter(); musiqueArreter(); };
-  b.addEventListener("click", () => {
-    const enCours = (vRadio && !vRadio.paused) || (vAudio && vAudio.ctx.state === "running");
-    if(enCours){
-      arreterTout(); maj(false); localStorage.setItem("paint_voile_musique", "0");
-    }else{
-      demarrerTout().then((etat) => { maj(etat); if(etat) localStorage.setItem("paint_voile_musique", "1"); });
-    }
-  });
-  if(localStorage.getItem("paint_voile_musique") === "1")
-    demarrerTout().then(maj);   // retenté sans geste : accepté ou refusé, l'état du bouton le dit
-  else
-    maj(false);
-}
-// Pluie de documents : 14 feuilles semées sur toute la largeur, paramètres
-// tirés au sort. Délai NÉGATIF = la feuille est déjà en l'air à l'ouverture.
-// Le VENT de la session : un sens tiré au sort à l'ouverture, commun à toutes
-// les feuilles (un vent souffle d'un côté) ; la force varie par feuille.
-let vVent = 0;
-function semerFeuille(c, enChute){
-  if(!vVent) vVent = Math.random() < 0.5 ? -1 : 1;
-  const d = document.createElement("div"); d.className = "vchute";
-  const g = document.createElement("div"); g.className = "vtangue";
-  const f = document.createElement("div"); f.className = "vfeuillet";
-  d.style.left = (2 + Math.random() * 96).toFixed(1) + "vw";
-  d.style.setProperty("--dur", (10 + Math.random() * 9).toFixed(1) + "s");
-  // enChute : délai NÉGATIF, la feuille est déjà en l'air (ciel plein à
-  // l'ouverture). Sinon (réapparition après un tir) : elle repart du haut.
-  d.style.setProperty("--del", enChute ? (-Math.random() * 18).toFixed(1) + "s" : "0s");
-  d.style.setProperty("--vent", Math.round(vVent * (40 + Math.random() * 170)) + "px");
-  g.style.setProperty("--bal2", (0.8 + Math.random() * 0.9).toFixed(2) + "s");
-  g.style.setProperty("--amp2", Math.round(6 + Math.random() * 14) + "px");
-  f.style.setProperty("--tail", Math.round(30 + Math.random() * 30) + "px");
-  f.style.setProperty("--amp", Math.round(18 + Math.random() * 46) + "px");
-  f.style.setProperty("--bal", (1.8 + Math.random() * 1.8).toFixed(2) + "s");
-  f.style.setProperty("--gite", Math.round(vVent * (3 + Math.random() * 6)) + "deg");
-  f.style.setProperty("--tourn", Math.round(22 + Math.random() * 34) + "deg");
-  // CINQ ESPÈCES (choix JFD sur planches) : acte scellé, mini-plan, chemise
-  // kraft, vue aérienne, carte de situation. Tirage au sort à la naissance,
-  // contenu composé au hasard — aucune feuille n'est la copie d'une autre.
-  const el = (cls, css) => {
-    const e = document.createElement("div");
-    e.className = cls;
-    if(css) for(const k in css) e.style[k] = css[k];
-    f.appendChild(e); return e;
-  };
-  const pc = (a, b) => Math.round(a + Math.random() * (b - a)) + "%";
-  const espece = ["acte", "plan", "kraft", "aerien", "carte"][Math.floor(Math.random() * 5)];
-  f.classList.add("esp-" + espece);
-  if(espece === "acte"){
-    el("vlgn t", { width: pc(45, 75) });
-    const nl = 3 + Math.floor(Math.random() * 3);
-    for(let j = 0; j < nl; j++)
-      el("vlgn", { width: (j === nl - 1) ? pc(35, 65) : pc(62, 96) });
-    el("vsceau"); el("vsign");
-  }else if(espece === "plan"){
-    el("vpar j", { left: pc(8, 14), top: pc(10, 16), width: pc(26, 36), height: pc(16, 24), transform: "rotate(-8deg)" });
-    el("vpar b", { right: pc(8, 14), top: pc(12, 20), width: pc(24, 34), height: pc(18, 24), transform: "rotate(5deg)" });
-    el("vpar j", { left: pc(10, 18), top: pc(44, 52), width: pc(22, 30), height: pc(16, 22), transform: "rotate(4deg)" });
-    el("vpar c", { right: pc(12, 22), top: pc(42, 50), width: pc(26, 34), height: pc(20, 26), transform: "rotate(-5deg)" });
-    el("vcanal", { top: pc(76, 84) });
-    el("vamorce", { left: pc(40, 52), top: pc(28, 36) });
-  }else if(espece === "kraft"){
-    el("vonglet"); el("vetiq");
-  }else if(espece === "aerien"){
-    const verts = ["#587448", "#3c5434", "#687c54", "#7a8060"];
-    for(let j = 0; j < 9; j++)
-      el("vtuile", { left: pc(2, 78), top: pc(2, 80), width: pc(10, 24), height: pc(7, 16),
-        background: verts[Math.floor(Math.random() * verts.length)] });
-    el("vroute", { top: pc(58, 70) });
-    el("vtoit", { left: pc(12, 30), top: pc(20, 34) });
-    el("vtoit", { left: pc(46, 62), top: pc(14, 28) });
-    el("vanneau", { left: pc(30, 48), top: pc(34, 48) });
-    el("vechel");
-  }else{ // carte de situation
-    el("vriviere", { top: pc(66, 78) });
-    el("vcontour");
-    el("vcible", { left: pc(32, 44), top: pc(34, 46) });
-  }
-  g.appendChild(f); d.appendChild(g); c.appendChild(d);
-}
-function chutesLancer(){
-  if(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-  const c = document.getElementById("vchutes");
-  if(!c || c.childElementCount) return;
-  for(let i = 0; i < 14; i++) semerFeuille(c, true);
-}
-function chutesArreter(){
-  const c = document.getElementById("vchutes");
-  if(c) c.innerHTML = "";
-}
-// Un canard traverse — vite. Sens, altitude, vitesse tirés au sort ; il se
-// retire tout seul au bout de sa course. Ne vole pas si le mouvement réduit
-// est demandé, ni si le voile est déjà tombé.
-function semerCanard(){
-  if(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-  const v = document.getElementById("voile"), c = document.getElementById("vchutes");
-  if(!v || !v.classList.contains("on") || !c) return;
-  const d = document.createElement("div");
-  d.className = "vcanard" + (Math.random() < 0.5 ? " rg" : "");
-  d.style.setProperty("--alt", Math.round(10 + Math.random() * 55) + "%");
-  const vit = 3 + Math.random() * 2.5;
-  d.style.setProperty("--vit", vit.toFixed(2) + "s");
-  const b = document.createElement("div"); b.className = "vbob";
-  const o = document.createElement("div"); o.className = "voiseau";
-  ["vqueue", "vcorps", "vtete", "voeil", "vbec", "vaile"].forEach((cl) => {
-    const e = document.createElement("div"); e.className = cl; o.appendChild(e);
-  });
-  b.appendChild(o); d.appendChild(b); c.appendChild(d);
-  setTimeout(() => d.remove(), vit * 1000 + 300);   // bout de course, sans trophée
-}
-// ---- STAND DE TIR (JFD, 01/08 soir) : la croix suit le pointeur, clic gauche
-// = tir. Test d'impact MANUEL (getBoundingClientRect sur ~14 feuilles — les
-// feuilles restent pointer-events:none, donc elementsFromPoint ne les voit
-// pas ; le calcul direct est trivial et sûr). Une feuille touchée explose en
-// éclats de papier, une nouvelle repart du haut 1,5 à 3 s plus tard : la
-// densité du ciel est constante. Le bouton ♪ reste cliquable : un pointerdown
-// dont la cible est le bouton n'est PAS un tir. #voile étant fixed inset:0,
-// clientX/Y sont directement les coordonnées dans le voile.
-let vTirs = { score: 0, arme: false };
-function viseurArmer(){
-  const v = document.getElementById("voile"), s = document.getElementById("viseur");
-  if(!v || !s || vTirs.arme) return;
-  vTirs.arme = true;
-  v.addEventListener("pointermove", (e) => {
-    s.style.transform = "translate(" + (e.clientX - 32) + "px," + (e.clientY - 32) + "px)";
-  });
-  v.addEventListener("pointerdown", (e) => {
-    if(e.target && e.target.closest && e.target.closest("#vmusique")) return;   // le bouton se clique, ne se tire pas
-    if(e.button !== undefined && e.button !== 0) return;                        // clic gauche seulement
-    s.style.transform = "translate(" + (e.clientX - 32) + "px," + (e.clientY - 32) + "px)";
-    s.classList.add("recul");
-    setTimeout(() => s.classList.remove("recul"), 130);
-    tirer(e.clientX, e.clientY);
-  });
-}
-function tirer(x, y){
-  const c = document.getElementById("vchutes");
-  if(!c) return;
-  // Les CANARDS d'abord : cible prioritaire (et plus dure). Un canard touché
-  // fige sa position en px, bascule, chute — et vaut TROIS impressions.
-  for(const d of c.querySelectorAll(".vcanard:not(.touche)")){
-    const o = d.querySelector(".voiseau");
-    const r = o.getBoundingClientRect();
-    if(x >= r.left - 6 && x <= r.right + 6 && y >= r.top - 6 && y <= r.bottom + 6){
-      abattreCanard(c, d, r, x, y);
-      return;
-    }
-  }
-  const feuilles = c.querySelectorAll(".vchute");
-  for(const d of feuilles){
-    const f = d.querySelector(".vfeuillet");   // la feuille est sous le tangage
-    if(!f) continue;
-    const r = f.getBoundingClientRect();
-    if(x >= r.left - 6 && x <= r.right + 6 && y >= r.top - 6 && y <= r.bottom + 6){
-      exploserFeuille(c, d, x, y);
-      return;   // un tir, un dossier — pas de carton double
-    }
-  }
-}
-function abattreCanard(c, d, r, x, y){
-  // Figer la position (la traversée s'arrête), puis laisser tomber.
-  d.style.left = r.left + "px";
-  d.style.top = r.top + "px";
-  d.style.setProperty("--alt", "0");
-  d.classList.add("touche");
-  setTimeout(() => d.remove(), 1100);
-  const flash = document.createElement("div");
-  flash.className = "vflash";
-  flash.style.left = (x - 5) + "px"; flash.style.top = (y - 5) + "px";
-  c.appendChild(flash);
-  setTimeout(() => flash.remove(), 350);
-  const plumes = ["#33838B", "#2a6d74", "#ffffff", "#ffffff", "#FF982D"];
-  for(let k = 0; k < 12; k++){
-    const fr = document.createElement("div");
-    fr.className = "vfrag";
-    const a = Math.random() * 2 * Math.PI, dist = 35 + Math.random() * 70;
-    fr.style.left = x + "px"; fr.style.top = y + "px";
-    fr.style.width = (3 + Math.random() * 6) + "px";
-    fr.style.height = (6 + Math.random() * 9) + "px";
-    fr.style.borderRadius = "50% 50% 50% 0";
-    fr.style.background = plumes[Math.floor(Math.random() * plumes.length)];
-    fr.style.setProperty("--dx", Math.round(Math.cos(a) * dist) + "px");
-    fr.style.setProperty("--dy", Math.round(Math.sin(a) * dist + 24) + "px");
-    fr.style.setProperty("--rot", Math.round((Math.random() - 0.5) * 540) + "deg");
-    c.appendChild(fr);
-    setTimeout(() => fr.remove(), 750);
-  }
-  vTirs.score += 3;
-  const sc = document.querySelector("#vscore b");
-  if(sc) sc.textContent = String(vTirs.score);
-}
-function exploserFeuille(c, d, x, y){
-  d.remove();
-  const flash = document.createElement("div");
-  flash.className = "vflash";
-  flash.style.left = (x - 5) + "px"; flash.style.top = (y - 5) + "px";
-  c.appendChild(flash);
-  setTimeout(() => flash.remove(), 350);
-  const teintes = ["#ffffff", "#ffffff", "#c7d2de", "#FFE764", "#A01040"];
-  for(let k = 0; k < 10; k++){
-    const fr = document.createElement("div");
-    fr.className = "vfrag";
-    const a = Math.random() * 2 * Math.PI, dist = 45 + Math.random() * 85;
-    fr.style.left = x + "px"; fr.style.top = y + "px";
-    fr.style.width = (4 + Math.random() * 8) + "px";
-    fr.style.height = (5 + Math.random() * 10) + "px";
-    fr.style.background = teintes[Math.floor(Math.random() * teintes.length)];
-    fr.style.setProperty("--dx", Math.round(Math.cos(a) * dist) + "px");
-    fr.style.setProperty("--dy", Math.round(Math.sin(a) * dist + 30) + "px");
-    fr.style.setProperty("--rot", Math.round((Math.random() - 0.5) * 720) + "deg");
-    c.appendChild(fr);
-    setTimeout(() => fr.remove(), 750);
-  }
-  vTirs.score += 1;
-  const sc = document.querySelector("#vscore b");
-  if(sc) sc.textContent = String(vTirs.score);
-  setTimeout(() => { const cc = document.getElementById("vchutes"); if(cc && cc.childElementCount) semerFeuille(cc, false); },
-    1500 + Math.random() * 1500);
-}
-let voileTimers = null;
 function montrerVoile(titre, sousTitre){
-  const v = document.getElementById("voile");
-  if(!v || voileTimers) return;
-  document.getElementById("vtitre").textContent = titre || "Production en cours";
-  document.getElementById("vvol").textContent = sousTitre || "";
-  v.classList.add("on");
-  const quip = document.getElementById("vquip");
-  let qi = Math.floor(Math.random() * QUIPS_VOILE.length);
-  const tourneQuip = () => {
-    quip.style.opacity = "0";
-    setTimeout(() => { quip.textContent = QUIPS_VOILE[qi++ % QUIPS_VOILE.length]; quip.style.opacity = "1"; }, 500);
+  if(attMinuterie || attLevee) return;        // une seule attente à la fois
+  const opts = {
+    titre: titre || "Production en cours",
+    sousTitre: sousTitre || "",
+    source: "#spinmsg",                       // le sablier de PAINT, relu par ATTENTE
   };
-  tourneQuip();
-  const suit = () => {
-    const t = (spinmsg && spinmsg.textContent) || "";
-    if(t) document.getElementById("vphase").textContent = t;
-    const m = t.match(/(\d+)\s*(?:sur|\/)\s*(\d+)/);
-    if(m){
-      const frac = Math.min(1, parseInt(m[1], 10) / Math.max(1, parseInt(m[2], 10)));
-      document.getElementById("vbarrefill").style.width = Math.round(frac * 100) + "%";
-    }
-  };
-  voileTimers = { quip: setInterval(tourneQuip, 7000), suit: setInterval(suit, 400),
-    canard: setInterval(() => { if(Math.random() < 0.6) semerCanard(); }, 7000) };
-  setTimeout(semerCanard, 3500);   // le premier ne se fait pas attendre
-  musiqueBrancher();
-  chutesLancer();
-  viseurArmer();
+  attTemoin(true);
+  attMinuterie = setTimeout(() => {
+    attMinuterie = null;
+    // Filet : au moment de lever, on s'assure qu'un traitement tourne VRAIMENT.
+    // Sinon, c'est que le chemin docauto s'est arrêté en route (plan non
+    // chargé, données non reçues de REDPAR) : l'écran viendrait alors couvrir
+    // un message d'erreur en train d'être lu — l'inverse exact du but.
+    const elBtn = document.getElementById("docbtn");
+    const elSpin = document.getElementById("spin");
+    const tourne = (elBtn && elBtn.disabled) || (elSpin && elSpin.classList.contains("show"));
+    if(!tourne){ attTemoin(false); return; }
+    // Module absent (réseau, déploiement en panne) : le témoin reste et c'est
+    // tout. L'outil ne s'arrête JAMAIS faute d'écran d'attente.
+    if(!window.ATTENTE) return;
+    attTemoin(false);
+    attLevee = true;
+    try{ window.ATTENTE.demarrer(opts); }
+    catch(e){ attLevee = false; attTemoin(true); console.error("ATTENTE.demarrer", e); }
+  }, ATTENTE_SEUIL_MS);
 }
-function voileFinal(message){
-  const v = document.getElementById("voile");
-  if(!v || !v.classList.contains("on")) return;
-  v.classList.add("fin");
-  document.getElementById("vbarrefill").style.width = "100%";
-  document.getElementById("vphase").textContent = message || "Terminé.";
-  document.getElementById("vquip").textContent = "";
-}
+// Fin normale. ATTENTE monte sa barre à 100 %, coupe la radio, arrête le stand
+// et s'efface de lui-même : rien à afficher de plus ici. Le message de fin
+// (« l'onglet se referme dans 8 secondes ») est déjà dit par showHint, sur la
+// page qui réapparaît — c'est la bascule immédiate voulue le 01/09.
+function voileFinal(message){ masquerVoile(); }
 function masquerVoile(){
-  const v = document.getElementById("voile");
-  if(v) v.classList.remove("on", "fin");
-  if(voileTimers){ clearInterval(voileTimers.quip); clearInterval(voileTimers.suit);
-    clearInterval(voileTimers.canard); voileTimers = null; }
-  radioArreter(); musiqueArreter();   // le voile parti, le silence revient
-  chutesArreter();
+  if(attMinuterie){ clearTimeout(attMinuterie); attMinuterie = null; }
+  attTemoin(false);
+  if(attLevee && window.ATTENTE){ try{ window.ATTENTE.terminer(); }catch(e){} }
+  attLevee = false;
 }
 // ---- POLICE DU DOCUMENT : SELAWIK, LE SEGOE UI LIBRE (JFD, 01/08) ----------
 // Segoe UI est propriétaire : l'embarquer violerait sa licence. Selawik est le
@@ -3093,6 +2631,13 @@ async function doExportDocument(){
     return;
   }
   btn.disabled = true;
+  // ---- ATTENTE : armée pour TOUT dossier complet, pas seulement docauto.
+  // En docauto, le préremplissage l'a déjà armée (titre = commune, sous-titre
+  // = volume) et montrerVoile ne fait alors rien de plus — il sort tout de
+  // suite. Lancé à la main, le même traitement dure tout aussi longtemps : il
+  // mérite le même écran. Levée par le « finally » plus bas, quoi qu'il arrive.
+  montrerVoile(((selectedCommune2 && selectedCommune2.nom) || "Dossier complet").toUpperCase(),
+    "Dossier complet");
   let alerteCarte = "";
   try{
     const p = new URLSearchParams(location.search);
@@ -3471,6 +3016,10 @@ async function doExportDocument(){
   }finally{
     btn.disabled = false;
     spin.classList.remove("show");
+    // Filet de sécurité : quelle que soit la sortie — succès, réserves, échec
+    // — l'écran d'attente ne survit pas au traitement. Idempotent, les appels
+    // explicites ci-dessus peuvent l'avoir déjà levé.
+    masquerVoile();
   }
 }
 document.getElementById("docbtn").onclick = doExportDocument;
