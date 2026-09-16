@@ -492,7 +492,7 @@
     <!-- Marqueur de build. Sert à savoir d'un coup d'œil si le navigateur sert
          la dernière version ou une page en cache. Ctrl+Shift+R si la date
          affichée n'est pas celle du dernier dépôt. -->
-    <span id="build" title="Version déployée">2026-09-16s</span>
+    <span id="build" title="Version déployée">2026-09-16t</span>
   </div>
   <div class="hbar">
     <div class="pagenav" id="pagenav" style="display:none">
@@ -653,18 +653,18 @@
           </div>
 
           <div class="method actif" data-volet="adresse" style="--acc:#4E98A0">
-            <p class="method-sub">Choisissez la commune, puis le numéro et la voie.</p>
+            <p class="method-sub">Tapez l'adresse : la commune se déduit de celle que vous choisissez.</p>
+            <!-- Le champ Commune a été retiré le 16/09/2026. Il faisait double
+                 emploi : la recherche d'adresse porte sur toute la France et la
+                 réponse de la Base Adresse Nationale contient déjà le code INSEE
+                 de la commune, qui est la seule chose dont la génération a
+                 besoin. Le renseigner d'abord n'était qu'une étape en plus.
+                 selectedCommune subsiste comme variable, alimentée par l'adresse
+                 retenue ou par la dictée. -->
             <div class="gen-grid">
-              <label style="grid-column:1/-1">Commune
-                <div class="ac-wrap" id="g_commune_wrap">
-                  <input id="g_commune_nom" placeholder="Tapez le nom (ex. Saint-Omer)" autocomplete="off">
-                  <div class="ac-list" id="g_commune_list"></div>
-                </div>
-                <div id="g_commune_mark"></div>
-              </label>
               <label style="grid-column:1/-1">Adresse
                 <div class="ac-wrap" id="g_adr_wrap">
-                  <input id="g_adr_nom" placeholder="Ex. 65 Rue de Paris — ou « 65 Rue de Paris, Lille »" autocomplete="off">
+                  <input id="g_adr_nom" placeholder="Ex. 65 Rue de Paris, Lille" autocomplete="off">
                   <div class="ac-list" id="g_adr_list"></div>
                 </div>
                 <div id="g_addr_mark" style="font-size:11px;margin-top:2px"></div>
@@ -1014,11 +1014,15 @@ document.getElementById("fontsize").oninput=e=>{
 
 /* ---------- Autocomplétion commune (geo.api.gouv.fr, vérif temps réel) ---------- */
 let selectedCommune=null, acTimer=null;
+/* ⚠ Le champ Commune du volet Adresse N'EXISTE PLUS. Ces accesseurs rendent donc
+   null, et les fonctions qui s'en servaient sont neutralisées plutôt que
+   supprimées : elles restent appelées depuis la dictée et depuis le choix d'une
+   adresse, qui renseignent selectedCommune. Ne pas retirer les gardes. */
 const cNom=()=>document.getElementById("g_commune_nom");
 const cList=()=>document.getElementById("g_commune_list");
 const cMark=()=>document.getElementById("g_commune_mark");
-function acClear(){ cList().innerHTML=""; cList().classList.remove("show"); }
-function acMark(state,txt){ const m=cMark(); m.textContent=txt||""; m.className = state==="ok"?"ac-ok":(state==="bad"?"ac-bad":""); }
+function acClear(){ const l=cList(); if(!l) return; l.innerHTML=""; l.classList.remove("show"); }
+function acMark(state,txt){ const m=cMark(); if(!m) return; m.textContent=txt||""; m.className = state==="ok"?"ac-ok":(state==="bad"?"ac-bad":""); }
 async function acSearch(q){
   try{
     const r=await fetch("https://geo.api.gouv.fr/communes?nom="+encodeURIComponent(q)+"&fields=nom,code,codesPostaux,departement&boost=population&limit=7");
@@ -1035,14 +1039,15 @@ function acRender(list){
     const it=document.createElement("div");
     it.className="ac-item";
     it.innerHTML="<span>"+c.nom+"</span><small>"+dep+(cp?" · "+cp:"")+"</small>";
-    it.onclick=()=>{ selectedCommune={code:c.code,nom:c.nom}; cNom().value=c.nom; acClear(); acMark("ok","✓ "+c.nom+" — INSEE "+c.code); enableAddr(); };
+    it.onclick=()=>{ selectedCommune={code:c.code,nom:c.nom}; const n=cNom(); if(n) n.value=c.nom; acClear(); acMark("ok","✓ "+c.nom+" — INSEE "+c.code); enableAddr(); };
     el.appendChild(it);
   });
   el.classList.add("show");
 }
 function acOnInput(){
+  const n=cNom(); if(!n) return;
   selectedCommune=null; acMark("",""); disableAddr();
-  const q=cNom().value.trim();
+  const q=n.value.trim();
   clearTimeout(acTimer);
   if(q.length<2){ acClear(); return; }
   acTimer=setTimeout(async()=>{
@@ -1051,11 +1056,7 @@ function acOnInput(){
     acRender(list);
   },250);
 }
-document.getElementById("g_commune_nom").addEventListener("input",acOnInput);
-document.getElementById("g_commune_nom").addEventListener("keydown",e=>{
-  if(e.key==="Enter"){ e.preventDefault(); const f=cList().querySelector(".ac-item"); if(f) f.click(); }
-});
-document.addEventListener("click",e=>{ if(!e.target.closest("#g_commune_wrap")) acClear(); });
+// Le champ a disparu : on ne branche plus rien dessus.
 
 /* ---------- Autocomplétion commune — méthode ② (références), indépendante de ① ---------- */
 let selectedCommune2=null, ac2Timer=null;
@@ -1109,13 +1110,12 @@ function addrMark(state,txt){ const m=document.getElementById("g_addr_mark"); m.
    France et la commune est déduite de l'adresse choisie. */
 function enableAddr(){
   const i=adrNom(); i.disabled=false;
-  i.placeholder = selectedCommune ? "N° et voie (ex. 65 Rue de Paris)"
-                                  : "Ex. 65 Rue de Paris — ou « 65 Rue de Paris, Lille »";
+  i.placeholder = "Ex. 65 Rue de Paris, Lille";
 }
 function disableAddr(){
   // Ne verrouille plus rien : remet seulement le champ à un état neutre.
   const i=adrNom(); i.disabled=false;
-  i.placeholder="Ex. 65 Rue de Paris — ou « 65 Rue de Paris, Lille »";
+  i.placeholder="Ex. 65 Rue de Paris, Lille";
   resolvedRefs=null; addrMark("",""); adrListClear();
   if(typeof recog!=="undefined" && recog && recActive){ try{recog.stop();}catch(e){} }
 }
@@ -1171,11 +1171,8 @@ function adrRender(list){
       adrNom().value=p.label; adrListClear(); resolvedRefs=null;
       // L'adresse porte sa commune : on la retient si elle n'avait pas été
       // choisie, et on remplit le champ Commune pour que l'écran reste lisible.
-      if(!selectedCommune && p.citycode){
-        selectedCommune={code:p.citycode, nom:p.city||""};
-        cNom().value=p.city||"";
-        acClear(); acMark("ok","✓ "+(p.city||"")+" — INSEE "+p.citycode);
-      }
+      // La commune vient de l'adresse retenue : c'est désormais la seule voie.
+      if(p.citycode) selectedCommune={code:p.citycode, nom:p.city||""};
       const coords=f.geometry&&f.geometry.coordinates;
       if(!coords){ addrMark("bad","adresse sans coordonnées"); return; }
       addrMark("","Recherche de la parcelle…");
@@ -1221,7 +1218,6 @@ async function resolveDictation(q){
     if(!f) throw new Error("adresse introuvable");
     const p=f.properties||{};
     selectedCommune={code:p.citycode,nom:p.city};
-    cNom().value=p.city||""; acMark("ok","✓ "+(p.city||"")+(p.citycode?" — INSEE "+p.citycode:""));
     enableAddr();
     adrNom().value=p.label||q;
     const coords=f.geometry&&f.geometry.coordinates;
@@ -1245,7 +1241,7 @@ async function resolveDictation(q){
   recog.onerror=ev=>{ recActive=false; btn.classList.remove("rec"); reset(); addrMark("bad","Dictée : "+(ev.error==="not-allowed"?"accès micro refusé":(ev.error==="no-speech"?"rien entendu":ev.error))); };
   btn.onclick=()=>{
     if(recActive){ try{recog.stop();}catch(e){} return; }
-    selectedCommune=null; resolvedRefs=null; cNom().value=""; acMark("",""); enableAddr(); adrNom().value=""; addrMark("","Dictez la ville et l'adresse, puis patientez…");
+    selectedCommune=null; resolvedRefs=null; enableAddr(); adrNom().value=""; addrMark("","Dictez la ville et l'adresse, puis patientez…");
     try{ recog.start(); recActive=true; btn.classList.add("rec"); if(lbl) lbl.textContent="● Écoute… (cliquez pour arrêter)"; }
     catch(e){ recActive=false; }
   };
@@ -1270,7 +1266,7 @@ function setGenStatus(t,cls){ const e=document.getElementById("genstatus"); e.te
 async function generateExtrait(mode){
   const v=id=>document.getElementById(id).value.trim();
   const commune = (mode==="adresse") ? selectedCommune : selectedCommune2;
-  if(!commune){ setGenStatus(mode==="adresse" ? "Indiquez d'abord une commune, dans « Par adresse »." : "Indiquez d'abord une commune, dans « Par références cadastrales ».","err"); return; }
+  if(!commune){ setGenStatus(mode==="adresse" ? "Choisissez une adresse dans la liste de propositions." : "Indiquez d'abord une commune.","err"); return; }
   let prefixe=v("g_prefixe"), section=v("g_section").toUpperCase(), parcelle=v("g_parcelle");
   const [taille,orientation]=document.getElementById("g_format").value.split("|");
   const echelle=document.getElementById("g_echelle").value;
