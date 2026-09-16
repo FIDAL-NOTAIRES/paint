@@ -16,7 +16,7 @@
      répond une redirection SSO au lieu du script — vérifié le 09/09/2026.
      ⚠ « defer » : si le module tombe, PAINT démarre quand même et ne perd que
      son écran d'attente. Rien ici ne doit pouvoir arrêter l'outil. -->
-<script defer src="https://attente.vercel.app/attente.js?v=4.3"></script>
+<script defer src="https://attente.vercel.app/attente.js?v=4.4"></script>
 <style>
   :root{
     --navy-1:#16314f; --navy-2:#091525;
@@ -143,7 +143,12 @@
   #build{font-size:10px;letter-spacing:.5px;color:var(--grey);opacity:.55;
     align-self:flex-end;margin-left:8px;font-variant-numeric:tabular-nums}
 
-  .colorrow{display:flex;align-items:center;gap:10px;margin-top:10px}
+  /* SÉLECTEUR PERSONNALISÉ RANGÉ DANS LE TIROIR DU « + » (16/09/2026). Il
+     restait seul en clair sous les quatre teintes, alors qu'il relève du même
+     usage occasionnel que les huit teintes de complément : on l'ouvre par le
+     même geste, il se referme avec elles. */
+  .colorrow{display:none;align-items:center;gap:10px;margin-top:10px}
+  .colorrow.ouvert{display:flex}
   .colorrow input[type=color]{width:38px;height:34px;border:none;border-radius:7px;background:none;cursor:pointer;padding:0}
   .colorrow label{font-size:12px;color:var(--grey)}
 
@@ -171,7 +176,67 @@
     font-family:inherit;color:var(--ink);min-width:0;
   }
   .legend-item input:focus{outline:none;border-color:var(--teal-deep)}
+  /* CADRE DE DÉSIGNATION RESTÉ VIDE À L'EXPORT (16/09/2026). Le liseré est
+     TRACÉ À L'INTÉRIEUR du cadre (box-shadow inset) et non sur sa bordure :
+     posé sur la bordure, il se confondait avec l'état de focus. Il montre
+     exactement OÙ l'information manque, le message disant ce qui manque. */
+  .legend-item input.manquant{
+    border-color:#c0392b;
+    box-shadow:inset 0 0 0 1.5px #c0392b;
+    background:#fdf4f4;
+  }
   .legend-hint{font-size:11px;color:var(--grey);line-height:1.4}
+
+  /* Bouton d'accès à l'écran des désignations — TÉLÉPHONE UNIQUEMENT (CSS plus
+     bas). Sur ordinateur, les cadres sont déjà tous visibles dans la colonne. */
+  #legende-ouvrir{
+    display:none;width:100%;margin-top:8px;padding:11px;border-radius:9px;
+    border:1.5px solid var(--teal-deep);background:#eef4f5;color:var(--teal-deep);
+    font-family:inherit;font-size:13.5px;font-weight:600;cursor:pointer;
+  }
+
+  /* Repli du tiroir à la main. Masqué sur ordinateur, où la colonne est fixe. */
+  #tiroir-replier{
+    display:none;width:100%;margin:0 0 14px;padding:9px;border-radius:9px;
+    border:1px solid var(--line);background:#fff;color:var(--grey);
+    font-family:inherit;font-size:12.5px;cursor:pointer;
+    align-items:center;justify-content:center;gap:7px;
+  }
+  #tiroir-replier .chev{font-size:13px}
+
+  /* ---- ÉCRAN DÉDIÉ DES DÉSIGNATIONS (téléphone) ------------------------
+     Arrêté le 16/09/2026 : la saisie des noms de teintes NE VIT PAS dans le
+     tiroir. Le clavier du téléphone occupe la moitié de l'écran et écraserait
+     le tiroir ; un écran à part garde chaque cadre lisible pendant la frappe.
+     Il s'ouvre à la demande, et AUTOMATIQUEMENT à l'export quand des noms
+     manquent — comportement PROPRE À LA VERSION TÉLÉPHONE. */
+  #ecran-legende{
+    display:none;position:fixed;inset:0;z-index:70;background:var(--panel);
+    flex-direction:column;
+  }
+  #ecran-legende.ouvert{display:flex}
+  #ecran-legende header{
+    background:linear-gradient(135deg,var(--navy-1),var(--navy-2));
+    padding:12px 16px;gap:12px;flex-wrap:nowrap;
+  }
+  #ecran-legende header h2{margin:0;font-size:16px;font-weight:600;color:#fff}
+  #ecran-legende header p{margin:2px 0 0;font-size:12px;color:var(--teal)}
+  #el-corps{flex:1;overflow-y:auto;padding:16px;-webkit-overflow-scrolling:touch}
+  #el-corps .legend-item{margin-bottom:14px}
+  #el-corps .legend-item .dot{width:30px;height:30px;border-radius:7px}
+  #el-corps .legend-item input{padding:13px 11px;font-size:16px;border-radius:9px}
+  #el-pied{
+    padding:12px 16px calc(12px + env(safe-area-inset-bottom));
+    border-top:1px solid var(--line);background:#fff;display:flex;gap:10px;
+  }
+  #el-pied button{
+    flex:1;padding:14px;border-radius:9px;font-family:inherit;font-size:14px;
+    font-weight:600;cursor:pointer;border:1.5px solid var(--line);background:#fff;color:var(--ink);
+  }
+  #el-valider{background:var(--teal-deep);border-color:var(--teal-deep);color:#fff}
+  #el-avis{font-size:12.5px;line-height:1.45;padding:10px 12px;border-radius:8px;
+    background:#fff6e6;color:#9a6a14;border:1px solid #f0dcae;margin-bottom:14px;display:none}
+  #el-avis.show{display:block}
 
   .numrow{display:flex;gap:6px;margin-bottom:8px}
   .numrow input{
@@ -232,6 +297,22 @@
   #drop > :first-child{margin-top:auto}
   #drop > :last-child{margin-bottom:auto}
   #drop.hide{display:none}
+  /* Sortie du panneau de chargement (16/09/2026). Masquée tant qu'aucun plan
+     n'est affiché dessous : la classe « avecplan » est posée par le script.
+     ⚠ LE CENTRAGE DE LA CARTE EST RÉTABLI EXPLICITEMENT juste en dessous : il
+     reposait sur « :first-child / :last-child », et ce bouton, ajouté dans
+     #drop, leur prenait la place — la carte remontait alors en haut du panneau.
+     Cibler .dropcard rend le centrage indépendant du nombre d'enfants. */
+  #dropclose{
+    display:none;position:absolute;top:14px;right:16px;z-index:7;
+    width:38px;height:38px;border-radius:50%;border:1px solid var(--line);
+    background:#fff;color:var(--grey);font-size:17px;line-height:1;cursor:pointer;
+    align-items:center;justify-content:center;padding:0;
+    box-shadow:0 2px 10px rgba(15,34,56,.12);transition:.12s;
+  }
+  #drop.avecplan #dropclose{display:flex}
+  #dropclose:hover{color:var(--ink);border-color:var(--teal-deep)}
+  #drop > .dropcard{margin-top:auto;margin-bottom:auto}
   /* Les pointillés sont réservés à ce qui accepte réellement un dépôt, c'est-à-dire
      la seule zone de glissé. Les porter sur la carte entière annonçait un dépôt
      possible partout (16/09/2026). */
@@ -438,6 +519,15 @@
   /* La poignée reste au-dessus du tiroir ouvert, pour pouvoir le refermer. */
   #tiroir-poignee{z-index:32}
 
+  /* Repli à la main, en TÊTE du tiroir : on le trouve au pouce dès l'ouverture,
+     sans avoir à faire défiler jusqu'à la poignée. */
+  #tiroir-replier{display:flex}
+
+  /* La saisie des désignations quitte le tiroir pour son écran dédié : la liste
+     des cadres est remplacée ici par le bouton qui l'ouvre. */
+  #legend{display:none}
+  #legende-ouvrir{display:block}
+
   /* Cibles tactiles : rien en dessous de 44 px de haut. */
   .tool{padding:13px 6px;font-size:12px}
   .tool svg{width:25px;height:25px}
@@ -492,7 +582,7 @@
     <!-- Marqueur de build. Sert à savoir d'un coup d'œil si le navigateur sert
          la dernière version ou une page en cache. Ctrl+Shift+R si la date
          affichée n'est pas celle du dernier dépôt. -->
-    <span id="build" title="Version déployée">2026-09-16t</span>
+    <span id="build" title="Version déployée">2026-09-16u</span>
   </div>
   <div class="hbar">
     <div class="pagenav" id="pagenav" style="display:none">
@@ -521,6 +611,13 @@
   </button>
   <aside id="panneau">
 
+    <!-- Repli à la main du tiroir, téléphone uniquement (CSS). Complète le repli
+         automatique UNIQUE qui suit le premier coloriage : passé celui-ci, le
+         tiroir ne se referme plus tout seul, c'est ce bouton qui le ferme. -->
+    <button type="button" id="tiroir-replier" aria-label="Replier le tiroir d'outils">
+      <span class="chev">&#9662;</span> Replier
+    </button>
+
     <div class="grp">
       <h3>Couleur</h3>
       <div class="swatches" id="swatches"></div>
@@ -539,6 +636,7 @@
       <h3 data-info="Nommez une teinte (par exemple « Vendeur » ou « Acquéreur »). Seules les teintes nommées figurent dans l'encart de légende ajouté au plan à l'export.">Légende<button
         type="button" class="info" aria-label="À quoi sert la légende">i</button></h3>
       <div id="legend"></div>
+      <button type="button" id="legende-ouvrir">Nommer les teintes…</button>
       <label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink);margin-top:8px;cursor:pointer">
         <input type="checkbox" id="inclegend" style="accent-color:var(--teal-deep)"> Inclure la légende à l'export
       </label>
@@ -558,6 +656,17 @@
     <div class="grp">
       <h3>Outils</h3>
       <div class="tools" id="toolbox">
+        <!-- OUTIL « MAIN » (16/09/2026). Au doigt, le geste de colorier et
+             celui de déplacer le plan sont LE MÊME : sans outil explicite, tout
+             déplacement laissait un trait involontaire. Il est l'outil actif à
+             l'ouverture SUR TÉLÉPHONE — on arrive en déplacement, on choisit un
+             outil de dessin quand on en veut un. Sur ordinateur, c'est
+             « Remplir » qui reste actif au départ, la souris ne confondant pas
+             les deux gestes. -->
+        <button class="tool" data-tool="hand">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11V5.5a1.5 1.5 0 0 1 3 0V11"/><path d="M12 10.5V4.5a1.5 1.5 0 0 1 3 0V11"/><path d="M15 11V6.5a1.5 1.5 0 0 1 3 0V14a6 6 0 0 1-6 6h-1a6 6 0 0 1-5.2-3L4 14.5a1.5 1.5 0 0 1 2.6-1.5L9 16"/></svg>
+          Main
+        </button>
         <button class="tool active" data-tool="fill">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 12 12 5l7 7-7 7z"/><path d="M19 13c1.2 1.4 2 2.5 2 3.5a2 2 0 0 1-4 0c0-1 .8-2.1 2-3.5z" fill="currentColor" stroke="none"/></svg>
           Remplir
@@ -628,6 +737,12 @@
     </div>
 
     <div id="drop">
+      <!-- SORTIE DU PANNEAU DE CHARGEMENT (16/09/2026). C'était le seul
+           cul-de-sac de l'interface : rouvert par le bouton « Références »
+           au-dessus d'un plan déjà colorié, il ne se refermait plus et le
+           travail en cours paraissait perdu. Le bouton n'apparaît QUE s'il y a
+           quelque chose dessous — sinon il ne mènerait qu'à un fond vide. -->
+      <button type="button" id="dropclose" aria-label="Revenir au plan" title="Revenir au plan (Échap)">&#10005;</button>
       <div class="dropcard">
         <div class="dropcard-head">
           <svg class="pen" viewBox="0 0 78 78" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -729,6 +844,26 @@
 <input type="file" id="fileinput" accept="application/pdf">
 <div id="toolring"><div class="badge"></div></div>
 
+<!-- ÉCRAN DÉDIÉ DES DÉSIGNATIONS — TÉLÉPHONE (16/09/2026). Hors du tiroir, que
+     le clavier écraserait. Ouvert à la demande par « Nommer les teintes… », et
+     AUTOMATIQUEMENT à l'export quand des noms manquent. -->
+<div id="ecran-legende" role="dialog" aria-modal="true" aria-label="Désignations des teintes">
+  <header>
+    <div>
+      <h2>Désignations</h2>
+      <p>Seules les teintes nommées figurent dans la légende.</p>
+    </div>
+  </header>
+  <div id="el-corps">
+    <div id="el-avis"></div>
+    <div id="el-liste"></div>
+  </div>
+  <div id="el-pied">
+    <button type="button" id="el-fermer">Fermer</button>
+    <button type="button" id="el-valider">Valider</button>
+  </div>
+</div>
+
 <script>
 
 /* ---- ATTENTE : SEUIL DE DÉCLENCHEMENT ------------------------------------
@@ -799,7 +934,7 @@ const S = {
   couleursAnnot:null,          // teintes du tableau d'annotation, hors légende
   couleursPosees:[],           // registre des teintes posées sur le calque (minuscules)
   tool:"fill", color:"#A01040", opacity:.45, threshold:100, brush:14, fontSize:36,
-  zoom:1, rotation:0, drawing:false, lastPt:null,
+  zoom:1, rotation:0, drawing:false, lastPt:null, pan:null,
   undoStack:[], redoStack:[],
   notes:[], selNote:null, dragNote:null, dragOff:null,
   legendLabels:{}, // hex -> texte
@@ -826,11 +961,49 @@ const VISIBLES = 4;
 const swatchEl = document.getElementById("swatches");
 const plusEl   = document.getElementById("swatches-plus");
 
+/* NOMMAGE IMMÉDIAT D'UNE TEINTE (16/09/2026) — clic droit sur ordinateur,
+   appui long sur téléphone. On nomme la teinte AU MOMENT OÙ ON LA POSE, au lieu
+   de remplir tous les cadres à la fin, quand il faut se rappeler ce que chaque
+   couleur désignait.
+
+   ⚠ LA SAISIE PASSE PAR prompt(), délibérément : c'est le seul champ qui
+   s'ouvre par-dessus le plan sans déplacer quoi que ce soit, et sur téléphone
+   il ouvre le clavier du système — donc sa dictée, qui est le mode de saisie
+   retenu (aucun bouton micro propre à PAINT, décision du 16/09).
+   ⚠ UNE TEINTE NOMMÉE MAIS NON ENCORE POSÉE ne paraît pas en légende : la
+   légende recense ce qui est SUR LE PLAN, pas ce qu'on a l'intention d'y
+   mettre. Le nom est gardé et apparaîtra dès la première parcelle peinte. */
+function nommerTeinte(hex){
+  const h = String(hex||"").toLowerCase();
+  if(!/^#[0-9a-f]{6}$/.test(h)) return;
+  const actuel = S.legendLabels[h] || "";
+  const saisi = prompt("Désignation de cette teinte (par exemple « Vendeur ») :", actuel);
+  if(saisi===null) return;
+  S.legendLabels[h] = saisi.trim();
+  rebuildLegend();
+  if(typeof majEcranLegende==="function") majEcranLegende();
+  if(saisi.trim()) showHint("Teinte nommée : "+saisi.trim());
+}
 function pastille(c,i){
   const d = document.createElement("div");
   d.className = "sw"+(i===0?" active":""); d.style.background=c; d.dataset.color=c;
-  d.title = c;
+  d.title = c+" — clic droit ou appui long pour la nommer";
   d.onclick = ()=>setColor(c,d);
+  // Ordinateur : clic droit.
+  d.addEventListener("contextmenu", ev=>{ ev.preventDefault(); setColor(c,d); nommerTeinte(c); });
+  // Téléphone : appui long de 550 ms. Annulé dès que le doigt bouge de plus de
+  // 10 px — sans quoi un défilement du tiroir déclencherait la saisie.
+  let minuterie=null, depart=null;
+  const stop=()=>{ if(minuterie){ clearTimeout(minuterie); minuterie=null; } depart=null; };
+  d.addEventListener("pointerdown", ev=>{
+    if(ev.pointerType==="mouse") return;
+    depart={x:ev.clientX,y:ev.clientY};
+    minuterie=setTimeout(()=>{ minuterie=null; setColor(c,d); nommerTeinte(c); }, 550);
+  });
+  d.addEventListener("pointermove", ev=>{
+    if(depart && Math.hypot(ev.clientX-depart.x, ev.clientY-depart.y)>10) stop();
+  });
+  ["pointerup","pointercancel","pointerleave"].forEach(t=>d.addEventListener(t, stop));
   return d;
 }
 PALETTE.slice(0,VISIBLES).forEach((c,i)=> swatchEl.appendChild(pastille(c,i)));
@@ -844,6 +1017,10 @@ btnPlus.onclick = ()=>{
   btnPlus.classList.toggle("ouvert", ouvert);
   btnPlus.textContent = ouvert ? "−" : "+";
   btnPlus.title = ouvert ? "Replier les autres teintes" : "Afficher les autres teintes";
+  // Le sélecteur personnalisé suit le même tiroir (16/09/2026) : il relève du
+  // même usage occasionnel que les huit teintes de complément.
+  const cr = document.querySelector(".colorrow");
+  if(cr) cr.classList.toggle("ouvert", ouvert);
 };
 swatchEl.appendChild(btnPlus);
 
@@ -899,14 +1076,22 @@ function rebuildLegend(){
   }
   used.forEach(hex=>{
     const row=document.createElement("div"); row.className="legend-item";
+    row.dataset.hex=hex;                       // lu par marquerCadresVides
     const dot=document.createElement("div"); dot.className="dot"; dot.style.background=hex;
     const inp=document.createElement("input");
     inp.placeholder="Désignation…"; inp.value=S.legendLabels[hex]||"";
     // hex vient de usedColors(), donc toujours en minuscules, et memoriserTeinte
     // écrit sous la même casse. Ne pas réintroduire S.color comme clé ici.
-    inp.oninput=()=>S.legendLabels[hex]=inp.value;
+    inp.oninput=()=>{
+      S.legendLabels[hex]=inp.value;
+      // Le liseré d'alerte tombe dès que le cadre est renseigné.
+      if(inp.value.trim()) inp.classList.remove("manquant");
+    };
     row.append(dot,inp); lg.appendChild(row);
   });
+  // L'écran dédié montre la même liste : il suit le même rafraîchissement.
+  if(typeof majEcranLegende==="function" && document.getElementById("ecran-legende")
+     && document.getElementById("ecran-legende").classList.contains("ouvert")) majEcranLegende();
 }
 function usedColors(){
   if(!S.W) return [];
@@ -963,7 +1148,8 @@ document.querySelectorAll("#toolbox .tool").forEach(t=>{
     setToolCursor();
     document.getElementById("sizewrap").style.display = (S.tool==="brush"||S.tool==="erase")?"block":"none";
     document.getElementById("fontwrap").style.display = S.tool==="text"?"block":"none";
-    showHint(S.tool==="fill"?"Cliquez dans une parcelle pour la remplir.":
+    showHint(S.tool==="hand"?"Glissez pour déplacer le plan.":
+             S.tool==="fill"?"Cliquez dans une parcelle pour la remplir.":
              S.tool==="brush"?"Maintenez et glissez pour peindre.":
              S.tool==="erase"?"Glissez pour effacer la couleur.":
              "Cliquez pour placer une annotation.");
@@ -978,7 +1164,8 @@ const TEXT_SVG=`<svg xmlns='http://www.w3.org/2000/svg' width='28' height='28' v
 const TEXT_CURSOR=`url("data:image/svg+xml,${encodeURIComponent(TEXT_SVG)}") 25 14, text`;
 
 function setToolCursor(){
-  if(S.tool==="text"){ overlay.style.cursor=TEXT_CURSOR; ring.style.display="none"; }
+  if(S.tool==="hand"){ overlay.style.cursor="grab"; ring.style.display="none"; }
+  else if(S.tool==="text"){ overlay.style.cursor=TEXT_CURSOR; ring.style.display="none"; }
   else if(S.tool==="fill"){ overlay.style.cursor="crosshair"; ring.style.display="none"; }
   else { // pinceau / gomme : curseur natif masqué, anneau dimensionné
     overlay.style.cursor="none";
@@ -1345,7 +1532,10 @@ document.querySelectorAll("#seg button").forEach(b=>{ b.onclick=()=>volet(b.data
    le plan tout de suite — sans quoi il faudrait deux gestes par action. */
 const tiroir = document.getElementById("panneau");
 const poignee = document.getElementById("tiroir-poignee");
-const NOM_OUTIL = { fill:"Remplir", brush:"Pinceau", erase:"Gomme", text:"Texte" };
+const NOM_OUTIL = { hand:"Main", fill:"Remplir", brush:"Pinceau", erase:"Gomme", text:"Texte" };
+// Vrai sur téléphone et tablette étroite — même seuil que la feuille de style.
+// Relu à chaque appel : une rotation d'écran change la réponse.
+const surTelephone = () => window.matchMedia("(max-width:820px)").matches;
 
 function majPoignee(){
   const o=document.getElementById("tiroir-outil");
@@ -1358,16 +1548,152 @@ function tiroirOuvrir(ouvert){
   poignee.setAttribute("aria-expanded", ouvert ? "true" : "false");
 }
 poignee.onclick = ()=> tiroirOuvrir(!tiroir.classList.contains("ouvert"));
-// Un choix fait, on rend le plan.
-document.getElementById("toolbox").addEventListener("click", ()=>{ majPoignee(); tiroirOuvrir(false); });
+document.getElementById("tiroir-replier").onclick = ()=> tiroirOuvrir(false);
+
+/* ⚠ LE TIROIR NE SE REFERME PLUS À CHAQUE CHOIX (16/09/2026). Il restait
+   ouvert par décision du même jour — on enchaîne souvent un outil PUIS une
+   teinte, et refermer entre les deux imposait deux gestes pour une action.
+   Il ne se referme qu'UNE SEULE FOIS, après le PREMIER coloriage : à cet
+   instant on veut voir le plan, et une seule fois suffit à le dégager. Ensuite
+   c'est le bouton « Replier », ou la poignée, qui commande. */
+let tiroirDejaReplie = false;
+function replierApresPremierColoriage(){
+  if(tiroirDejaReplie || !surTelephone()) return;
+  tiroirDejaReplie = true;
+  tiroirOuvrir(false);
+}
+document.getElementById("toolbox").addEventListener("click", majPoignee);
 document.getElementById("swatches").addEventListener("click", e=>{
-  if(e.target.classList.contains("sw")){ majPoignee(); tiroirOuvrir(false); }
+  if(e.target.classList.contains("sw")) majPoignee();
 });
 document.getElementById("swatches-plus").addEventListener("click", e=>{
-  if(e.target.classList.contains("sw")){ majPoignee(); tiroirOuvrir(false); }
+  if(e.target.classList.contains("sw")) majPoignee();
 });
-document.getElementById("picker").addEventListener("change", ()=>{ majPoignee(); tiroirOuvrir(false); });
+document.getElementById("picker").addEventListener("change", majPoignee);
+
+/* OUTIL ACTIF À L'OUVERTURE : « Main » sur téléphone, « Remplir » sur
+   ordinateur. Au doigt on arrive en déplacement, et l'on choisit un outil de
+   dessin quand on en veut un — c'est ce qui évite les traits involontaires. */
+if(surTelephone()){
+  const bMain = document.querySelector('#toolbox .tool[data-tool="hand"]');
+  if(bMain){
+    document.querySelectorAll("#toolbox .tool").forEach(x=>x.classList.remove("active"));
+    bMain.classList.add("active");
+    S.tool = "hand";
+    setToolCursor();
+    document.getElementById("sizewrap").style.display="none";
+    document.getElementById("fontwrap").style.display="none";
+  }
+}
 majPoignee();
+
+/* ==================================================================
+   DÉSIGNATIONS DES TEINTES — ÉCRAN DÉDIÉ ET CONTRÔLE AVANT EXPORT
+   ------------------------------------------------------------------
+   Décisions du 16/09/2026 :
+   — sur TÉLÉPHONE, la saisie vit sur un ÉCRAN À PART et non dans le tiroir, que
+     le clavier écraserait ; à l'export, si des noms manquent, cet écran S'OUVRE
+     AUTOMATIQUEMENT, cadres vides marqués ;
+   — sur ORDINATEUR, pas d'ouverture automatique : les cadres sont déjà sous les
+     yeux dans la colonne, le message et le liseré suffisent ;
+   — dans les deux cas, un cadre resté vide porte un LISERÉ ROUGE À L'INTÉRIEUR,
+     qui montre exactement où l'information manque.
+
+   ⚠ CE CONTRÔLE NE S'APPLIQUE QU'AUX EXPORTS LANCÉS À LA MAIN (PNG et PDF).
+   Le document complet part aussi en chaîne automatique (docauto du Dossier
+   complet de REDPAR) : y poser une question bloquerait une production en série
+   devant un écran que personne ne regarde.
+   ================================================================== */
+const ecranLeg = document.getElementById("ecran-legende");
+
+// Teintes posées sur le plan dont la désignation est restée vide.
+function teintesSansNom(){
+  return usedColors().filter(h => (S.legendLabels[h]||"").trim()==="");
+}
+
+// Liseré rouge dans les cadres vides de la colonne ET de l'écran dédié.
+function marquerCadresVides(marquer){
+  const vides = marquer ? new Set(teintesSansNom()) : new Set();
+  document.querySelectorAll("#legend .legend-item, #el-liste .legend-item").forEach(row=>{
+    const inp = row.querySelector("input");
+    if(inp) inp.classList.toggle("manquant", vides.has(row.dataset.hex));
+  });
+}
+
+function majEcranLegende(){
+  const liste = document.getElementById("el-liste");
+  if(!liste) return;
+  const used = usedColors();
+  liste.innerHTML = "";
+  if(!used.length){
+    liste.innerHTML = '<p class="legend-hint">Aucune teinte posée pour l’instant.</p>';
+    return;
+  }
+  used.forEach(hex=>{
+    const row=document.createElement("div"); row.className="legend-item"; row.dataset.hex=hex;
+    const dot=document.createElement("div"); dot.className="dot"; dot.style.background=hex;
+    const inp=document.createElement("input");
+    inp.placeholder="Désignation…"; inp.value=S.legendLabels[hex]||"";
+    inp.setAttribute("enterkeyhint","done");
+    inp.oninput=()=>{
+      S.legendLabels[hex]=inp.value;
+      if(inp.value.trim()) inp.classList.remove("manquant");
+      rebuildLegend();
+    };
+    row.append(dot,inp); liste.appendChild(row);
+  });
+}
+
+// exportEnAttente : l'export que l'écran a interrompu, repris au « Valider ».
+let exportEnAttente = null;
+function ouvrirEcranLegende(avis){
+  majEcranLegende();
+  const el=document.getElementById("el-avis");
+  el.textContent = avis || "";
+  el.classList.toggle("show", !!avis);
+  ecranLeg.classList.add("ouvert");
+  marquerCadresVides(!!avis);
+}
+function fermerEcranLegende(){
+  ecranLeg.classList.remove("ouvert");
+  exportEnAttente = null;
+}
+document.getElementById("legende-ouvrir").onclick = ()=> ouvrirEcranLegende("");
+document.getElementById("el-fermer").onclick = fermerEcranLegende;
+document.getElementById("el-valider").onclick = ()=>{
+  const reprise = exportEnAttente;
+  ecranLeg.classList.remove("ouvert");
+  exportEnAttente = null;
+  rebuildLegend();
+  // L'export interrompu repart de lui-même : l'utilisateur l'avait demandé, il
+  // n'a pas à le redemander. S'il reste des cadres vides, il a choisi de partir
+  // sans eux — on ne le retient pas deux fois.
+  if(reprise) setTimeout(()=>doExport(reprise, true), 120);
+};
+
+/* Contrôle avant un export manuel. Rend true si l'export peut partir. */
+function legendeComplete(kind){
+  if(!document.getElementById("inclegend").checked) return true;
+  const manquantes = teintesSansNom();
+  if(!manquantes.length){ marquerCadresVides(false); return true; }
+  const n = manquantes.length;
+  const phrase = n + " teinte" + (n>1?"s":"") + " posée" + (n>1?"s":"")
+    + " sur le plan n'" + (n>1?"ont":"a") + " pas de désignation : "
+    + (n>1?"elles ne figureront pas":"elle ne figurera pas") + " dans la légende.";
+  marquerCadresVides(true);
+  if(surTelephone()){
+    // TÉLÉPHONE : l'écran dédié s'ouvre de lui-même, cadres vides marqués.
+    exportEnAttente = kind;
+    ouvrirEcranLegende(phrase + " Renseignez-les, puis « Valider » relance l'export.");
+    return false;
+  }
+  // ORDINATEUR : les cadres sont visibles dans la colonne, on avertit sans
+  // rien déplacer — et l'on laisse le rédacteur juger, l'export sans légende
+  // pouvant être délibéré.
+  setStatus(phrase + " Les cadres concernés sont marqués en rouge dans le panneau "
+    + "de gauche.", "warn");
+  return confirm(phrase + "\n\nPoursuivre l'export sans " + (n>1?"ces désignations":"cette désignation") + " ?");
+}
 
 /* Bandeau « Options ». Les réglages fins — opacité, sensibilité des bords,
    tailles — se règlent une fois par plan et non à chaque geste : repliés par
@@ -1382,7 +1708,29 @@ majPoignee();
   };
 })();
 
-document.getElementById("genbtn").onclick=()=>{ drop.classList.remove("hide"); };
+/* ---- SORTIE DU PANNEAU DE CHARGEMENT (16/09/2026) ----------------------
+   Le panneau se rouvre par « Références » au-dessus d'un plan déjà chargé, et
+   rien ne permettait d'en ressortir : il fallait recharger la page, donc perdre
+   le coloriage en cours. Bouton de fermeture ET touche Échap, le même geste
+   fermant aussi l'écran des désignations.
+   ⚠ ON NE FERME QUE S'IL Y A QUELQUE CHOSE DESSOUS. Sans plan chargé, fermer ne
+   mènerait qu'à un fond quadrillé vide, sans moyen de revenir — c'est le
+   cul-de-sac inverse. La classe « avecplan » commande l'affichage du bouton. */
+function majSortieDrop(){
+  drop.classList.toggle("avecplan", !!(S.pdf || S.ortho));
+}
+function fermerDrop(){
+  if(!(S.pdf || S.ortho)) return false;
+  drop.classList.add("hide");
+  return true;
+}
+document.getElementById("dropclose").onclick = fermerDrop;
+document.addEventListener("keydown", e=>{
+  if(e.key!=="Escape") return;
+  if(ecranLeg.classList.contains("ouvert")){ fermerEcranLegende(); return; }
+  if(!drop.classList.contains("hide")) fermerDrop();
+});
+document.getElementById("genbtn").onclick=()=>{ majSortieDrop(); drop.classList.remove("hide"); };
 document.getElementById("fileinput").onchange=e=>{ if(e.target.files[0]) loadPDF(e.target.files[0]); };
 ["dragenter","dragover"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add("over");}));
 ["dragleave","drop"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove("over");}));
@@ -1578,22 +1926,103 @@ document.addEventListener("keydown",e=>{
    setPointerCapture garde le tracé rattaché au calque même si le doigt sort du
    cadre, et « touch-action:none » (CSS) empêche la page de défiler sous le
    doigt pendant qu'on peint. */
+/* ---------- EFFACEMENT D'UNE PARCELLE PAR DOUBLE GESTE (16/09/2026) --------
+   Double tapotement sur téléphone, double clic sur ordinateur : la parcelle
+   coloriée sous le doigt ou le pointeur retrouve le plan nu, sans passer par
+   l'outil gomme du tiroir. Retenu sur LES DEUX VERSIONS.
+
+   ⚠ CE N'EST PAS UN REMPLISSAGE AVEC DE LA TRANSPARENCE : on efface les pixels
+   CONNEXES DE MÊME TEINTE sur le calque, sans jamais regarder le plan dessous.
+   La zone effacée est donc exactement celle qui avait été peinte — ni les
+   traits du plan ni la parcelle voisine ne s'en mêlent, et une teinte posée au
+   pinceau s'efface aussi bien qu'un remplissage.
+   ⚠ TOLÉRANCE DE 10 SUR CHAQUE CANAL : les bords des polygones peints sont
+   lissés, donc dégradés. Sans tolérance il resterait un liseré de couleur,
+   c'est-à-dire l'impression d'un effacement raté. */
+function effacerZone(sx,sy){
+  if(!S.W || sx<0 || sy<0 || sx>=S.W || sy>=S.H) return false;
+  const W=S.W, H=S.H, N=W*H;
+  const img=oCtx.getImageData(0,0,W,H), d=img.data;
+  const p0=(sy*W+sx)*4;
+  if(d[p0+3]===0) return false;                 // rien de posé ici
+  const r0=d[p0], g0=d[p0+1], b0=d[p0+2];
+  const TOL=10;
+  const memeTeinte=(p)=> d[p+3]>0
+    && Math.abs(d[p]-r0)<=TOL && Math.abs(d[p+1]-g0)<=TOL && Math.abs(d[p+2]-b0)<=TOL;
+  const vu=new Uint8Array(N);
+  const pile=[sy*W+sx]; vu[sy*W+sx]=1;
+  let n=0;
+  while(pile.length){
+    const i=pile.pop(), p=i*4;
+    d[p]=0; d[p+1]=0; d[p+2]=0; d[p+3]=0; n++;
+    const x=i%W, y=(i-x)/W;
+    const voisin=(k)=>{ if(!vu[k] && memeTeinte(k*4)){ vu[k]=1; pile.push(k); } };
+    if(x>0) voisin(i-1);
+    if(x<W-1) voisin(i+1);
+    if(y>0) voisin(i-W);
+    if(y<H-1) voisin(i+W);
+  }
+  if(!n) return false;
+  oCtx.putImageData(img,0,0);
+  pushUndo(); rebuildLegend();
+  return true;
+}
+// Détection du double tapotement au doigt : le navigateur n'émet pas de
+// « dblclick » fiable au tactile. 380 ms et 30 px — au-delà, ce sont deux gestes
+// distincts et l'on ne doit surtout pas effacer un travail volontaire.
+let dernierTap=0, dernierTapPt=null;
+
 overlay.addEventListener("pointerdown",e=>{
   if(!S.pdf) return;
   if(e.pointerType!=="mouse") e.preventDefault();
   const p=evtToPx(e);
-  if(S.tool==="fill"){ floodFill(p.x,p.y); pushUndo(); rebuildLegend(); }
+  // ---- double tapotement : effacement de la parcelle sous le doigt --------
+  // ⚠ TESTÉ AVANT L'OUTIL, ET NON APRÈS : il vaut quel que soit l'outil en
+  // cours, y compris « Main » — qui est l'outil d'ouverture sur téléphone, et
+  // le cas le plus sûr puisqu'un tapotement n'y pose aucune couleur.
+  if(e.pointerType!=="mouse"){
+    const t=Date.now();
+    const r=overlay.getBoundingClientRect();
+    if(dernierTapPt && t-dernierTap<380
+       && Math.hypot(p.x-dernierTapPt.x, p.y-dernierTapPt.y) < 30*(S.W/(r.width||S.W))){
+      dernierTap=0; dernierTapPt=null;
+      if(effacerZone(p.x,p.y)){ showHint("Parcelle effacée."); return; }
+    }
+    dernierTap=t; dernierTapPt=p;
+  }
+  // ---- outil MAIN : déplacement du plan, aucun trait posé ----------------
+  if(S.tool==="hand"){
+    S.pan={ x:e.clientX, y:e.clientY, gx:stage.scrollLeft, gy:stage.scrollTop };
+    overlay.style.cursor="grabbing";
+    try{ overlay.setPointerCapture(e.pointerId); }catch(err){}
+    return;
+  }
+  if(S.tool==="fill"){ floodFill(p.x,p.y); pushUndo(); rebuildLegend(); replierApresPremierColoriage(); }
   else if(S.tool==="brush"||S.tool==="erase"){
     S.drawing=true; S.lastPt=p; paintAt(p,p);
     try{ overlay.setPointerCapture(e.pointerId); }catch(err){}
   }
   else if(S.tool==="text"){ addNote(p.x,p.y); }
 });
+// Double clic à la souris : même effet, même fonction.
+overlay.addEventListener("dblclick",e=>{
+  if(!S.pdf) return;
+  const p=evtToPx(e);
+  if(effacerZone(p.x,p.y)){ e.preventDefault(); showHint("Parcelle effacée."); }
+});
 overlay.addEventListener("pointermove",e=>{
+  if(S.pan){
+    stage.scrollLeft = S.pan.gx - (e.clientX - S.pan.x);
+    stage.scrollTop  = S.pan.gy - (e.clientY - S.pan.y);
+    return;
+  }
   if(S.drawing){ const p=evtToPx(e); paintAt(S.lastPt,p); S.lastPt=p; }
   if(e.pointerType==="mouse") moveRing(e);
 });
-function finTrace(){ if(S.drawing){ S.drawing=false; pushUndo(); rebuildLegend(); } }
+function finTrace(){
+  if(S.pan){ S.pan=null; if(S.tool==="hand") overlay.style.cursor="grab"; }
+  if(S.drawing){ S.drawing=false; pushUndo(); rebuildLegend(); replierApresPremierColoriage(); }
+}
 window.addEventListener("pointerup",finTrace);
 window.addEventListener("pointercancel",finTrace);
 
@@ -2180,7 +2609,11 @@ function jpegUnderSize(canvas,maxBytes){
   return {data,quality:q};
 }
 
-async function doExport(kind){
+async function doExport(kind, reprise){
+  // Contrôle des désignations manquantes (16/09/2026). « reprise » vaut vrai
+  // quand l'export repart depuis l'écran des désignations : le contrôle a déjà
+  // eu lieu, le repasser rouvrirait l'écran en boucle.
+  if(!reprise && !legendeComplete(kind)) return;
   let ancres=null;
   if(document.getElementById("inclegend").checked){
     spin.classList.add("show"); spinmsg.textContent="Localisation du cartouche…";
