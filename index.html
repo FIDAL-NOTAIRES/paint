@@ -582,7 +582,7 @@
     <!-- Marqueur de build. Sert à savoir d'un coup d'œil si le navigateur sert
          la dernière version ou une page en cache. Ctrl+Shift+R si la date
          affichée n'est pas celle du dernier dépôt. -->
-    <span id="build" title="Version déployée">2026-09-16v</span>
+    <span id="build" title="Version déployée">2026-09-16w</span>
   </div>
   <div class="hbar">
     <div class="pagenav" id="pagenav" style="display:none">
@@ -2580,7 +2580,41 @@ function buildExportCanvas(anchor){
     const items=usedColors().filter(h=>(S.legendLabels[h]||"").trim()!=="")
                  .map(h=>({c:h,t:S.legendLabels[h]}));
     if(items.length){
-      const pad=14, line=Math.max(22,S.fontSize+6), boxW=300, boxH=pad*2+line*(items.length+1);
+      /* ---- TAILLE DE L'ENCART : MESURÉE SUR LE CARTOUCHE (16/09/2026) ----
+         ⚠ ELLE NE DOIT RIEN À S.fontSize, et c'est le défaut corrigé ici.
+         L'encart était composé en « S.fontSize − 2 », c'est-à-dire d'après le
+         curseur « Taille du texte » qui règle les ANNOTATIONS posées au clic.
+         Deux conséquences, toutes deux constatées à l'usage : la légende sortait
+         à 34 px pour une valeur par défaut de 36, soit le double du cartouche
+         officiel — elle se voyait comme une pièce rapportée —, et sa taille
+         changeait dès qu'on réglait la taille d'une annotation, réglage qui n'a
+         aucun rapport avec elle.
+         On la mesure donc SUR LE PLAN, comme tout le reste : la boîte du mot
+         « Section », déjà repérée par l'OCR pour placer l'encart, donne la
+         hauteur des caractères du cartouche. Le facteur 1,30 rapporte cette
+         hauteur — celle des capitales et ascendantes de « Section », qui n'a
+         pas de jambage descendant — à un corps de police.
+         Repli à 1,05 % de la largeur du rendu quand le cartouche n'est pas
+         reconnu : 18 px sur un rendu de 1 700, soit la valeur observée sur les
+         extraits DGFiP. Bornes larges, pour absorber un rendu inhabituel sans
+         jamais tomber dans l'illisible ni dans l'énorme. */
+      let corps = Math.round(S.W * 0.0105);
+      if(anchor && anchor.section && anchor.section.y1 > anchor.section.y0)
+        corps = Math.round((anchor.section.y1 - anchor.section.y0) * 1.30);
+      corps = Math.max(9, Math.min(corps, Math.round(S.W * 0.018)));
+      const corpsTitre = Math.round(corps * 1.15);
+      const pad  = Math.round(corps * 0.85);
+      const line = Math.round(corps * 1.55);
+      const carre = Math.round(corps * 0.95);          // pastille de couleur
+      const gout  = Math.round(corps * 0.55);          // écart pastille ↔ texte
+      // Largeur MESURÉE sur les désignations réelles, et non fixée à 300 px :
+      // un encart trop large sur trois mots courts déséquilibre le cartouche,
+      // trop étroit il tronquerait une désignation longue.
+      x.font = `${corps}px ${POLICE_DGFIP}`;
+      let plusLong = x.measureText("Légende").width;
+      items.forEach(it => { plusLong = Math.max(plusLong, x.measureText(it.t).width + carre + gout); });
+      const boxW = Math.round(Math.max(corps * 9, Math.min(plusLong + pad * 2, S.W * 0.30)));
+      const boxH = pad * 2 + line * (items.length + 1);
       /* EMPLACEMENT UNIQUE (16/09/2026) : l'espace blanc central du cartouche,
          entre le pavé « Section / Feuille » à gauche et le pavé
          « cadastre.gouv.fr » à droite, le HAUT DE L'ENCART ALIGNÉ SUR LE HAUT DU
@@ -2626,12 +2660,12 @@ function buildExportCanvas(anchor){
       else{ bx=Math.round((S.W-boxW)/2); by=Math.round((S.H-boxH)/2); }
       bx=Math.min(Math.max(8,bx), S.W-boxW-8);
       by=Math.min(Math.max(8,by), S.H-boxH-8);
-      x.fillStyle="rgba(255,255,255,.95)"; x.strokeStyle="#16314f"; x.lineWidth=2;
+      x.fillStyle="rgba(255,255,255,.95)"; x.strokeStyle="#16314f"; x.lineWidth=Math.max(1,Math.round(corps/9));
       x.fillRect(bx,by,boxW,boxH); x.strokeRect(bx,by,boxW,boxH);
       x.fillStyle="#0F2238"; x.textAlign="left"; x.textBaseline="middle";
       // Le cartouche officiel ne compose rien en gras : le titre se distingue
       // par sa taille et son soulignement, non par la graisse.
-      x.font=`${Math.max(15,S.fontSize-2)}px ${POLICE_DGFIP}`;
+      x.font=`${corpsTitre}px ${POLICE_DGFIP}`;
       x.fillText("Légende",bx+pad,by+pad+line/2);
       // Filet sous le titre, à la manière des séparateurs du cartouche officiel.
       x.strokeStyle="#657D96"; x.lineWidth=1;
@@ -2639,12 +2673,12 @@ function buildExportCanvas(anchor){
       x.moveTo(bx+pad, Math.round(by+pad+line)-0.5);
       x.lineTo(bx+boxW-pad, Math.round(by+pad+line)-0.5);
       x.stroke();
-      x.font=`${Math.max(14,S.fontSize-3)}px ${POLICE_DGFIP}`;
+      x.font=`${corps}px ${POLICE_DGFIP}`;
       items.forEach((it,i)=>{
         const ly=by+pad+line*(i+1)+line/2;
-        x.fillStyle=it.c; x.fillRect(bx+pad,ly-9,18,18);
-        x.strokeStyle="#657D96"; x.lineWidth=1; x.strokeRect(bx+pad,ly-9,18,18);
-        x.fillStyle="#0F2238"; x.fillText(it.t,bx+pad+28,ly);
+        x.fillStyle=it.c; x.fillRect(bx+pad,ly-carre/2,carre,carre);
+        x.strokeStyle="#657D96"; x.lineWidth=1; x.strokeRect(bx+pad,ly-carre/2,carre,carre);
+        x.fillStyle="#0F2238"; x.fillText(it.t,bx+pad+carre+gout,ly);
       });
     }
   }
