@@ -66,8 +66,40 @@
   .grp{margin-bottom:18px}
   .grp h3{
     font-size:11px;text-transform:uppercase;letter-spacing:1.2px;color:var(--grey);
-    margin:0 0 9px;font-weight:700;
+    margin:0 0 9px;font-weight:700;display:flex;align-items:center;gap:6px;
   }
+
+  /* Pastille « i » : l'explication ne s'affiche qu'à la demande, au survol ou au
+     clavier. Elle tenait auparavant quatre lignes en permanence sous la légende,
+     pour un rappel qu'on ne lit qu'une fois (16/09/2026).
+     L'infobulle est construite en CSS et non par l'attribut « title », qui met
+     une seconde à paraître et ne se déclenche pas au clavier. */
+  .info{
+    width:15px;height:15px;flex-shrink:0;border-radius:50%;border:1px solid var(--line);
+    background:#fff;color:var(--grey);font-family:Georgia,serif;font-style:italic;
+    font-size:10px;line-height:1;font-weight:700;letter-spacing:0;cursor:help;
+    display:flex;align-items:center;justify-content:center;padding:0;position:relative;
+    text-transform:none;transition:.12s;
+  }
+  .info:hover,.info:focus-visible{border-color:var(--teal-deep);color:var(--teal-deep);outline:none}
+  .info::after{
+    content:attr(data-info);position:absolute;left:50%;bottom:calc(100% + 8px);
+    transform:translateX(-50%);width:218px;padding:9px 11px;border-radius:9px;
+    background:var(--ink);color:#fff;font-family:inherit;font-style:normal;font-weight:400;
+    font-size:11.5px;line-height:1.45;letter-spacing:0;text-align:left;text-transform:none;
+    box-shadow:0 8px 22px rgba(9,21,37,.28);z-index:40;
+    opacity:0;visibility:hidden;transition:opacity .14s;pointer-events:none;
+  }
+  .info::before{
+    content:"";position:absolute;left:50%;bottom:calc(100% + 3px);transform:translateX(-50%);
+    border:5px solid transparent;border-top-color:var(--ink);z-index:41;
+    opacity:0;visibility:hidden;transition:opacity .14s;
+  }
+  .info:hover::after,.info:hover::before,
+  .info:focus-visible::after,.info:focus-visible::before{opacity:1;visibility:visible}
+  /* Premier groupe de la colonne : l'infobulle sortirait par le haut. */
+  .grp:first-child .info::after{bottom:auto;top:calc(100% + 8px)}
+  .grp:first-child .info::before{bottom:auto;top:calc(100% + 3px);border-top-color:transparent;border-bottom-color:var(--ink)}
   .tools{display:grid;grid-template-columns:1fr 1fr;gap:7px}
   .tool{
     background:#fff;border:1.5px solid var(--line);border-radius:9px;padding:9px 6px;
@@ -102,6 +134,19 @@
   .colorrow{display:flex;align-items:center;gap:10px;margin-top:10px}
   .colorrow input[type=color]{width:38px;height:34px;border:none;border-radius:7px;background:none;cursor:pointer;padding:0}
   .colorrow label{font-size:12px;color:var(--grey)}
+
+  .depli{
+    width:100%;display:flex;align-items:center;justify-content:space-between;
+    background:none;border:none;padding:0 0 4px;cursor:pointer;font-family:inherit;
+    font-size:11px;text-transform:uppercase;letter-spacing:1.2px;color:var(--grey);
+    font-weight:700;border-bottom:1px solid var(--line);
+  }
+  .depli:hover{color:var(--ink)}
+  .depli:focus-visible{outline:2px solid var(--teal-deep);outline-offset:2px;border-radius:4px}
+  .depli .chev{transition:transform .2s;font-size:13px;letter-spacing:0}
+  .depli[aria-expanded="true"] .chev{transform:rotate(180deg)}
+  .depli-corps{display:none;padding-top:4px}
+  .depli-corps.ouvert{display:block}
 
   .slider{margin-top:6px}
   .slider label{display:flex;justify-content:space-between;font-size:12px;color:var(--grey);margin-bottom:3px}
@@ -432,7 +477,7 @@
     <!-- Marqueur de build. Sert à savoir d'un coup d'œil si le navigateur sert
          la dernière version ou une page en cache. Ctrl+Shift+R si la date
          affichée n'est pas celle du dernier dépôt. -->
-    <span id="build" title="Version déployée">2026-09-16j</span>
+    <span id="build" title="Version déployée">2026-09-16l</span>
   </div>
   <div class="hbar">
     <div class="pagenav" id="pagenav" style="display:none">
@@ -460,6 +505,46 @@
     <span class="fleche">▴</span>
   </button>
   <aside id="panneau">
+
+    <div class="grp">
+      <h3>Couleur</h3>
+      <div class="swatches" id="swatches"></div>
+      <div class="swatches-plus" id="swatches-plus"></div>
+      <div class="colorrow">
+        <input type="color" id="picker" value="#FF982D">
+        <label for="picker">Personnalisée</label>
+      </div>
+    </div>
+
+    <!-- La légende suit immédiatement le pavé Couleur : on nomme une teinte
+         dans la foulée du choix de cette teinte, et non en bas de colonne.
+         L'explication passe sous un « i » au survol : elle tenait quatre lignes
+         pour un rappel qu'on ne lit qu'une fois (16/09/2026). -->
+    <div class="grp">
+      <h3>Légende<button type="button" class="info" aria-label="À quoi sert la légende"
+        data-info="Nommez une teinte (par exemple « Vendeur » ou « Acquéreur »). Seules les teintes nommées figurent dans l'encart de légende ajouté au plan à l'export.">i</button></h3>
+      <div id="legend"></div>
+      <label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink);margin-top:8px;cursor:pointer">
+        <input type="checkbox" id="inclegend" style="accent-color:var(--teal-deep)"> Inclure la légende à l'export
+      </label>
+      <select id="legendpos" style="width:100%;margin-top:9px;border:1.5px solid var(--line);border-radius:8px;padding:7px 8px;font-size:12px;font-family:inherit;color:var(--ink);background:#fff">
+        <option value="auto">Sous « cadastre.gouv.fr » (auto)</option>
+        <option value="tl">Coin haut gauche</option>
+        <option value="tr">Coin haut droit</option>
+        <option value="bl">Coin bas gauche</option>
+        <option value="br">Coin bas droit</option>
+      </select>
+    </div>
+
+    <div class="grp">
+      <h3>Actions</h3>
+      <div class="tools">
+        <button class="tool" id="undo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 7 4 12l5 5"/><path d="M4 12h11a5 5 0 0 1 0 10h-1"/></svg>Annuler</button>
+        <button class="tool" id="redo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 7l5 5-5 5"/><path d="M20 12H9a5 5 0 0 0 0 10h1"/></svg>Rétablir</button>
+        <button class="tool" id="clear" style="grid-column:span 2;color:#b23b3b;border-color:#f0d4d4"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 7h14M9 7V5h6v2M8 7l1 13h6l1-13"/></svg>Tout effacer</button>
+      </div>
+    </div>
+
     <div class="grp">
       <h3>Outils</h3>
       <div class="tools" id="toolbox">
@@ -483,36 +568,8 @@
     </div>
 
     <div class="grp">
-      <h3>Couleur</h3>
-      <div class="swatches" id="swatches"></div>
-      <div class="swatches-plus" id="swatches-plus"></div>
-      <div class="colorrow">
-        <input type="color" id="picker" value="#FF982D">
-        <label for="picker">Personnalisée</label>
-      </div>
-    </div>
-
-    <!-- La légende suit immédiatement le pavé Couleur : on nomme une teinte
-         dans la foulée du choix de cette teinte, et non en bas de colonne
-         (décision du 16/09/2026). -->
-    <div class="grp">
-      <h3>Légende</h3>
-      <div id="legend"></div>
-      <p class="legend-hint">Nommez une teinte (ex. « Vendeur », « Acquéreur »). Cochez « Inclure » à l'export pour ajouter l'encart de légende sur le plan.</p>
-      <label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink);margin-top:8px;cursor:pointer">
-        <input type="checkbox" id="inclegend" style="accent-color:var(--teal-deep)"> Inclure la légende à l'export
-      </label>
-      <select id="legendpos" style="width:100%;margin-top:9px;border:1.5px solid var(--line);border-radius:8px;padding:7px 8px;font-size:12px;font-family:inherit;color:var(--ink);background:#fff">
-        <option value="auto">Sous « cadastre.gouv.fr » (auto)</option>
-        <option value="tl">Coin haut gauche</option>
-        <option value="tr">Coin haut droit</option>
-        <option value="bl">Coin bas gauche</option>
-        <option value="br">Coin bas droit</option>
-      </select>
-    </div>
-
-    <div class="grp">
-      <h3>Parcelles par numéro</h3>
+      <h3>Parcelles par numéro<button type="button" class="info" aria-label="Comment saisir les numéros"
+        data-info="Séparez les numéros par une virgule. La teinte choisie ci-dessus est appliquée. Le premier appel charge l'OCR, ce qui prend quelques secondes.">i</button></h3>
       <div class="numrow">
         <input id="numinput" type="text" placeholder="Ex. 123, 124, 45" autocomplete="off">
       </div>
@@ -521,34 +578,31 @@
         Trouver et coloriser
       </button>
       <div class="status" id="status"></div>
-      <p class="legend-hint" style="margin-top:8px">Séparez les numéros par une virgule. La couleur sélectionnée ci-dessus est appliquée. Le 1<sup>er</sup> appel charge l'OCR (quelques secondes).</p>
     </div>
 
+    <!-- Réglages fins : utiles une fois par plan, pas à chaque geste. Repliés
+         par défaut pour ne pas occuper le bas de la colonne (16/09/2026). -->
     <div class="grp">
-      <div class="slider">
-        <label>Opacité <span id="opaval">45%</span></label>
-        <input type="range" id="opacity" min="10" max="100" value="45">
-      </div>
-      <div class="slider">
-        <label>Sensibilité des bords <span id="thrval">42</span></label>
-        <input type="range" id="threshold" min="20" max="160" value="100">
-      </div>
-      <div class="slider" id="sizewrap">
-        <label>Taille pinceau / gomme <span id="szval">14 px</span></label>
-        <input type="range" id="brushsize" min="3" max="60" value="14">
-      </div>
-      <div class="slider" id="fontwrap">
-        <label>Taille du texte <span id="fsval">36 px</span></label>
-        <input type="range" id="fontsize" min="12" max="100" value="36">
-      </div>
-    </div>
-
-    <div class="grp">
-      <h3>Actions</h3>
-      <div class="tools">
-        <button class="tool" id="undo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 7 4 12l5 5"/><path d="M4 12h11a5 5 0 0 1 0 10h-1"/></svg>Annuler</button>
-        <button class="tool" id="redo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 7l5 5-5 5"/><path d="M20 12H9a5 5 0 0 0 0 10h1"/></svg>Rétablir</button>
-        <button class="tool" id="clear" style="grid-column:span 2;color:#b23b3b;border-color:#f0d4d4"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 7h14M9 7V5h6v2M8 7l1 13h6l1-13"/></svg>Tout effacer</button>
+      <button type="button" class="depli" id="depli-options" aria-expanded="false" aria-controls="options">
+        <span>Options</span><span class="chev">&#9662;</span>
+      </button>
+      <div class="depli-corps" id="options">
+        <div class="slider">
+          <label>Opacité <span id="opaval">45%</span></label>
+          <input type="range" id="opacity" min="10" max="100" value="45">
+        </div>
+        <div class="slider">
+          <label>Sensibilité des bords <span id="thrval">42</span></label>
+          <input type="range" id="threshold" min="20" max="160" value="100">
+        </div>
+        <div class="slider" id="sizewrap">
+          <label>Taille pinceau / gomme <span id="szval">14 px</span></label>
+          <input type="range" id="brushsize" min="3" max="60" value="14">
+        </div>
+        <div class="slider" id="fontwrap">
+          <label>Taille du texte <span id="fsval">36 px</span></label>
+          <input type="range" id="fontsize" min="12" max="100" value="36">
+        </div>
       </div>
     </div>
 
@@ -1279,6 +1333,19 @@ document.getElementById("swatches-plus").addEventListener("click", e=>{
 });
 document.getElementById("picker").addEventListener("change", ()=>{ majPoignee(); tiroirOuvrir(false); });
 majPoignee();
+
+/* Bandeau « Options ». Les réglages fins — opacité, sensibilité des bords,
+   tailles — se règlent une fois par plan et non à chaque geste : repliés par
+   défaut, ils libèrent le bas de la colonne. Le dépliage n'est PAS mémorisé,
+   pour que la colonne revienne toujours au même état d'un plan à l'autre. */
+(function(){
+  const b=document.getElementById("depli-options"), c=document.getElementById("options");
+  if(!b||!c) return;
+  b.onclick=()=>{
+    const ouvert=c.classList.toggle("ouvert");
+    b.setAttribute("aria-expanded", ouvert?"true":"false");
+  };
+})();
 
 document.getElementById("genbtn").onclick=()=>{ drop.classList.remove("hide"); };
 document.getElementById("fileinput").onchange=e=>{ if(e.target.files[0]) loadPDF(e.target.files[0]); };
