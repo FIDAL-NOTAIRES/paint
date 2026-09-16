@@ -286,7 +286,7 @@
     <!-- Marqueur de build. Sert à savoir d'un coup d'œil si le navigateur sert
          la dernière version ou une page en cache. Ctrl+Shift+R si la date
          affichée n'est pas celle du dernier dépôt. -->
-    <span id="build" title="Version déployée">2026-09-16</span>
+    <span id="build" title="Version déployée">2026-09-16b</span>
   </div>
   <div class="hbar">
     <div class="pagenav" id="pagenav" style="display:none">
@@ -434,7 +434,7 @@
               </label>
               <label style="grid-column:1/-1">Adresse
                 <div class="ac-wrap" id="g_adr_wrap">
-                  <input id="g_adr_nom" placeholder="Choisissez la commune, ou dictez ci-dessous" autocomplete="off" disabled>
+                  <input id="g_adr_nom" placeholder="Ex. 65 Rue de Paris — ou « 65 Rue de Paris, Lille »" autocomplete="off">
                   <div class="ac-list" id="g_adr_list"></div>
                 </div>
                 <div id="g_addr_mark" style="font-size:11px;margin-top:2px"></div>
@@ -839,8 +839,24 @@ const adrNom=()=>document.getElementById("g_adr_nom");
 const adrList=()=>document.getElementById("g_adr_list");
 function adrListClear(){ adrList().innerHTML=""; adrList().classList.remove("show"); }
 function addrMark(state,txt){ const m=document.getElementById("g_addr_mark"); m.textContent=txt||""; m.className = state==="ok"?"ac-ok":(state==="bad"?"ac-bad":""); }
-function enableAddr(){ const i=adrNom(); i.disabled=false; i.placeholder="N° et voie (ex. 65 Rue de Paris)"; }
-function disableAddr(){ const i=adrNom(); i.disabled=true; i.value=""; i.placeholder="Choisissez la commune, ou dictez ci-dessous"; resolvedRefs=null; addrMark("",""); adrListClear(); if(typeof recog!=="undefined" && recog && recActive){ try{recog.stop();}catch(e){} } }
+/* ⚠ LE CHAMP ADRESSE N'EST PLUS JAMAIS DÉSACTIVÉ (16/09/2026). Il l'était tant
+   qu'une commune n'avait pas été CHOISIE DANS LA LISTE : taper le nom de la
+   commune sans cliquer une proposition laissait le champ grisé, et l'outil
+   paraissait cassé — constaté à l'usage. On peut désormais saisir l'adresse
+   d'emblée ; à défaut de commune retenue, la recherche porte sur toute la
+   France et la commune est déduite de l'adresse choisie. */
+function enableAddr(){
+  const i=adrNom(); i.disabled=false;
+  i.placeholder = selectedCommune ? "N° et voie (ex. 65 Rue de Paris)"
+                                  : "Ex. 65 Rue de Paris — ou « 65 Rue de Paris, Lille »";
+}
+function disableAddr(){
+  // Ne verrouille plus rien : remet seulement le champ à un état neutre.
+  const i=adrNom(); i.disabled=false;
+  i.placeholder="Ex. 65 Rue de Paris — ou « 65 Rue de Paris, Lille »";
+  resolvedRefs=null; addrMark("",""); adrListClear();
+  if(typeof recog!=="undefined" && recog && recActive){ try{recog.stop();}catch(e){} }
+}
 
 function centroid(geom){
   try{
@@ -871,7 +887,10 @@ async function parcelleAtPoint(lon,lat){
 }
 async function adrSearch(q){
   try{
-    const r=await fetch("https://api-adresse.data.gouv.fr/search/?q="+encodeURIComponent(q)+"&citycode="+selectedCommune.code+"&autocomplete=1&limit=7");
+    // Sans commune retenue, on interroge la France entière : l'adresse choisie
+    // renseignera alors la commune (citycode/city fournis par la BAN).
+    const filtre = selectedCommune ? "&citycode="+selectedCommune.code : "";
+    const r=await fetch("https://api-adresse.data.gouv.fr/search/?q="+encodeURIComponent(q)+filtre+"&autocomplete=1&limit=7");
     if(!r.ok) throw 0;
     const j=await r.json(); return j.features||[];
   }catch(e){ return null; }
@@ -888,6 +907,13 @@ function adrRender(list){
     it.innerHTML='<span class="lbl"><svg class="pin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s7-6.3 7-11a7 7 0 1 0-14 0c0 4.7 7 11 7 11z"/><circle cx="12" cy="10" r="2.4"/></svg><span>'+p.label+'</span></span>';
     it.onclick=async()=>{
       adrNom().value=p.label; adrListClear(); resolvedRefs=null;
+      // L'adresse porte sa commune : on la retient si elle n'avait pas été
+      // choisie, et on remplit le champ Commune pour que l'écran reste lisible.
+      if(!selectedCommune && p.citycode){
+        selectedCommune={code:p.citycode, nom:p.city||""};
+        cNom().value=p.city||"";
+        acClear(); acMark("ok","✓ "+(p.city||"")+" — INSEE "+p.citycode);
+      }
       const coords=f.geometry&&f.geometry.coordinates;
       if(!coords){ addrMark("bad","adresse sans coordonnées"); return; }
       addrMark("","Recherche de la parcelle…");
@@ -904,7 +930,6 @@ function adrRender(list){
 }
 function adrOnInput(){
   resolvedRefs=null; addrMark("","");
-  if(!selectedCommune) return;
   const q=adrNom().value.trim();
   clearTimeout(adrTimer);
   if(q.length<3){ adrListClear(); return; }
