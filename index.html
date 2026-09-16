@@ -142,7 +142,10 @@
   #cwrap{position:relative;transform-origin:top center;box-shadow:0 6px 30px rgba(9,21,37,.22);background:#fff;line-height:0}
   #base,#overlay{display:block;position:absolute;top:0;left:0}
   #base{position:relative}
-  #overlay{cursor:crosshair}
+  /* Sans « touch-action:none », le navigateur interprète le glissé comme un
+     défilement de page et le pinceau ne trace rien au doigt. */
+  #overlay{cursor:crosshair;touch-action:none}
+  .note{touch-action:none}
   #anno{position:absolute;top:0;left:0;right:0;bottom:0;pointer-events:none}
   .note{
     position:absolute;pointer-events:auto;font-family:"Segoe UI",sans-serif;font-weight:600;
@@ -324,6 +327,84 @@
 @keyframes attpouls{0%,100%{opacity:1}50%{opacity:.25}}
 /* Accessibilité : qui demande moins de mouvement l'obtient */
 @media (prefers-reduced-motion:reduce){ #attbadge .pt{animation:none} }
+
+/* ═══ TÉLÉPHONE ET TABLETTE ÉTROITE ══════════════════════════════════════
+   Le fichier n'avait AUCUNE règle responsive : la colonne d'outils gardait ses
+   248 px fixes, ce qui ne laissait presque rien au plan, et l'en-tête partait à
+   la ligne. Ici la colonne devient un TIROIR qui remonte du bas, le plan occupe
+   tout l'écran, et une poignée rappelle en permanence l'outil et la teinte en
+   cours — les deux seules choses qu'on a besoin de savoir sans ouvrir le
+   tiroir. Parité complète avec l'ordinateur : rien n'est retiré (16/09/2026). */
+#tiroir-poignee{display:none}
+
+@media (max-width:820px){
+  header{padding:8px 12px;gap:10px}
+  .brand{gap:9px;font-size:15px}
+  .brand .nib{width:25px;height:25px}
+  .brand small{display:none}
+  #build{display:none}
+  .hbar{gap:6px;width:100%;margin-left:0;overflow-x:auto;padding-bottom:2px;
+    flex-wrap:nowrap;scrollbar-width:none}
+  .hbar::-webkit-scrollbar{display:none}
+  .hbtn{padding:8px 12px;font-size:13px;flex-shrink:0}
+
+  main{position:relative}
+  .stage{width:100%}
+  .scroller{padding:10px}
+
+  /* La colonne devient un tiroir bas. Replié, il ne montre que sa poignée. */
+  #tiroir-poignee{
+    display:flex;align-items:center;gap:10px;position:fixed;left:0;right:0;
+    bottom:0;z-index:31;height:54px;padding:0 16px calc(env(safe-area-inset-bottom) * .5);
+    background:var(--panel);border:none;border-top:1px solid var(--line);
+    box-shadow:0 -6px 20px rgba(9,21,37,.10);font-family:inherit;cursor:pointer;
+  }
+  #tiroir-poignee .barre{width:34px;height:4px;border-radius:99px;background:var(--line);flex-shrink:0}
+  #tiroir-poignee .etat{display:flex;align-items:center;gap:8px;font-size:13.5px;color:var(--ink)}
+  #tiroir-poignee .etat i{width:17px;height:17px;border-radius:5px;display:block;
+    box-shadow:0 0 0 1px var(--line)}
+  #tiroir-poignee .fleche{margin-left:auto;color:var(--grey);font-size:13px;transition:transform .22s}
+  #tiroir-poignee[aria-expanded="true"] .fleche{transform:rotate(180deg)}
+
+  aside{
+    position:fixed;left:0;right:0;bottom:0;width:auto;z-index:30;
+    max-height:74vh;border-right:none;border-top:1px solid var(--line);
+    border-radius:16px 16px 0 0;box-shadow:0 -10px 34px rgba(9,21,37,.18);
+    padding:18px 16px calc(74px + env(safe-area-inset-bottom));
+    transform:translateY(102%);transition:transform .24s ease;
+    overscroll-behavior:contain;
+  }
+  aside.ouvert{transform:translateY(0)}
+  /* La poignée reste au-dessus du tiroir ouvert, pour pouvoir le refermer. */
+  #tiroir-poignee{z-index:32}
+
+  /* Cibles tactiles : rien en dessous de 44 px de haut. */
+  .tool{padding:13px 6px;font-size:12px}
+  .tool svg{width:25px;height:25px}
+  .sw{border-radius:9px}
+  .swatches,.swatches-plus{grid-template-columns:repeat(5,1fr);gap:9px}
+  .legend-item input{padding:10px 9px;font-size:14px}
+  .gen-grid input,.gen-grid select{padding:11px 10px;font-size:15px}
+  .seg button{padding:11px 4px;font-size:13px}
+  .gen-btn{padding:14px}
+  .dictee-btn{padding:13px}
+
+  /* Panneau de chargement : pleine largeur, marges resserrées. */
+  #drop{padding:14px 12px calc(70px + env(safe-area-inset-bottom))}
+  .dropcard{width:100%;max-width:none;padding:20px 18px 18px;border-radius:12px}
+  .dropcard-head .pen{width:30px;height:30px}
+  .dropcard h2{font-size:17px}
+  .method.actif{margin-left:-8px;padding:12px 10px 12px 11px}
+  .gen-grid{grid-template-columns:repeat(3,1fr);gap:10px}
+  .ac-list{max-height:180px}
+}
+
+/* Écran très étroit : les outils passent sur une seule rangée de quatre. */
+@media (max-width:420px){
+  .tools{grid-template-columns:repeat(4,1fr)}
+  .tool{font-size:10.5px;padding:11px 3px;gap:4px}
+  .tool svg{width:22px;height:22px}
+}
 </style>
 </head>
 <body>
@@ -351,7 +432,7 @@
     <!-- Marqueur de build. Sert à savoir d'un coup d'œil si le navigateur sert
          la dernière version ou une page en cache. Ctrl+Shift+R si la date
          affichée n'est pas celle du dernier dépôt. -->
-    <span id="build" title="Version déployée">2026-09-16i</span>
+    <span id="build" title="Version déployée">2026-09-16j</span>
   </div>
   <div class="hbar">
     <div class="pagenav" id="pagenav" style="display:none">
@@ -372,7 +453,13 @@
 </header>
 
 <main>
-  <aside>
+  <!-- Poignée du tiroir d'outils, visible sur téléphone uniquement (CSS). -->
+  <button type="button" id="tiroir-poignee" aria-expanded="false">
+    <span class="barre"></span>
+    <span class="etat"><b id="tiroir-outil">Remplir</b><i id="tiroir-teinte"></i></span>
+    <span class="fleche">▴</span>
+  </button>
+  <aside id="panneau">
     <div class="grp">
       <h3>Outils</h3>
       <div class="tools" id="toolbox">
@@ -692,10 +779,12 @@ function setColor(c,el){
   S.color=c;
   document.querySelectorAll(".sw").forEach(s=>s.classList.toggle("active",s===el));
   document.getElementById("picker").value = /^#/.test(c)?c:S.color;
+  if(typeof majPoignee==="function") majPoignee();
 }
 document.getElementById("picker").oninput = e=>{
   S.color=e.target.value;
   document.querySelectorAll(".sw").forEach(s=>s.classList.remove("active"));
+  if(typeof majPoignee==="function") majPoignee();
 };
 
 /* Registre des teintes RÉELLEMENT POSÉES sur le calque, toutes origines
@@ -812,8 +901,9 @@ function moveRing(e){
   ring.style.left=e.clientX+"px"; ring.style.top=e.clientY+"px";
   ring.style.display="block";
 }
-overlay.addEventListener("mouseenter",e=>moveRing(e));
-overlay.addEventListener("mouseleave",()=>{ring.style.display="none";});
+// L'anneau ne suit que la souris : au doigt il resterait figé sous le contact.
+overlay.addEventListener("pointerenter",e=>{ if(e.pointerType==="mouse") moveRing(e); });
+overlay.addEventListener("pointerleave",()=>{ring.style.display="none";});
 
 document.getElementById("opacity").oninput=e=>{S.opacity=e.target.value/100;document.getElementById("opaval").textContent=e.target.value+"%";};
 document.getElementById("threshold").oninput=e=>{S.threshold=+e.target.value;document.getElementById("thrval").textContent=e.target.value;};
@@ -1159,6 +1249,37 @@ function volet(nom){
   document.querySelectorAll(".method").forEach(m=>m.classList.toggle("actif", m.dataset.volet===nom));
 }
 document.querySelectorAll("#seg button").forEach(b=>{ b.onclick=()=>volet(b.dataset.volet); });
+/* ---------- Tiroir d'outils (téléphone) ----------
+   La poignée porte en permanence l'outil et la teinte en cours : ce sont les
+   deux seules informations dont on a besoin sans ouvrir le tiroir. Elle se
+   referme d'elle-même après le choix d'un outil ou d'une teinte, pour rendre
+   le plan tout de suite — sans quoi il faudrait deux gestes par action. */
+const tiroir = document.getElementById("panneau");
+const poignee = document.getElementById("tiroir-poignee");
+const NOM_OUTIL = { fill:"Remplir", brush:"Pinceau", erase:"Gomme", text:"Texte" };
+
+function majPoignee(){
+  const o=document.getElementById("tiroir-outil");
+  const t=document.getElementById("tiroir-teinte");
+  if(o) o.textContent = NOM_OUTIL[S.tool] || S.tool;
+  if(t) t.style.background = (S.tool==="erase") ? "transparent" : S.color;
+}
+function tiroirOuvrir(ouvert){
+  tiroir.classList.toggle("ouvert", ouvert);
+  poignee.setAttribute("aria-expanded", ouvert ? "true" : "false");
+}
+poignee.onclick = ()=> tiroirOuvrir(!tiroir.classList.contains("ouvert"));
+// Un choix fait, on rend le plan.
+document.getElementById("toolbox").addEventListener("click", ()=>{ majPoignee(); tiroirOuvrir(false); });
+document.getElementById("swatches").addEventListener("click", e=>{
+  if(e.target.classList.contains("sw")){ majPoignee(); tiroirOuvrir(false); }
+});
+document.getElementById("swatches-plus").addEventListener("click", e=>{
+  if(e.target.classList.contains("sw")){ majPoignee(); tiroirOuvrir(false); }
+});
+document.getElementById("picker").addEventListener("change", ()=>{ majPoignee(); tiroirOuvrir(false); });
+majPoignee();
+
 document.getElementById("genbtn").onclick=()=>{ drop.classList.remove("hide"); };
 document.getElementById("fileinput").onchange=e=>{ if(e.target.files[0]) loadPDF(e.target.files[0]); };
 ["dragenter","dragover"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add("over");}));
@@ -1346,18 +1467,33 @@ document.addEventListener("keydown",e=>{
 });
 
 /* ---------- Interactions sur l'overlay ---------- */
-overlay.addEventListener("mousedown",e=>{
+/* ⚠ ÉVÉNEMENTS POINTEUR, NON SOURIS (16/09/2026). Le calque n'écoutait que la
+   souris : sur téléphone et tablette, seul le remplissage fonctionnait — un
+   simple toucher est traduit en « mousedown » par le navigateur, mais AUCUN
+   « mousemove » n'est émis pendant un glissé tactile, donc pinceau et gomme
+   étaient inertes. Les événements pointeur couvrent souris, doigt et stylet
+   d'un seul jeu de gestionnaires. Ne pas revenir aux événements souris.
+   setPointerCapture garde le tracé rattaché au calque même si le doigt sort du
+   cadre, et « touch-action:none » (CSS) empêche la page de défiler sous le
+   doigt pendant qu'on peint. */
+overlay.addEventListener("pointerdown",e=>{
   if(!S.pdf) return;
+  if(e.pointerType!=="mouse") e.preventDefault();
   const p=evtToPx(e);
   if(S.tool==="fill"){ floodFill(p.x,p.y); pushUndo(); rebuildLegend(); }
-  else if(S.tool==="brush"||S.tool==="erase"){ S.drawing=true; S.lastPt=p; paintAt(p,p); }
+  else if(S.tool==="brush"||S.tool==="erase"){
+    S.drawing=true; S.lastPt=p; paintAt(p,p);
+    try{ overlay.setPointerCapture(e.pointerId); }catch(err){}
+  }
   else if(S.tool==="text"){ addNote(p.x,p.y); }
 });
-overlay.addEventListener("mousemove",e=>{
+overlay.addEventListener("pointermove",e=>{
   if(S.drawing){ const p=evtToPx(e); paintAt(S.lastPt,p); S.lastPt=p; }
-  moveRing(e);
+  if(e.pointerType==="mouse") moveRing(e);
 });
-window.addEventListener("mouseup",()=>{ if(S.drawing){S.drawing=false; pushUndo(); rebuildLegend();} });
+function finTrace(){ if(S.drawing){ S.drawing=false; pushUndo(); rebuildLegend(); } }
+window.addEventListener("pointerup",finTrace);
+window.addEventListener("pointercancel",finTrace);
 
 /* ---------- Pinceau / gomme ---------- */
 function paintAt(a,b){
@@ -1444,12 +1580,14 @@ function renderNote(note){
   el.style.textShadow="0 0 3px #fff,0 0 3px #fff,0 0 3px #fff";
   anno.appendChild(el);
   positionNote(el,note);
-  el.addEventListener("mousedown",ev=>{
+  el.addEventListener("pointerdown",ev=>{
     ev.stopPropagation();
+    if(ev.pointerType!=="mouse") ev.preventDefault();
     selectNote(note.id);
     const r=overlay.getBoundingClientRect();
     S.dragNote=note;
     S.dragOff={dx:ev.clientX-(r.left+note.x*r.width), dy:ev.clientY-(r.top+note.y*r.height)};
+    try{ el.setPointerCapture(ev.pointerId); }catch(e){}
   });
   el.addEventListener("dblclick",ev=>{
     ev.stopPropagation();
@@ -1457,7 +1595,7 @@ function renderNote(note){
     if(nt!==null){ if(nt.trim()===""){deleteNote(note.id);} else {note.text=nt; el.textContent=nt;} }
   });
 }
-window.addEventListener("mousemove",e=>{
+window.addEventListener("pointermove",e=>{
   if(S.dragNote){
     const r=overlay.getBoundingClientRect();
     S.dragNote.x=Math.min(1,Math.max(0,(e.clientX-r.left-S.dragOff.dx)/r.width));
@@ -1465,7 +1603,8 @@ window.addEventListener("mousemove",e=>{
     const el=anno.querySelector(`[data-id="${S.dragNote.id}"]`); positionNote(el,S.dragNote);
   }
 });
-window.addEventListener("mouseup",()=>{S.dragNote=null;});
+window.addEventListener("pointerup",()=>{S.dragNote=null;});
+window.addEventListener("pointercancel",()=>{S.dragNote=null;});
 function positionNote(el,note){ el.style.left=(note.x*S.W)+"px"; el.style.top=(note.y*S.H)+"px"; }
 function layoutNotes(){ S.notes.forEach(n=>{const el=anno.querySelector(`[data-id="${n.id}"]`); if(el)positionNote(el,n);}); }
 function selectNote(id){
@@ -1476,7 +1615,7 @@ function deleteNote(id){
   S.notes=S.notes.filter(n=>n.id!=id);
   const el=anno.querySelector(`[data-id="${id}"]`); if(el)el.remove(); S.selNote=null;
 }
-overlay.addEventListener("mousedown",()=>{ if(S.tool!=="text"){selectNote(null);} });
+overlay.addEventListener("pointerdown",()=>{ if(S.tool!=="text"){selectNote(null);} });
 
 /* ---------- Export ---------- */
 // Localise la mention « cadastre.gouv.fr » sur le plan (OCR plein texte) pour
