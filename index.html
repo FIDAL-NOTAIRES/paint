@@ -336,16 +336,22 @@
 
 <header>
   <div class="brand">
-    <svg class="nib" viewBox="0 0 78 78" fill="none">
-      <path d="M39 8 L52 40 L39 70 L26 40 Z" fill="#6DD5DC"/>
-      <path d="M39 40 L39 70" stroke="#16314f" stroke-width="2.6"/>
-      <circle cx="39" cy="44" r="4" fill="#E3CC7A"/>
+    <!-- Emblème PAINT, repris à l'identique de la tuile du lanceur FIDAL Apps.
+         L'écran portait jusqu'ici le nib de PLUME, qui n'est pas l'emblème de
+         cet outil (16/09/2026). -->
+    <svg class="nib" viewBox="0 0 78 78" xmlns="http://www.w3.org/2000/svg">
+      <g fill="none" stroke="#6DD5DC" stroke-width="2.6" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="35.5" y="15" width="7" height="24" rx="3.5"/>
+        <rect x="33" y="39" width="12" height="6" rx="1.5"/>
+        <rect x="31" y="45" width="16" height="15" rx="2.5"/>
+      </g>
+      <rect x="32.2" y="54" width="13.6" height="5" rx="1.8" fill="#E3CC7A"/>
     </svg>
     <div>PAINT <small>Vos plans en couleurs</small></div>
     <!-- Marqueur de build. Sert à savoir d'un coup d'œil si le navigateur sert
          la dernière version ou une page en cache. Ctrl+Shift+R si la date
          affichée n'est pas celle du dernier dépôt. -->
-    <span id="build" title="Version déployée">2026-09-16h</span>
+    <span id="build" title="Version déployée">2026-09-16i</span>
   </div>
   <div class="hbar">
     <div class="pagenav" id="pagenav" style="display:none">
@@ -473,9 +479,13 @@
     <div id="drop">
       <div class="dropcard">
         <div class="dropcard-head">
-          <svg class="pen" viewBox="0 0 78 78" fill="none" aria-hidden="true">
-            <path d="M39 8 L52 40 L39 70 L26 40 Z" fill="#6DD5DC"/>
-            <circle cx="39" cy="44" r="4" fill="#E3CC7A"/>
+          <svg class="pen" viewBox="0 0 78 78" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <g fill="none" stroke="#4E98A0" stroke-width="3" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="35.5" y="15" width="7" height="24" rx="3.5"/>
+              <rect x="33" y="39" width="12" height="6" rx="1.5"/>
+              <rect x="31" y="45" width="16" height="15" rx="2.5"/>
+            </g>
+            <rect x="32.2" y="54" width="13.6" height="5" rx="1.8" fill="#E3CC7A"/>
           </svg>
           <div>
             <h2>Charger un plan cadastral</h2>
