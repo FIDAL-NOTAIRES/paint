@@ -582,7 +582,7 @@
     <!-- Marqueur de build. Sert à savoir d'un coup d'œil si le navigateur sert
          la dernière version ou une page en cache. Ctrl+Shift+R si la date
          affichée n'est pas celle du dernier dépôt. -->
-    <span id="build" title="Version déployée">2026-09-16w</span>
+    <span id="build" title="Version déployée">2026-09-16x</span>
   </div>
   <div class="hbar">
     <div class="pagenav" id="pagenav" style="display:none">
@@ -711,7 +711,11 @@
           <input type="range" id="opacity" min="10" max="100" value="45">
         </div>
         <div class="slider">
-          <label>Sensibilité des bords <span id="thrval">42</span></label>
+          <!-- ⚠ L'ÉTIQUETTE DOIT SUIVRE LA VALEUR DU CURSEUR. Elle annonçait 42
+               en dur alors que le curseur vaut 100 et que S.threshold vaut 100 :
+               on réglait donc à l'aveugle le seul paramètre qui commande la
+               qualité du remplissage au clic (16/09/2026). -->
+          <label>Sensibilité des bords <span id="thrval">100</span></label>
           <input type="range" id="threshold" min="20" max="160" value="100">
         </div>
         <div class="slider" id="sizewrap">
