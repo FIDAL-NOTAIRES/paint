@@ -492,7 +492,7 @@
     <!-- Marqueur de build. Sert à savoir d'un coup d'œil si le navigateur sert
          la dernière version ou une page en cache. Ctrl+Shift+R si la date
          affichée n'est pas celle du dernier dépôt. -->
-    <span id="build" title="Version déployée">2026-09-16r</span>
+    <span id="build" title="Version déployée">2026-09-16s</span>
   </div>
   <div class="hbar">
     <div class="pagenav" id="pagenav" style="display:none">
@@ -1629,21 +1629,114 @@ function floodFill(sx,sy){
   const start=sy*W+sx;
   if(isWall(start)){ showHint("Vous avez cliqué sur un trait — cliquez à l'intérieur de la parcelle."); return; }
 
-  // Passe 1 — remplissage scanline de la parcelle (s'arrête aux traits)
-  const filled=new Uint8Array(N);
+  /* ⚠ UNE PARCELLE DÉJÀ COLORIÉE FAIT BARRAGE (16/09/2026).
+     Sans cela, il suffisait d'un trait de séparation PERCÉ — trait interrompu par
+     un numéro de parcelle, pointillé de limite, trait gris passant sous le seuil,
+     jonction mal fermée — pour que deux parcelles ne forment plus qu'une seule
+     région : le second remplissage repeignait alors la première, et la légende
+     ne gardait qu'UNE SEULE LIGNE, celle de la dernière teinte. Reproduit sur un
+     trait percé de trois pixels seulement.
+     Le calque sert donc de second jeu de bordures, en complément des traits du
+     plan. EXCEPTION : la teinte qui se trouve SOUS LE CLIC ne fait pas barrage,
+     faute de quoi on ne pourrait plus recolorier une parcelle déjà coloriée. */
+  /* ⚠ TOUT EN ENTIERS DANS LES BOUCLES CHAUDES. Une première version comparait
+     les teintes sous forme de chaînes « #rrggbb » : sur un calque de quatre
+     millions de pixels, cela portait le remplissage à près d'une demi-seconde.
+     Les teintes du registre sont donc empaquetées en un entier r<<16|g<<8|b, et
+     le barrage est précalculé UNE FOIS dans un tableau d'octets. Ne pas
+     réintroduire rgbToHex dans ces boucles. */
+  const ov0 = oCtx.getImageData(0,0,W,H).data;
+  const paquet = new Set();
+  (S.couleursPosees||[]).forEach(h=>{ const [r,g,b]=hexToRgb(h); paquet.add((r<<16)|(g<<8)|b); });
+  const pStart = start*4;
+  const clic = ov0[pStart+3]===0 ? -1 : (ov0[pStart]<<16)|(ov0[pStart+1]<<8)|ov0[pStart+2];
+  const barr = new Uint8Array(N);
+  for(let i=0,p2=0;i<N;i++,p2+=4){
+    if(ov0[p2+3]===0) continue;
+    const v=(ov0[p2]<<16)|(ov0[p2+1]<<8)|ov0[p2+2];
+    if(v!==clic && paquet.has(v)) barr[i]=1;
+  }
+  const barrage = idx => barr[idx]===1;
+  /* ⚠ FERMETURE DES TRAITS INTERROMPUS (16/09/2026) — c'est LA correction qui
+     compte. Sur un plan cadastral, les limites de parcelle sont rarement des
+     traits continus : elles sont coupées par les numéros, par les amorces de
+     servitude, par les pointillés de limite non figée, et certaines passent en
+     gris clair sous le seuil de détection. Il suffit d'un trou de TROIS PIXELS
+     pour que deux parcelles ne forment plus qu'une région et que le remplissage
+     déborde chez le voisin.
+     Conséquence observée : on colorie B, la couleur fuit dans C sans qu'on le
+     remarque toujours ; on clique ensuite dans C pour lui donner une autre
+     teinte, le clic tombe sur la couleur de B, donc B ET C repassent dans la
+     nouvelle teinte — la teinte précédente disparaît du plan et la légende se
+     réduit à une ligne.
+     Remède classique : on ÉPAISSIT les traits de RAYON pixels avant de remplir,
+     ce qui bouche tout trou d'au plus 2 × RAYON, puis on REDONNE au remplissage
+     l'épaisseur qu'on lui a prise, sans jamais déborder sur un vrai trait.
+     ⚠ RAYON=2 ferme les trous jusqu'à 4 px. L'augmenter fermerait aussi les
+     passages étroits légitimes (venelles, bandes d'accès) : ne pas monter sans
+     avoir vérifié sur un plan dense. */
+  const RAYON = 2;
+  const mur = new Uint8Array(N);
+  for(let i=0,p2=0;i<N;i++,p2+=4){
+    if((0.299*base[p2]+0.587*base[p2+1]+0.114*base[p2+2])<thr) mur[i]=1;
+  }
+
+  /* Épaississement séparable, en FENÊTRE GLISSANTE : on tient le nombre de
+     pixels allumés dans la fenêtre au lieu de la relire à chaque position. Coût
+     linéaire, indépendant du rayon. */
+  const dilate = (src,r)=>{
+    const tmp=new Uint8Array(N), out=new Uint8Array(N);
+    for(let y=0;y<H;y++){
+      const o=y*W; let n=0;
+      for(let x=0;x<=r && x<W;x++) n+=src[o+x];
+      for(let x=0;x<W;x++){
+        tmp[o+x]= n>0 ? 1 : 0;
+        const sortant=x-r, entrant=x+r+1;
+        if(sortant>=0) n-=src[o+sortant];
+        if(entrant<W)  n+=src[o+entrant];
+      }
+    }
+    for(let x=0;x<W;x++){
+      let n=0;
+      for(let y=0;y<=r && y<H;y++) n+=tmp[y*W+x];
+      for(let y=0;y<H;y++){
+        out[y*W+x]= n>0 ? 1 : 0;
+        const sortant=y-r, entrant=y+r+1;
+        if(sortant>=0) n-=tmp[sortant*W+x];
+        if(entrant<H)  n+=tmp[entrant*W+x];
+      }
+    }
+    return out;
+  };
+  const murEpais = dilate(mur, RAYON);
+  // Le point cliqué ne doit pas se retrouver enfermé par l'épaississement.
+  const bloque = idx => (murEpais[idx] && idx!==start) || barr[idx]===1;
+
+  // Passe 1 — remplissage scanline, arrêté par les traits épaissis ET par les
+  // parcelles déjà coloriées d'une autre teinte.
+  let filled=new Uint8Array(N);
   const stack=[[sx,sy]];
   while(stack.length){
     let [x,y]=stack.pop();
     let xL=x;
-    while(xL>=0 && !filled[y*W+xL] && !isWall(y*W+xL)) xL--;
+    while(xL>=0 && !filled[y*W+xL] && !bloque(y*W+xL)) xL--;
     xL++;
     let spanUp=false, spanDown=false, xi=xL;
-    while(xi<W && !filled[y*W+xi] && !isWall(y*W+xi)){
+    while(xi<W && !filled[y*W+xi] && !bloque(y*W+xi)){
       const idx=y*W+xi; filled[idx]=1;
-      if(y>0){ const u=idx-W; if(!filled[u]&&!isWall(u)){ if(!spanUp){stack.push([xi,y-1]);spanUp=true;} } else spanUp=false; }
-      if(y<H-1){ const dn=idx+W; if(!filled[dn]&&!isWall(dn)){ if(!spanDown){stack.push([xi,y+1]);spanDown=true;} } else spanDown=false; }
+      if(y>0){ const u=idx-W; if(!filled[u]&&!bloque(u)){ if(!spanUp){stack.push([xi,y-1]);spanUp=true;} } else spanUp=false; }
+      if(y<H-1){ const dn=idx+W; if(!filled[dn]&&!bloque(dn)){ if(!spanDown){stack.push([xi,y+1]);spanDown=true;} } else spanDown=false; }
       xi++;
     }
+  }
+
+  // On redonne au remplissage les RAYON pixels retirés par l'épaississement,
+  // mais jamais sur un VRAI trait ni sur une parcelle déjà coloriée.
+  {
+    const large = dilate(filled, RAYON);
+    const rendu = new Uint8Array(N);
+    for(let i=0;i<N;i++) if(large[i] && !mur[i] && !barr[i]) rendu[i]=1;
+    filled = rendu;
   }
 
   // Passe 2 — depuis les bords du plan, marquer tout ce qui communique avec
@@ -1666,7 +1759,9 @@ function floodFill(sx,sy){
   const img=oCtx.getImageData(0,0,W,H), od=img.data;
   const [fr,fg,fb]=hexToRgb(S.color); const fa=Math.round(S.opacity*255);
   for(let i=0;i<N;i++){
-    if(!outside[i]){ const p=i*4; od[p]=fr; od[p+1]=fg; od[p+2]=fb; od[p+3]=fa; }
+    // Les îlots enfermés peuvent contenir une parcelle d'une autre teinte :
+    // on la protège ici aussi, la passe 1 ne l'ayant pas vue.
+    if(!outside[i] && !barr[i]){ const p=i*4; od[p]=fr; od[p+1]=fg; od[p+2]=fb; od[p+3]=fa; }
   }
   oCtx.putImageData(img,0,0);
 }
