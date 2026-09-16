@@ -477,7 +477,7 @@
     <!-- Marqueur de build. Sert à savoir d'un coup d'œil si le navigateur sert
          la dernière version ou une page en cache. Ctrl+Shift+R si la date
          affichée n'est pas celle du dernier dépôt. -->
-    <span id="build" title="Version déployée">2026-09-16n</span>
+    <span id="build" title="Version déployée">2026-09-16o</span>
   </div>
   <div class="hbar">
     <div class="pagenav" id="pagenav" style="display:none">
@@ -527,13 +527,8 @@
       <label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink);margin-top:8px;cursor:pointer">
         <input type="checkbox" id="inclegend" style="accent-color:var(--teal-deep)"> Inclure la légende à l'export
       </label>
-      <select id="legendpos" style="width:100%;margin-top:9px;border:1.5px solid var(--line);border-radius:8px;padding:7px 8px;font-size:12px;font-family:inherit;color:var(--ink);background:#fff">
-        <option value="auto">Dans le cartouche, au centre (par défaut)</option>
-        <option value="tl">Coin haut gauche</option>
-        <option value="tr">Coin haut droit</option>
-        <option value="bl">Coin bas gauche</option>
-        <option value="br">Coin bas droit</option>
-      </select>
+      <!-- Le choix de position a été retiré le 16/09/2026 : l'emplacement dans
+           le cartouche est le seul retenu, les quatre coins ne servaient pas. -->
     </div>
 
     <div class="grp">
@@ -1701,7 +1696,7 @@ async function findCadastreAnchor(){
 async function findCartoucheAnchors(){
   const key=S.page+"|"+S.rotation;
   if(S.anchorCache && S.anchorCache.key===key) return S.anchorCache.a;
-  let a={cadastre:null, section:null};
+  let a={cadastre:null, section:null, titre:null};
   try{
     if(typeof Tesseract==="undefined") throw new Error("ocr");
     if(!anchorWorker){
@@ -1720,12 +1715,15 @@ async function findCartoucheAnchors(){
       // « Section » figure aussi dans le corps du plan ; on ne retient que la
       // première occurrence, celle du cartouche, qui est la plus haute.
       if(/^section/.test(mot) && !a.section) a.section=b;
+      // « EXTRAIT », du titre « EXTRAIT DU PLAN CADASTRAL » : sert uniquement à
+      // garantir que l'encart ne remonte pas dessus en format paysage.
+      if(/^extrait/.test(mot) && !a.titre) a.titre=b;
     });
     // Le pavé de droite : « cadastre.gouv.fr » y est centré, mais la mention
     // « Cet extrait de plan vous est délivré par » ouvre le même pavé plus haut.
     // On retient la plus BASSE des deux occurrences de « cadastre » si l'OCR en
     // a lu plusieurs — d'où le balayage complet ci-dessus, sans interruption.
-  }catch(e){ a={cadastre:null, section:null}; }
+  }catch(e){ a={cadastre:null, section:null, titre:null}; }
   S.anchorCache={key,a};
   return a;
 }
@@ -1949,41 +1947,51 @@ function buildExportCanvas(anchor){
                  .map(h=>({c:h,t:S.legendLabels[h]}));
     if(items.length){
       const pad=14, line=Math.max(22,S.fontSize+6), boxW=300, boxH=pad*2+line*(items.length+1);
-      const pos=document.getElementById("legendpos").value;
-      const M=22;
+      /* EMPLACEMENT UNIQUE (16/09/2026) : l'espace blanc central du cartouche,
+         entre le pavé « Section / Feuille » à gauche et le pavé
+         « cadastre.gouv.fr » à droite, le HAUT DE L'ENCART ALIGNÉ SUR LE HAUT DU
+         PAVÉ SECTION. Les quatre coins au choix ont été retirés, ils ne
+         servaient pas.
+
+         ⚠ PORTRAIT ET PAYSAGE SONT TRAITÉS PAR LA MÊME RÈGLE, sans constante de
+         mise en page : tout est mesuré sur le plan lui-même — les deux mots
+         repérés par l'OCR, puis les traits du cadre retrouvés par balayage
+         local. Le cartouche d'un A4 paysage est plus large mais garde la même
+         composition, donc l'encart y tombe au même endroit relatif et à la même
+         distance du titre. Ne pas introduire de coordonnées en dur, elles
+         casseraient l'un des deux formats.
+
+         L'ENCART NE REMONTE JAMAIS SUR LE TITRE : si le pavé Section commence
+         plus haut que le bas de « EXTRAIT DU PLAN CADASTRAL » — ce qui peut
+         arriver en paysage, le cartouche y étant moins haut —, l'encart est
+         redescendu sous le titre avec le même dégagement.
+
+         Repli au centre du plan si le cartouche n'est pas reconnu : photographie,
+         plan non DGFiP, ou OCR indisponible. */
       let bx, by;
-      if(pos==="auto"){
-        /* Position par défaut : DANS L'ESPACE BLANC CENTRAL DU CARTOUCHE, entre
-           le pavé « Section / Feuille » à gauche et le pavé « cadastre.gouv.fr »
-           à droite, le HAUT DE L'ENCART ALIGNÉ SUR LE HAUT DU PAVÉ SECTION
-           (décision du 16/09/2026).
-           L'encart se posait jusqu'ici SOUS la mention « cadastre.gouv.fr », donc
-           par-dessus le pavé de droite. Repli au centre du plan si le cartouche
-           n'a pas été reconnu — cas d'une photographie ou d'un plan non DGFiP. */
-        const A = anchor && anchor.section ? anchor : null;
-        let pose = null;
-        if(A){
-          const bordDroitGauche = traitDuCadre(A.section, "droite", Math.round(S.W*0.45));
-          const bordGaucheDroit = A.cadastre ? traitDuCadre(A.cadastre, "gauche", Math.round(S.W*0.45)) : null;
-          const hautPave = traitDuCadre(A.section, "haut", 90);
-          const g = (bordDroitGauche!==null) ? bordDroitGauche : A.section.x1 + 20;
-          const d = (bordGaucheDroit!==null) ? bordGaucheDroit : (A.cadastre ? A.cadastre.x0 - 20 : S.W-20);
-          if(d - g > boxW + 16){
-            pose = {
-              x: Math.round(g + (d - g - boxW)/2),
-              y: (hautPave!==null) ? hautPave : Math.round(A.section.y0 - 8)
-            };
-          }
+      const A = anchor && anchor.section ? anchor : null;
+      let pose = null;
+      if(A){
+        const portee = Math.round(Math.max(S.W,S.H)*0.45);
+        const bordSectionDroite = traitDuCadre(A.section, "droite", portee);
+        const bordDroitGauche   = A.cadastre ? traitDuCadre(A.cadastre, "gauche", portee) : null;
+        const hautPave          = traitDuCadre(A.section, "haut", 90);
+
+        const g = (bordSectionDroite!==null) ? bordSectionDroite : A.section.x1 + 20;
+        const d = (bordDroitGauche!==null)   ? bordDroitGauche
+                 : (A.cadastre ? A.cadastre.x0 - 20 : S.W-20);
+
+        if(d - g > boxW + 16){
+          let y = (hautPave!==null) ? hautPave : Math.round(A.section.y0 - 8);
+          // Dégagement sous le titre, mesuré et non supposé.
+          if(A.titre && y < A.titre.y1 + 12) y = Math.round(A.titre.y1 + 12);
+          pose = { x: Math.round(g + (d - g - boxW)/2), y };
         }
-        if(pose){ bx=pose.x; by=pose.y; }
-        else{ bx=Math.round((S.W-boxW)/2); by=Math.round((S.H-boxH)/2); }
-        bx=Math.min(Math.max(8,bx), S.W-boxW-8);
-        by=Math.min(Math.max(8,by), S.H-boxH-8);
-      }else{                                   // coin choisi
-        const p=(pos==="auto")?"tr":pos;
-        bx=(p==="tl"||p==="bl") ? M : S.W-boxW-M;
-        by=(p==="tl"||p==="tr") ? M : S.H-boxH-M;
       }
+      if(pose){ bx=pose.x; by=pose.y; }
+      else{ bx=Math.round((S.W-boxW)/2); by=Math.round((S.H-boxH)/2); }
+      bx=Math.min(Math.max(8,bx), S.W-boxW-8);
+      by=Math.min(Math.max(8,by), S.H-boxH-8);
       x.fillStyle="rgba(255,255,255,.95)"; x.strokeStyle="#16314f"; x.lineWidth=2;
       x.fillRect(bx,by,boxW,boxH); x.strokeRect(bx,by,boxW,boxH);
       x.fillStyle="#0F2238"; x.textAlign="left"; x.textBaseline="middle";
@@ -2020,7 +2028,7 @@ function jpegUnderSize(canvas,maxBytes){
 
 async function doExport(kind){
   let ancres=null;
-  if(document.getElementById("inclegend").checked && document.getElementById("legendpos").value==="auto"){
+  if(document.getElementById("inclegend").checked){
     spin.classList.add("show"); spinmsg.textContent="Localisation du cartouche…";
     ancres=await findCartoucheAnchors();
     spin.classList.remove("show");
@@ -3129,8 +3137,7 @@ async function doExportDocument(){
     // capture de l'écran : les plans viennent des iframes.
     let ancres = null, c1 = null;
     if(!aPoly && S.pdf){
-      if(document.getElementById("inclegend").checked
-         && document.getElementById("legendpos").value === "auto"){
+      if(document.getElementById("inclegend").checked){
         spin.classList.add("show"); spinmsg.textContent = "Localisation du cartouche…";
         ancres = await findCartoucheAnchors();
         spin.classList.remove("show");
