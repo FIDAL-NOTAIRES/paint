@@ -582,7 +582,7 @@
     <!-- Marqueur de build. Sert à savoir d'un coup d'œil si le navigateur sert
          la dernière version ou une page en cache. Ctrl+Shift+R si la date
          affichée n'est pas celle du dernier dépôt. -->
-    <span id="build" title="Version déployée">2026-09-16x</span>
+    <span id="build" title="Version déployée">2026-09-16y</span>
   </div>
   <div class="hbar">
     <div class="pagenav" id="pagenav" style="display:none">
@@ -722,6 +722,18 @@
           <label>Taille pinceau / gomme <span id="szval">14 px</span></label>
           <input type="range" id="brushsize" min="3" max="60" value="14">
         </div>
+        <!-- CONTOUR CADASTRAL AU CLIC (16/09/2026). Actif par défaut : c'est la
+             voie qui donne au clic la même qualité qu'un lien REDPAR. On le
+             décoche pour revenir au remplissage par propagation — utile sur un
+             plan non géoréférencé, ou pour colorier une emprise qui n'est pas
+             une parcelle (une bande, une cour, un morceau de voirie). -->
+        <label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink);margin:10px 0 4px;cursor:pointer">
+          <input type="checkbox" id="contourclic" checked style="accent-color:var(--teal-deep)">
+          Contour cadastral au clic
+        </label>
+        <div class="legend-hint" style="margin-bottom:8px">Décoché : remplissage
+          par propagation, qui suit les traits du plan.</div>
+
         <div class="slider" id="fontwrap">
           <label>Taille du texte <span id="fsval">36 px</span></label>
           <input type="range" id="fontsize" min="12" max="100" value="36">
@@ -939,6 +951,7 @@ const S = {
   couleursPosees:[],           // registre des teintes posées sur le calque (minuscules)
   tool:"fill", color:"#A01040", opacity:.45, threshold:100, brush:14, fontSize:36,
   zoom:1, rotation:0, drawing:false, lastPt:null, pan:null,
+  contourAuClic:true, calage:null,   // contour cadastral au clic (16/09/2026)
   undoStack:[], redoStack:[],
   notes:[], selNote:null, dragNote:null, dragOff:null,
   legendLabels:{}, // hex -> texte
@@ -1977,6 +1990,203 @@ document.addEventListener("keydown",e=>{
   if((e.key==="Delete"||e.key==="Backspace")&&S.selNote!=null){deleteNote(S.selNote);}
 });
 
+/* ==================================================================
+   CONTOUR CADASTRAL AU CLIC                            (16/09/2026)
+   ------------------------------------------------------------------
+   POURQUOI. Jusqu'ici, colorier au clic et colorier depuis un lien REDPAR
+   n'étaient pas la même opération, alors que c'est le même bouton et le même
+   plan. Depuis REDPAR, le lien porte « poly » : PAINT projette un contour
+   cadastral et le peint — les limites sont des DONNÉES, le résultat est net.
+   Au clic, PAINT n'a rien reçu : il DEVINE les limites en lisant les pixels et
+   s'arrête aux traits sombres. Sur un extrait dense — lanières étroites,
+   limites en filets gris, pointillés de limite non figée —, ces traits ne
+   ressortent pas au rendu et le remplissage traverse tout le quartier.
+   Constaté le 16/09/2026 sur Lille : un clic emportait des dizaines de
+   parcelles, à 100 comme à 160 de seuil. Aucun réglage ne referme des murs qui
+   n'existent pas dans l'image.
+
+   REMÈDE : donner au clic LA MÊME SOURCE qu'à REDPAR. Le plan est
+   géoréférencé — par le calage analytique quand le lien porte son centre, sinon
+   par les étiquettes de coordonnées lues en marge —, donc un pixel se convertit
+   en coordonnées projetées. On demande alors à l'API Carto de l'IGN la parcelle
+   qui contient ce point, on reprojette son contour, et on le peint.
+
+   ⚠ L'INVERSE DE LA PROJECTION NE SERT QU'À INTERROGER L'IGN, jamais à tracer.
+   Le contour revient en degrés et c'est le sens DIRECT — déjà vérifié au
+   micromètre contre pyproj — qui le ramène en pixels. Une erreur de l'inverse
+   se traduirait donc par « parcelle non trouvée » ou par la mauvaise parcelle,
+   deux choses qui se voient, et jamais par une couleur posée de travers.
+   ⚠ LE REMPLISSAGE PAR PROPAGATION RESTE, en repli : plan non géoréférencé,
+   parcelle sans contour au cadastre, service indisponible, ou hors métropole.
+   ================================================================== */
+
+/* Inverse de la conique conforme. VÉRIFIÉ le 16/09/2026 sur 441 points
+   répartis dans les neuf zones : l'aller-retour par projeterCC se referme à
+   2,8 nanomètres au pire, et le point de définition (3° E, 50° N) retombe
+   exactement sur 1 700 000 / 9 200 000 en CC50. pyproj n'était pas joignable
+   depuis l'atelier ; la vérification passe donc par le sens direct, lui-même
+   contrôlé contre pyproj lors de son écriture. Refaire cette mesure avant
+   toute retouche. */
+function inverseCC(X, Y, zz){
+  const P = ccParams(zz), e = CC.e;
+  const dx = X - P.x0, dy = P.r0 - (Y - P.y0);
+  const R = Math.sign(P.n) * Math.sqrt(dx*dx + dy*dy);
+  const theta = Math.atan2(dx, dy);
+  const lon = (CC.lon0 + theta / P.n) * 180 / Math.PI;
+  const t = Math.pow(R / (CC.a * P.F), 1 / P.n);
+  let lat = Math.PI/2 - 2*Math.atan(t);
+  for(let i=0;i<15;i++){                      // convergence en 3 à 4 tours
+    const s = e * Math.sin(lat);
+    const suivant = Math.PI/2 - 2*Math.atan(t * Math.pow((1-s)/(1+s), e/2));
+    if(Math.abs(suivant - lat) < 1e-14){ lat = suivant; break; }
+    lat = suivant;
+  }
+  return [lon, lat*180/Math.PI];
+}
+
+/* Calage du plan affiché, mis en cache par page et rotation.
+   Deux voies, dans cet ordre de confiance :
+   — ANALYTIQUE, quand l'URL porte le centre imposé au service : exact par
+     construction, instantané ;
+   — ÉTIQUETTES DE MARGE (OCR), sinon : c'est la seule voie pour un extrait
+     produit par le formulaire ou un PDF glissé. Coûteuse — quelques secondes
+     la première fois —, d'où la mise en cache.
+   Rend null si aucune des deux n'aboutit : l'appelant se replie alors. */
+async function calageCourant(){
+  const cle = S.page + "|" + S.rotation;
+  if(S.calage && S.calage.cle === cle) return S.calage.v;
+  let v = null;
+  try{
+    const p = new URLSearchParams(location.search);
+    const cal = calageAnalytique(p, baseCtx, S.W, S.H);
+    if(cal) v = { fx: cal.fx, fy: cal.fy, voie: "analytique" };
+    if(!v){
+      const g = await georeferencer(null);
+      if(g && g.fx && g.fy
+         && (g.fx.cale || Math.abs(g.fx.r) > 0.99)
+         && (g.fy.cale || Math.abs(g.fy.r) > 0.99))
+        v = { fx: g.fx, fy: g.fy, voie: "étiquettes de marge" };
+    }
+  }catch(e){
+    // ⚠ L'ÉCHEC SE MET EN CACHE COMME LA RÉUSSITE. Sans cela, un plan que l'on
+    // ne sait pas caler — OCR indisponible, PDF sans étiquettes lisibles —
+    // relancerait Tesseract À CHAQUE CLIC, et chaque parcelle coûterait
+    // plusieurs secondes pour retomber sur le même repli.
+    console.warn("PAINT : calage indisponible", e);
+    v = null;
+  }
+  S.calage = { cle, v };
+  return v;
+}
+
+/* Contour cadastral de la parcelle sous un pixel, en pixels du plan.
+   Rend { anneaux, ref, voie } ou null — jamais d'exception : une colorisation
+   qui échoue doit se replier, pas arrêter l'outil. */
+async function contourAuPixel(px, py){
+  let cal = null;
+  // ⚠ LE CALAGE PEUT JETER : l'OCR charge Tesseract, qui peut manquer — réseau,
+  // aperçu intégré, moteur non servi. On se replie alors sur le remplissage,
+  // on n'arrête pas le clic.
+  try{ cal = await calageCourant(); }catch(e){ cal = null; }
+  if(!cal) return null;
+  const X = cal.fx.a * px + cal.fx.b;
+  const Y = cal.fy.a * py + cal.fy.b;
+  const zz = zoneDeY(Y);
+  if(!(zz >= 42 && zz <= 50)) return null;        // hors métropole : repli
+  const [lon, lat] = inverseCC(X, Y, zz);
+  if(!Number.isFinite(lon) || !Number.isFinite(lat)) return null;
+  // Le point est INTÉRIEUR à la parcelle : on interroge sur le point lui-même,
+  // par un carré de 2 m — assez pour absorber l'imprécision du calage, assez
+  // petit pour ne pas attraper la parcelle voisine.
+  const m = 2, dLat = m/111320, dLon = m/(111320*Math.cos(lat*Math.PI/180));
+  const poly = { type:"Polygon", coordinates:[[
+    [lon-dLon,lat-dLat],[lon+dLon,lat-dLat],[lon+dLon,lat+dLat],[lon-dLon,lat+dLat],[lon-dLon,lat-dLat]
+  ]]};
+  let feats;
+  try{
+    const r = await fetch("https://apicarto.ign.fr/api/cadastre/parcelle?geom="
+      + encodeURIComponent(JSON.stringify(poly)));
+    if(!r.ok) return null;
+    feats = ((await r.json()).features)||[];
+  }catch(e){ return null; }
+  if(!feats.length) return null;
+  // Plusieurs parcelles peuvent répondre si le point frôle une limite : on
+  // retient celle qui CONTIENT réellement le point, par test d'inclusion.
+  const dedans = (anneau, x, y) => {
+    let d = false;
+    for(let i=0, j=anneau.length-1; i<anneau.length; j=i++){
+      const [xi,yi]=anneau[i], [xj,yj]=anneau[j];
+      if((yi>y)!==(yj>y) && x < (xj-xi)*(y-yi)/(yj-yi)+xi) d = !d;
+    }
+    return d;
+  };
+  const anneauxDe = g => !g ? []
+    : g.type==="Polygon" ? g.coordinates
+    : g.type==="MultiPolygon" ? g.coordinates.reduce((a,b)=>a.concat(b),[])
+    : [];
+  let choisie = feats.find(f => anneauxDe(f.geometry).some(a => dedans(a, lon, lat))) || feats[0];
+  const anneaux = anneauxDe(choisie.geometry)
+    .map(a => a.map(([lo,la]) => {
+      const [Xp,Yp] = projeterCC(lo, la, zz);      // SENS DIRECT : c'est lui qui trace
+      return [Math.round((Xp - cal.fx.b)/cal.fx.a), Math.round((Yp - cal.fy.b)/cal.fy.a)];
+    }))
+    .filter(a => a.length >= 3);
+  if(!anneaux.length) return null;
+  const pr = choisie.properties || {};
+  return { anneaux, voie: cal.voie,
+           ref: ((pr.section||"") + " " + String(parseInt(pr.numero,10)||pr.numero||"")).trim() };
+}
+
+/* Peint un contour rendu par contourAuPixel. Même tracé que le chemin REDPAR :
+   un SEUL chemin pour tous les anneaux, de sorte qu'un recouvrement ne se
+   cumule pas en surbrillance. */
+function peindreContour(anneaux){
+  oCtx.save();
+  oCtx.globalAlpha = S.opacity;
+  oCtx.fillStyle = S.color;
+  oCtx.beginPath();
+  anneaux.forEach(pts => {
+    oCtx.moveTo(pts[0][0], pts[0][1]);
+    for(let i=1;i<pts.length;i++) oCtx.lineTo(pts[i][0], pts[i][1]);
+    oCtx.closePath();
+  });
+  oCtx.fill();
+  oCtx.restore();
+  memoriserTeinte();
+  pushUndo();
+  rebuildLegend();
+}
+
+/* Colorisation d'un clic : contour d'abord, remplissage en repli.
+   ⚠ LE REPLI EST DIT, JAMAIS SILENCIEUX : sans cela on ne saurait pas si la
+   parcelle a été cernée par son contour cadastral ou devinée sur l'image, ce
+   qui n'engage pas la même confiance sur une pièce de dossier. */
+let contourEnCours = false;
+async function colorierAuClic(px, py){
+  if(contourEnCours) return;
+  if(!S.contourAuClic){ floodFill(px,py); pushUndo(); rebuildLegend(); return; }
+  contourEnCours = true;
+  let c = null;
+  try{
+    spin.classList.add("show");
+    spinmsg.textContent = S.calage ? "Contour cadastral…" : "Calage du plan…";
+    c = await contourAuPixel(px, py);
+  }catch(e){ c = null; }
+  finally{ spin.classList.remove("show"); contourEnCours = false; }
+  if(c){
+    peindreContour(c.anneaux);
+    setStatus("Parcelle " + (c.ref || "") + " cernée par son CONTOUR CADASTRAL "
+      + "(IGN), calage " + c.voie + " — mêmes limites que depuis REDPAR, "
+      + "insensible aux traits interrompus du plan.", "ok");
+  }else{
+    floodFill(px,py); pushUndo(); rebuildLegend();
+    setStatus("Contour cadastral indisponible pour ce point — remplissage par "
+      + "propagation, qui suit les traits du plan. Sur un plan dense, vérifiez "
+      + "que la couleur n'a pas débordé chez le voisin.", "warn");
+  }
+  replierApresPremierColoriage();
+}
+
 /* ---------- Interactions sur l'overlay ---------- */
 /* ⚠ ÉVÉNEMENTS POINTEUR, NON SOURIS (16/09/2026). Le calque n'écoutait que la
    souris : sur téléphone et tablette, seul le remplissage fonctionnait — un
@@ -2058,7 +2268,7 @@ overlay.addEventListener("pointerdown",e=>{
     try{ overlay.setPointerCapture(e.pointerId); }catch(err){}
     return;
   }
-  if(S.tool==="fill"){ floodFill(p.x,p.y); pushUndo(); rebuildLegend(); replierApresPremierColoriage(); }
+  if(S.tool==="fill"){ colorierAuClic(p.x,p.y); }
   else if(S.tool==="brush"||S.tool==="erase"){
     S.drawing=true; S.lastPt=p; paintAt(p,p);
     try{ overlay.setPointerCapture(e.pointerId); }catch(err){}
@@ -4434,6 +4644,11 @@ async function searchAndFill(){
   setStatus(msg,cls);
   if(missing.length) showHint("Numéro(s) introuvable(s) : "+missing.join(", "));
 }
+document.getElementById("contourclic").onchange = e => {
+  S.contourAuClic = e.target.checked;
+  showHint(S.contourAuClic ? "Clic : contour cadastral (IGN)."
+                           : "Clic : remplissage par propagation.");
+};
 document.getElementById("findbtn").onclick=searchAndFill;
 document.getElementById("numinput").addEventListener("keydown",e=>{ if(e.key==="Enter") searchAndFill(); });
 
@@ -5103,6 +5318,159 @@ async function contourOrtho(p, rangs, total){
     (alerte || repli) ? "warn" : "ok");
 }
 
+/* ==================================================================
+   GÉORÉFÉRENCEMENT PAR LES ÉTIQUETTES DE MARGE — HISSÉ AU MODULE (16/09/2026)
+   ------------------------------------------------------------------
+   Cette fonction vivait DANS la fermeture du préremplissage par URL, ce que le
+   mémo appelait « le verrou du § 6 » : le calage n'existait que le temps d'un
+   chargement automatique, et rien d'autre dans l'outil ne pouvait savoir où
+   tombe un point du plan. C'est ce verrou qui obligeait le clic manuel à
+   DEVINER les limites sur l'image, alors que le chemin REDPAR, lui, recevait
+   les contours tout faits — d'où deux qualités de colorisation très inégales
+   sur le même plan (constaté le 16/09/2026 sur un extrait dense de Lille).
+   Elle ne dépendait que de variables globales — S, renderOcrBase, ocrAngle,
+   spinmsg —, son déplacement est donc littéral : AUCUNE ligne de son corps n'a
+   été modifiée, et le seul appel existant la trouve désormais au module.
+   ================================================================== */
+// attendus : { X, Y } transmis par l'appelant, sert à classer les groupes
+// d'étiquettes par ordre de grandeur quand la corrélation ne suffit pas.
+async function georeferencer(attendus){
+  const cle = "geo|" + S.page + "|" + S.rotation;
+  if(!S.ocrCache || S.ocrCache.key !== cle) S.ocrCache = { key: cle, base: null, words: [], done: new Set() };
+  if(!S.ocrCache.base) S.ocrCache.base = await renderOcrBase();
+  for(const deg of [0, 90, -90]){
+    if(S.ocrCache.done.has(deg)) continue;
+    spinmsg.textContent = "Lecture des coordonnées" + (deg ? " (étiquettes à " + deg + "°)" : "") + "…";
+    S.ocrCache.words.push(...await ocrAngle(S.ocrCache.base, deg));
+    S.ocrCache.done.add(deg);
+  }
+  let etiquettes = S.ocrCache.words
+    .map((w) => ({ v: parseInt(String(w.text).replace(/[^0-9]/g, ""), 10),
+                   cx: w.cx, cy: w.cy, brut: w.text }))
+    .filter((e) => Number.isFinite(e.v) && e.v >= 100000 && e.v <= 99999999);
+  // Compte AVANT tout filtrage. Sans lui, un diagnostic affichant sept
+  // étiquettes légitimes est indistinguable selon que le filtre de
+  // vraisemblance a écarté deux parasites ou qu'il n'y en avait aucun —
+  // ce qui a fait conclure à tort, le 29/07/2026, que le défaut ne s'était
+  // pas reproduit.
+  const luesBrutes = etiquettes.length;
+  // Regroupement par ordre de grandeur : élimine les parasites isolés — le
+  // « 1/1000 » du cartouche lu 171000, la date d'édition lue 28072026.
+  const paquets = new Map();
+  etiquettes.forEach((e) => {
+    const k = Math.floor(e.v / 100000);
+    if(!paquets.has(k)) paquets.set(k, []);
+    paquets.get(k).push(e);
+  });
+  // RÉPARATION DES CHIFFRES DE TÊTE PERDUS PAR L'OCR.
+  // Constaté à Mézilles : « 1711500 » lu « 711500 ». Le contrôle de plage
+  // comparait alors un point à sept chiffres à une étiquette qui n'en avait
+  // plus que six, et refusait à tort. On répare en complétant l'étiquette
+  // avec les chiffres de tête de la coordonnée ATTENDUE, ce qui n'invente
+  // rien : on ne touche qu'au préfixe, et seulement si le résultat tombe à
+  // moins de 2 km de l'attendu. Les différences entre étiquettes, dont on
+  // tire l'échelle, ne sont pas affectées.
+  let parasites = [];
+  if(attendus){
+    const reparer = (v) => {
+      for(const cible of [attendus.X, attendus.Y]){
+        const sc = String(Math.round(cible)), sv = String(v);
+        if(sv.length >= sc.length) continue;
+        const candidat = parseInt(sc.slice(0, sc.length - sv.length) + sv, 10);
+        if(Math.abs(candidat - cible) < 2000) return candidat;
+      }
+      return v;
+    };
+    etiquettes.forEach((e) => { e.v = reparer(e.v); });
+    // ------------------------------------------------------------------
+    // ÉCARTER LES PARASITES PAR VRAISEMBLANCE — correctif du 29/07/2026.
+    // Le regroupement par ordre de grandeur n'élimine que les parasites
+    // ISOLÉS. Constaté à LA MADELEINE : le cartouche porte « Échelle
+    // d'origine : 1/1000 » et « Échelle d'édition : 1/2500 », dont l'OCR
+    // lit la barre de fraction comme un 7 — d'où 171000 et 172500. Ils
+    // sont DEUX, dans le même ordre de grandeur (1), donc le paquet passe
+    // le seuil de deux éléments ; ils sont empilés verticalement dans le
+    // cartouche, donc la corrélation les affecte aux ORDONNÉES ; et deux
+    // points donnant toujours |r| = 1, ils gagnent le départage. L'axe
+    // vertical était ainsi construit sur deux lignes du cartouche, et le
+    // point projeté — exact — rejeté au nom de cette lecture.
+    // CORRECTION : une étiquette de coordonnée est nécessairement PROCHE
+    // de la coordonnée attendue, que REDPAR transmet. Le plan le plus
+    // large du service couvre 1 580 m ; 5 km laissent donc une marge
+    // confortable tout en tuant les parasites, qui en sont à des
+    // millions. Ce filtre ne s'applique QUE si l'attendu est connu : sans
+    // lui — cas d'un PDF glissé — rien n'est écarté.
+    // ------------------------------------------------------------------
+    const PLAGE_VRAISEMBLABLE = 5000;
+    const vraisemblable = (v) => Math.abs(v - attendus.X) <= PLAGE_VRAISEMBLABLE
+                              || Math.abs(v - attendus.Y) <= PLAGE_VRAISEMBLABLE;
+    parasites = etiquettes.filter((e) => !vraisemblable(e.v));
+    etiquettes = etiquettes.filter((e) => vraisemblable(e.v));
+    paquets.clear();
+    etiquettes.forEach((e) => {
+      const k = Math.floor(e.v / 100000);
+      if(!paquets.has(k)) paquets.set(k, []);
+      paquets.get(k).push(e);
+    });
+  }
+  const groupes = [...paquets.values()].filter((g) => g.length >= 2);
+  const rejetes = etiquettes.filter((e) => (paquets.get(Math.floor(e.v / 100000)) || []).length < 2);
+  const stats = (g, axe) => {
+    const u = g.map((e) => (axe === "x" ? e.cx : e.cy)), v = g.map((e) => e.v);
+    const n = g.length, mu = u.reduce((a, b) => a + b, 0) / n, mv = v.reduce((a, b) => a + b, 0) / n;
+    let num = 0, du = 0, dv = 0;
+    for(let i = 0; i < n; i++){
+      num += (u[i] - mu) * (v[i] - mv); du += (u[i] - mu) ** 2; dv += (v[i] - mv) ** 2;
+    }
+    if(du === 0 || dv === 0) return null;
+    const a = num / du;
+    return { a, b: mv - a * mu, n, r: num / Math.sqrt(du * dv),
+             min: Math.min(...v), max: Math.max(...v) };
+  };
+  // AFFECTATION DES GROUPES AUX AXES.
+  // Par corrélation quand le groupe porte au moins deux valeurs distinctes.
+  // Sinon — cas fréquent, quand le plan ne traverse qu'une seule ligne de
+  // coordonnée sur un axe — par proximité aux valeurs attendues, que
+  // l'appelant transmet avec le point projeté.
+  let fx = null, fy = null, ancreX = null, ancreY = null;
+  groupes.forEach((g) => {
+    const distinctes = new Set(g.map((e) => e.v)).size;
+    if(distinctes >= 2){
+      const sx = stats(g, "x"), sy = stats(g, "y");
+      if(sx && sy && Math.abs(sx.r) >= Math.abs(sy.r)){
+        if(!fx || Math.abs(sx.r) > Math.abs(fx.r)) fx = sx;
+      }else if(sy){
+        if(!fy || Math.abs(sy.r) > Math.abs(fy.r)) fy = sy;
+      }
+    }else if(attendus){
+      // Une seule valeur : elle ne donne pas de pente, mais elle CALE un axe.
+      const v = g[0].v;
+      const dX = Math.abs(v - attendus.X), dY = Math.abs(v - attendus.Y);
+      const pos = dX <= dY
+        ? { v, u: g.reduce((t, e) => t + e.cx, 0) / g.length, axe: "x" }
+        : { v, u: g.reduce((t, e) => t + e.cy, 0) / g.length, axe: "y" };
+      if(pos.axe === "x" && !ancreX) ancreX = pos;
+      if(pos.axe === "y" && !ancreY) ancreY = pos;
+    }
+  });
+
+  // L'ÉCHELLE EST ISOTROPE : la projection est conforme et le plan imprimé à
+  // échelle uniforme. Mesuré sur Saint-Omer : 0,123457 m/px sur les deux
+  // axes. Une seule étiquette suffit donc à caler un axe dès que l'autre
+  // fournit l'échelle. Les sens sont connus : les abscisses croissent avec
+  // les pixels vers la droite, les ordonnées décroissent vers le bas.
+  const echelle = (fx && Math.abs(fx.a)) || (fy && Math.abs(fy.a)) || null;
+  if(!fx && ancreX && echelle){
+    fx = { a: echelle, b: ancreX.v - echelle * ancreX.u, n: 1, r: 1,
+           min: ancreX.v, max: ancreX.v, cale: true };
+  }
+  if(!fy && ancreY && echelle){
+    fy = { a: -echelle, b: ancreY.v + echelle * ancreY.u, n: 1, r: -1,
+           min: ancreY.v, max: ancreY.v, cale: true };
+  }
+  return { etiquettes, parasites, luesBrutes, groupes, rejetes, fx, fy, echelle };
+}
+
 function preremplirDepuisURL(){
   const p = new URLSearchParams(location.search);
   const commune  = (p.get("commune")  || "").trim();
@@ -5519,144 +5887,7 @@ function preremplirDepuisURL(){
         return;
       }
 
-      // attendus : { X, Y } transmis par l'appelant, sert à classer les groupes
-      // d'étiquettes par ordre de grandeur quand la corrélation ne suffit pas.
-      const georeferencer = async (attendus) => {
-        const cle = "geo|" + S.page + "|" + S.rotation;
-        if(!S.ocrCache || S.ocrCache.key !== cle) S.ocrCache = { key: cle, base: null, words: [], done: new Set() };
-        if(!S.ocrCache.base) S.ocrCache.base = await renderOcrBase();
-        for(const deg of [0, 90, -90]){
-          if(S.ocrCache.done.has(deg)) continue;
-          spinmsg.textContent = "Lecture des coordonnées" + (deg ? " (étiquettes à " + deg + "°)" : "") + "…";
-          S.ocrCache.words.push(...await ocrAngle(S.ocrCache.base, deg));
-          S.ocrCache.done.add(deg);
-        }
-        let etiquettes = S.ocrCache.words
-          .map((w) => ({ v: parseInt(String(w.text).replace(/[^0-9]/g, ""), 10),
-                         cx: w.cx, cy: w.cy, brut: w.text }))
-          .filter((e) => Number.isFinite(e.v) && e.v >= 100000 && e.v <= 99999999);
-        // Compte AVANT tout filtrage. Sans lui, un diagnostic affichant sept
-        // étiquettes légitimes est indistinguable selon que le filtre de
-        // vraisemblance a écarté deux parasites ou qu'il n'y en avait aucun —
-        // ce qui a fait conclure à tort, le 29/07/2026, que le défaut ne s'était
-        // pas reproduit.
-        const luesBrutes = etiquettes.length;
-        // Regroupement par ordre de grandeur : élimine les parasites isolés — le
-        // « 1/1000 » du cartouche lu 171000, la date d'édition lue 28072026.
-        const paquets = new Map();
-        etiquettes.forEach((e) => {
-          const k = Math.floor(e.v / 100000);
-          if(!paquets.has(k)) paquets.set(k, []);
-          paquets.get(k).push(e);
-        });
-        // RÉPARATION DES CHIFFRES DE TÊTE PERDUS PAR L'OCR.
-        // Constaté à Mézilles : « 1711500 » lu « 711500 ». Le contrôle de plage
-        // comparait alors un point à sept chiffres à une étiquette qui n'en avait
-        // plus que six, et refusait à tort. On répare en complétant l'étiquette
-        // avec les chiffres de tête de la coordonnée ATTENDUE, ce qui n'invente
-        // rien : on ne touche qu'au préfixe, et seulement si le résultat tombe à
-        // moins de 2 km de l'attendu. Les différences entre étiquettes, dont on
-        // tire l'échelle, ne sont pas affectées.
-        let parasites = [];
-        if(attendus){
-          const reparer = (v) => {
-            for(const cible of [attendus.X, attendus.Y]){
-              const sc = String(Math.round(cible)), sv = String(v);
-              if(sv.length >= sc.length) continue;
-              const candidat = parseInt(sc.slice(0, sc.length - sv.length) + sv, 10);
-              if(Math.abs(candidat - cible) < 2000) return candidat;
-            }
-            return v;
-          };
-          etiquettes.forEach((e) => { e.v = reparer(e.v); });
-          // ------------------------------------------------------------------
-          // ÉCARTER LES PARASITES PAR VRAISEMBLANCE — correctif du 29/07/2026.
-          // Le regroupement par ordre de grandeur n'élimine que les parasites
-          // ISOLÉS. Constaté à LA MADELEINE : le cartouche porte « Échelle
-          // d'origine : 1/1000 » et « Échelle d'édition : 1/2500 », dont l'OCR
-          // lit la barre de fraction comme un 7 — d'où 171000 et 172500. Ils
-          // sont DEUX, dans le même ordre de grandeur (1), donc le paquet passe
-          // le seuil de deux éléments ; ils sont empilés verticalement dans le
-          // cartouche, donc la corrélation les affecte aux ORDONNÉES ; et deux
-          // points donnant toujours |r| = 1, ils gagnent le départage. L'axe
-          // vertical était ainsi construit sur deux lignes du cartouche, et le
-          // point projeté — exact — rejeté au nom de cette lecture.
-          // CORRECTION : une étiquette de coordonnée est nécessairement PROCHE
-          // de la coordonnée attendue, que REDPAR transmet. Le plan le plus
-          // large du service couvre 1 580 m ; 5 km laissent donc une marge
-          // confortable tout en tuant les parasites, qui en sont à des
-          // millions. Ce filtre ne s'applique QUE si l'attendu est connu : sans
-          // lui — cas d'un PDF glissé — rien n'est écarté.
-          // ------------------------------------------------------------------
-          const PLAGE_VRAISEMBLABLE = 5000;
-          const vraisemblable = (v) => Math.abs(v - attendus.X) <= PLAGE_VRAISEMBLABLE
-                                    || Math.abs(v - attendus.Y) <= PLAGE_VRAISEMBLABLE;
-          parasites = etiquettes.filter((e) => !vraisemblable(e.v));
-          etiquettes = etiquettes.filter((e) => vraisemblable(e.v));
-          paquets.clear();
-          etiquettes.forEach((e) => {
-            const k = Math.floor(e.v / 100000);
-            if(!paquets.has(k)) paquets.set(k, []);
-            paquets.get(k).push(e);
-          });
-        }
-        const groupes = [...paquets.values()].filter((g) => g.length >= 2);
-        const rejetes = etiquettes.filter((e) => (paquets.get(Math.floor(e.v / 100000)) || []).length < 2);
-        const stats = (g, axe) => {
-          const u = g.map((e) => (axe === "x" ? e.cx : e.cy)), v = g.map((e) => e.v);
-          const n = g.length, mu = u.reduce((a, b) => a + b, 0) / n, mv = v.reduce((a, b) => a + b, 0) / n;
-          let num = 0, du = 0, dv = 0;
-          for(let i = 0; i < n; i++){
-            num += (u[i] - mu) * (v[i] - mv); du += (u[i] - mu) ** 2; dv += (v[i] - mv) ** 2;
-          }
-          if(du === 0 || dv === 0) return null;
-          const a = num / du;
-          return { a, b: mv - a * mu, n, r: num / Math.sqrt(du * dv),
-                   min: Math.min(...v), max: Math.max(...v) };
-        };
-        // AFFECTATION DES GROUPES AUX AXES.
-        // Par corrélation quand le groupe porte au moins deux valeurs distinctes.
-        // Sinon — cas fréquent, quand le plan ne traverse qu'une seule ligne de
-        // coordonnée sur un axe — par proximité aux valeurs attendues, que
-        // l'appelant transmet avec le point projeté.
-        let fx = null, fy = null, ancreX = null, ancreY = null;
-        groupes.forEach((g) => {
-          const distinctes = new Set(g.map((e) => e.v)).size;
-          if(distinctes >= 2){
-            const sx = stats(g, "x"), sy = stats(g, "y");
-            if(sx && sy && Math.abs(sx.r) >= Math.abs(sy.r)){
-              if(!fx || Math.abs(sx.r) > Math.abs(fx.r)) fx = sx;
-            }else if(sy){
-              if(!fy || Math.abs(sy.r) > Math.abs(fy.r)) fy = sy;
-            }
-          }else if(attendus){
-            // Une seule valeur : elle ne donne pas de pente, mais elle CALE un axe.
-            const v = g[0].v;
-            const dX = Math.abs(v - attendus.X), dY = Math.abs(v - attendus.Y);
-            const pos = dX <= dY
-              ? { v, u: g.reduce((t, e) => t + e.cx, 0) / g.length, axe: "x" }
-              : { v, u: g.reduce((t, e) => t + e.cy, 0) / g.length, axe: "y" };
-            if(pos.axe === "x" && !ancreX) ancreX = pos;
-            if(pos.axe === "y" && !ancreY) ancreY = pos;
-          }
-        });
 
-        // L'ÉCHELLE EST ISOTROPE : la projection est conforme et le plan imprimé à
-        // échelle uniforme. Mesuré sur Saint-Omer : 0,123457 m/px sur les deux
-        // axes. Une seule étiquette suffit donc à caler un axe dès que l'autre
-        // fournit l'échelle. Les sens sont connus : les abscisses croissent avec
-        // les pixels vers la droite, les ordonnées décroissent vers le bas.
-        const echelle = (fx && Math.abs(fx.a)) || (fy && Math.abs(fy.a)) || null;
-        if(!fx && ancreX && echelle){
-          fx = { a: echelle, b: ancreX.v - echelle * ancreX.u, n: 1, r: 1,
-                 min: ancreX.v, max: ancreX.v, cale: true };
-        }
-        if(!fy && ancreY && echelle){
-          fy = { a: -echelle, b: ancreY.v + echelle * ancreY.u, n: 1, r: -1,
-                 min: ancreY.v, max: ancreY.v, cale: true };
-        }
-        return { etiquettes, parasites, luesBrutes, groupes, rejetes, fx, fy, echelle };
-      };
 
       if(p.get("diaggeo") === "1"){
         try{
