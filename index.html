@@ -169,14 +169,20 @@
   #drop > :first-child{margin-top:auto}
   #drop > :last-child{margin-bottom:auto}
   #drop.hide{display:none}
+  /* Les pointillés sont réservés à ce qui accepte réellement un dépôt, c'est-à-dire
+     la seule zone de glissé. Les porter sur la carte entière annonçait un dépôt
+     possible partout (16/09/2026). */
   .dropcard{
-    border:2.5px dashed var(--line);border-radius:18px;padding:32px 40px;background:#fff;
-    transition:border-color .15s, background .15s;width:520px;max-width:calc(100vw - 60px);
+    border:1px solid var(--line);border-radius:14px;padding:30px 36px 26px;background:#fff;
+    box-shadow:0 1px 2px rgba(15,34,56,.05), 0 10px 30px rgba(15,34,56,.07);
+    width:520px;max-width:calc(100vw - 60px);
   }
-  #drop.over .dropcard{border-color:var(--teal-deep);background:#eafafb}
-  .dropcard h2{margin:0 0 6px;color:var(--ink);font-weight:600}
-  .dropcard p{margin:4px 0;font-size:14px}
-  .dropcard .pen{width:54px;height:54px;margin-bottom:8px}
+  /* Nib à GAUCHE du titre : empilé au-dessus, il poussait le titre d'une ligne
+     entière et centrait un bloc que rien d'autre ne centre (16/09/2026). */
+  .dropcard-head{display:flex;align-items:center;gap:13px;text-align:left}
+  .dropcard-head .pen{width:36px;height:36px;flex-shrink:0}
+  .dropcard h2{margin:0 0 2px;color:var(--ink);font-weight:600;font-size:19px;letter-spacing:-.2px}
+  .dropcard-head p{margin:0;font-size:13px;color:var(--grey);line-height:1.4}
 
   .gen-sep{display:flex;align-items:center;gap:10px;margin:20px 0 14px;color:var(--grey);font-size:12px}
   .gen-sep::before,.gen-sep::after{content:"";flex:1;height:1px;background:var(--line)}
@@ -187,11 +193,14 @@
     font-family:inherit;color:var(--ink);background:#fff;width:100%;
   }
   .gen-grid input:focus,.gen-grid select:focus{outline:none;border-color:var(--teal-deep)}
+  /* Le bouton hérite de la teinte du volet (--acc), de sorte que l'action finale
+     porte la même couleur que l'onglet d'où elle part. */
   .gen-btn{
-    margin-top:14px;width:100%;background:var(--teal-deep);color:#fff;border:none;border-radius:9px;
+    margin-top:14px;width:100%;background:var(--acc,var(--teal-deep));color:#fff;border:none;border-radius:9px;
     padding:11px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;transition:.15s;
   }
-  .gen-btn:hover{background:var(--teal)}
+  .gen-btn:hover{filter:brightness(1.1)}
+
   .gen-btn:disabled{opacity:.55;cursor:wait}
   .gen-status{margin-top:10px;font-size:12.5px;line-height:1.45;min-height:1px}
   .gen-status.err{color:#a52f2f}
@@ -225,10 +234,47 @@
   .privacy{font-size:11.5px;color:var(--grey);margin-top:18px;display:flex;align-items:center;gap:6px;justify-content:center}
 
   /* 3 méthodes de chargement */
-  .methods{display:flex;flex-direction:column;gap:13px;text-align:left;margin-top:14px}
-  .method{border:1.5px solid var(--line);border-radius:12px;padding:12px 14px 14px;background:#fff}
-  .method-head{display:flex;align-items:center;gap:9px;font-size:13.5px;font-weight:700;color:var(--ink);margin-bottom:11px}
-  .method-head .num{display:flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:var(--teal-deep);color:#fff;font-size:12px;font-weight:700;flex-shrink:0}
+  /* Trois méthodes ALTERNATIVES, non une suite d'étapes : ni numéros cerclés ni
+     cadres individuels — de simples filets de séparation, qui disent « ou bien »
+     sans suggérer un ordre à suivre (16/09/2026). */
+  /* Trois méthodes ALTERNATIVES : une seule est utile à la fois. Les empiler
+     donnait un panneau de trois écrans de haut où deux tiers ne servaient pas.
+     Sélecteur segmenté, un volet visible (16/09/2026). */
+  .methods{text-align:left;margin-top:16px}
+  .seg{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin-bottom:14px}
+  /* Chaque volet porte sa propre teinte, prise dans la charte, et la garde d'un
+     bout à l'autre : pastille dans l'onglet, filet sous l'onglet actif. Elle
+     sert de repère — on sait d'un coup d'œil sur quelle méthode on travaille. */
+  .seg button{
+    border:none;font-family:inherit;font-size:12.5px;font-weight:600;
+    padding:8px 4px;border-radius:8px;cursor:pointer;transition:.14s;
+    display:flex;align-items:center;justify-content:center;gap:6px;
+    background:color-mix(in srgb, var(--acc) 13%, #fff);
+    color:color-mix(in srgb, var(--acc) 78%, #16314f);
+  }
+  .seg button::before{
+    content:"";width:7px;height:7px;border-radius:50%;background:var(--acc);
+    opacity:.6;transition:.14s;flex-shrink:0;
+  }
+  .seg button:hover{background:color-mix(in srgb, var(--acc) 24%, #fff)}
+  .seg button:hover::before{opacity:.9}
+  .seg button.actif{background:var(--acc);color:#fff;box-shadow:0 2px 6px color-mix(in srgb, var(--acc) 40%, transparent)}
+  .seg button.actif::before{background:#fff;opacity:1}
+  .seg button:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+
+  /* Le volet ouvert reprend la teinte de son onglet : fond très clair et filet
+     à gauche. La couleur ne s'arrête plus au sélecteur, elle désigne la zone de
+     travail en cours. */
+  .method.actif{
+    border-left:3px solid var(--acc);
+    background:color-mix(in srgb, var(--acc) 6%, #fff);
+    border-radius:0 10px 10px 0;
+    padding:14px 14px 14px 13px;margin-left:-16px;
+  }
+  .method .method-sub{color:color-mix(in srgb, var(--acc) 70%, #16314f);font-weight:500}
+  .method{display:none}
+  .method.actif{display:block}
+  .method-sub{font-size:12px;color:var(--grey);margin:0 0 12px;line-height:1.45}
   .method .gen-btn{margin-top:12px}
   .method-hint{font-size:11px;color:var(--grey);margin-top:9px;line-height:1.45}
   .dropzone{border:2px dashed var(--line);border-radius:10px;padding:20px 14px;text-align:center;color:var(--grey);font-size:13px;cursor:pointer;transition:border-color .15s, background .15s}
@@ -299,7 +345,7 @@
     <!-- Marqueur de build. Sert à savoir d'un coup d'œil si le navigateur sert
          la dernière version ou une page en cache. Ctrl+Shift+R si la date
          affichée n'est pas celle du dernier dépôt. -->
-    <span id="build" title="Version déployée">2026-09-16c</span>
+    <span id="build" title="Version déployée">2026-09-16h</span>
   </div>
   <div class="hbar">
     <div class="pagenav" id="pagenav" style="display:none">
@@ -311,7 +357,7 @@
     <button class="hbtn" id="zoomout" title="Dézoomer" style="display:none">−</button>
     <span id="zoomlbl" style="display:none;font-size:13px;min-width:42px;text-align:center">100%</span>
     <button class="hbtn" id="zoomin" title="Zoomer" style="display:none">+</button>
-    <button class="hbtn" id="genbtn" title="Générer un extrait depuis des références" style="display:none">🗺 Références</button>
+    <button class="hbtn" id="genbtn" title="Générer un extrait depuis des références" style="display:none">Références</button>
     <button class="hbtn" id="pngbtn" disabled>⬇ PNG</button>
     <button class="hbtn primary" id="pdfbtn" disabled>⬇ PDF</button>
     <button class="hbtn" id="brutbtn" title="Diagnostic : enregistre le PDF exactement tel que PAINT l'a reçu du service, octet pour octet — la pièce qui manquait à chaque rendu fautif" style="display:none">💾 PDF reçu</button>
@@ -426,17 +472,27 @@
 
     <div id="drop">
       <div class="dropcard">
-        <svg class="pen" viewBox="0 0 78 78" fill="none">
-          <path d="M39 8 L52 40 L39 70 L26 40 Z" fill="#6DD5DC"/>
-          <circle cx="39" cy="44" r="4" fill="#E3CC7A"/>
-        </svg>
-        <h2>Charger un plan cadastral</h2>
-        <p style="font-size:13px;margin:2px 0 0">Trois façons d'obtenir un plan — puis cliquez dans une parcelle pour la coloriser.</p>
+        <div class="dropcard-head">
+          <svg class="pen" viewBox="0 0 78 78" fill="none" aria-hidden="true">
+            <path d="M39 8 L52 40 L39 70 L26 40 Z" fill="#6DD5DC"/>
+            <circle cx="39" cy="44" r="4" fill="#E3CC7A"/>
+          </svg>
+          <div>
+            <h2>Charger un plan cadastral</h2>
+            <p>Obtenez le plan, puis cliquez dans une parcelle pour la coloriser.</p>
+          </div>
+        </div>
 
         <div class="methods" id="genform" onclick="event.stopPropagation()">
 
-          <div class="method">
-            <div class="method-head"><span class="num">1</span> Par adresse</div>
+          <div class="seg" id="seg" role="tablist">
+            <button type="button" data-volet="adresse" class="actif" style="--acc:#4E98A0">Adresse</button>
+            <button type="button" data-volet="refs" style="--acc:#2F6FB0">Références</button>
+            <button type="button" data-volet="pdf" style="--acc:#9C6B3F">Fichier PDF</button>
+          </div>
+
+          <div class="method actif" data-volet="adresse" style="--acc:#4E98A0">
+            <p class="method-sub">Choisissez la commune, puis le numéro et la voie.</p>
             <div class="gen-grid">
               <label style="grid-column:1/-1">Commune
                 <div class="ac-wrap" id="g_commune_wrap">
@@ -455,11 +511,11 @@
             </div>
             <div class="dictee-or"><span>ou</span></div>
             <button type="button" class="dictee-btn" id="dicteebtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg><span class="lbl">Dicter la ville et l'adresse</span></button>
-            <button class="gen-btn" id="genrun_adr">🗺 Générer depuis l'adresse</button>
+            <button class="gen-btn" id="genrun_adr">Générer depuis l'adresse</button>
           </div>
 
-          <div class="method">
-            <div class="method-head"><span class="num">2</span> Par références cadastrales</div>
+          <div class="method" data-volet="refs" style="--acc:#2F6FB0">
+            <p class="method-sub">Section et numéro de parcelle, tels qu'ils figurent au titre.</p>
             <div class="gen-grid">
               <label style="grid-column:1/-1">Commune
                 <div class="ac-wrap" id="g2_commune_wrap">
@@ -488,19 +544,19 @@
               </label>
             </div>
             <div class="method-hint">Préfixe laissé vide = détecté automatiquement (utile pour les communes fusionnées). L'échelle et le format s'appliquent aussi à la génération par adresse.</div>
-            <button class="gen-btn" id="genrun_ref">🗺 Générer depuis les références</button>
+            <button class="gen-btn" id="genrun_ref">Générer depuis les références</button>
+          </div>
+
+          <div class="method" data-volet="pdf" style="--acc:#9C6B3F">
+            <p class="method-sub">Si vous détenez déjà l'extrait, ouvrez-le directement.</p>
+            <div class="dropzone" id="dropzone">Glissez un <strong>PDF</strong> ici, ou cliquez pour choisir un fichier.</div>
+            <div class="method-hint">Le PDF est lu dans votre navigateur ; il ne quitte pas votre poste.</div>
           </div>
 
           <div class="gen-status" id="genstatus"></div>
 
-          <div class="method">
-            <div class="method-head"><span class="num">3</span> Par glissé de plan</div>
-            <div class="dropzone" id="dropzone">Glissez un <strong>PDF</strong> ici, ou cliquez pour choisir un fichier.</div>
-            <div class="method-hint">🔒 Traitement 100&nbsp;% local — aucun fichier n'est envoyé sur un serveur.</div>
-          </div>
-
         </div>
-        <p class="privacy" style="margin-top:12px">Les méthodes ① et ② récupèrent l'extrait officiel via une fonction serveur (cadastre.gouv.fr).</p>
+        <p class="privacy" style="margin-top:14px">L'extrait officiel provient de cadastre.gouv.fr.</p>
       </div>
     </div>
 
@@ -996,7 +1052,7 @@ async function resolveDictation(q){
   recog.onerror=ev=>{ recActive=false; btn.classList.remove("rec"); reset(); addrMark("bad","Dictée : "+(ev.error==="not-allowed"?"accès micro refusé":(ev.error==="no-speech"?"rien entendu":ev.error))); };
   btn.onclick=()=>{
     if(recActive){ try{recog.stop();}catch(e){} return; }
-    selectedCommune=null; resolvedRefs=null; cNom().value=""; acMark("",""); enableAddr(); adrNom().value=""; addrMark("","🎤 Dictez la ville et l'adresse, puis patientez…");
+    selectedCommune=null; resolvedRefs=null; cNom().value=""; acMark("",""); enableAddr(); adrNom().value=""; addrMark("","Dictez la ville et l'adresse, puis patientez…");
     try{ recog.start(); recActive=true; btn.classList.add("rec"); if(lbl) lbl.textContent="● Écoute… (cliquez pour arrêter)"; }
     catch(e){ recActive=false; }
   };
@@ -1021,15 +1077,15 @@ function setGenStatus(t,cls){ const e=document.getElementById("genstatus"); e.te
 async function generateExtrait(mode){
   const v=id=>document.getElementById(id).value.trim();
   const commune = (mode==="adresse") ? selectedCommune : selectedCommune2;
-  if(!commune){ setGenStatus(mode==="adresse" ? "Indiquez d'abord une commune (section ①)." : "Indiquez d'abord une commune (section ②).","err"); return; }
+  if(!commune){ setGenStatus(mode==="adresse" ? "Indiquez d'abord une commune, dans « Par adresse »." : "Indiquez d'abord une commune, dans « Par références cadastrales ».","err"); return; }
   let prefixe=v("g_prefixe"), section=v("g_section").toUpperCase(), parcelle=v("g_parcelle");
   const [taille,orientation]=document.getElementById("g_format").value.split("|");
   const echelle=document.getElementById("g_echelle").value;
   if(mode==="adresse"){
-    if(!resolvedRefs){ setGenStatus("Choisissez une adresse dans la liste (section ①).","err"); return; }
+    if(!resolvedRefs){ setGenStatus("Choisissez une adresse dans la liste de propositions.","err"); return; }
     prefixe=resolvedRefs.prefixe||prefixe||"000"; section=(resolvedRefs.section||"").toUpperCase(); parcelle=resolvedRefs.parcelle;
   }else{ // références
-    if(!section||!parcelle){ setGenStatus("Renseignez une section et une parcelle (section ②).","err"); return; }
+    if(!section||!parcelle){ setGenStatus("Renseignez une section et une parcelle.","err"); return; }
   }
   const b1=document.getElementById("genrun_adr"), b2=document.getElementById("genrun_ref");
   b1.disabled=true; b2.disabled=true;
@@ -1086,6 +1142,13 @@ async function generateExtrait(mode){
 }
 document.getElementById("genrun_adr").onclick=()=>generateExtrait("adresse");
 document.getElementById("genrun_ref").onclick=()=>generateExtrait("ref");
+/* Bascule des volets. volet() est aussi appelée par le préremplissage d'URL :
+   sans cela un lien REDPAR remplirait des champs restés invisibles. */
+function volet(nom){
+  document.querySelectorAll("#seg button").forEach(b=>b.classList.toggle("actif", b.dataset.volet===nom));
+  document.querySelectorAll(".method").forEach(m=>m.classList.toggle("actif", m.dataset.volet===nom));
+}
+document.querySelectorAll("#seg button").forEach(b=>{ b.onclick=()=>volet(b.dataset.volet); });
 document.getElementById("genbtn").onclick=()=>{ drop.classList.remove("hide"); };
 document.getElementById("fileinput").onchange=e=>{ if(e.target.files[0]) loadPDF(e.target.files[0]); };
 ["dragenter","dragover"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add("over");}));
@@ -4094,6 +4157,7 @@ function preremplirDepuisURL(){
   const rx = parseFloat(p.get("x") || ""), ry = parseFloat(p.get("y") || "");
   S.recentrage = (Number.isFinite(rx) && Number.isFinite(ry)) ? { x: rx, y: ry } : null;
 
+  volet("refs");          // le lien préremplit la méthode par références : on l'ouvre
   drop.classList.remove("hide");
 
   // Le diagnostic ne dépend PAS de auto : un oubli de ce paramètre dans un lien
