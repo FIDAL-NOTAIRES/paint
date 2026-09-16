@@ -582,7 +582,7 @@
     <!-- Marqueur de build. Sert à savoir d'un coup d'œil si le navigateur sert
          la dernière version ou une page en cache. Ctrl+Shift+R si la date
          affichée n'est pas celle du dernier dépôt. -->
-    <span id="build" title="Version déployée">2026-09-16u</span>
+    <span id="build" title="Version déployée">2026-09-16v</span>
   </div>
   <div class="hbar">
     <div class="pagenav" id="pagenav" style="display:none">
@@ -1093,6 +1093,59 @@ function rebuildLegend(){
   if(typeof majEcranLegende==="function" && document.getElementById("ecran-legende")
      && document.getElementById("ecran-legende").classList.contains("ouvert")) majEcranLegende();
 }
+/* ==================================================================
+   APPARIEMENT D'UNE TEINTE RELUE À SA TEINTE D'ORIGINE   (16/09/2026)
+   ------------------------------------------------------------------
+   ⚠ UN CANVAS NE REND PAS LES OCTETS QU'ON LUI A DONNÉS. Il stocke ses pixels
+   en ALPHA PRÉMULTIPLIÉ : putImageData multiplie chaque canal par l'alpha,
+   getImageData divise. Les deux arrondis ne se compensent pas toujours.
+   À 45 % d'opacité (alpha 115), le vert #5fb37a ressort en #5fb47a :
+       179 → round(179×115/255) = 81 → round(81×255/115) = 180
+   tandis que le carmin #a01040 ressort intact, par pure chance arithmétique.
+
+   CE QUE CELA COÛTAIT, et c'est le défaut constaté le 16/09/2026 sur un plan
+   de six teintes : deux d'entre elles n'avaient PAS de cadre de désignation —
+   usedColors comparait des hex EXACTS, la teinte relue n'était donc reconnue
+   ni dans la palette ni dans le registre, et disparaissait de la légende.
+   Plus grave, le BARRAGE de floodFill comparait les mêmes entiers exacts :
+   une parcelle déjà coloriée d'une teinte « dérivée » ne faisait plus barrage,
+   et le remplissage voisin pouvait la repeindre — précisément ce que ce
+   barrage avait été écrit pour empêcher.
+
+   REMÈDE : on n'apparie plus par égalité mais par PROXIMITÉ, avec une
+   tolérance déduite de l'alpha — l'erreur d'un aller-retour prémultiplié ne
+   dépasse jamais 255/(2×alpha) par canal. Elle vaut donc 2 à 45 % et 6 à 10 %,
+   l'opacité la plus basse du réglage. Aucun risque de confondre deux teintes de
+   la palette : la plus serrée des paires en est à 27 de distance (voir la note
+   de PALETTE), soit un ordre de grandeur au-dessus.
+   ⚠ LE CACHE N'EST PAS UN ORNEMENT. Ces boucles tournent sur quatre millions
+   de pixels : sans lui, on referait la recherche à chaque pixel. Le lissage des
+   bords ne produit que quelques milliers de valeurs distinctes, donc le cache
+   est petit et la boucle reste linéaire. Ne pas le retirer.
+   ================================================================== */
+function apparieurTeintes(hexConnus){
+  const refs = [...new Set(hexConnus.map(h => String(h).toLowerCase()))]
+    .filter(h => /^#[0-9a-f]{6}$/.test(h))
+    .map(h => { const [r,g,b] = hexToRgb(h); return {h,r,g,b}; });
+  const cache = new Map();
+  return (r,g,b,a) => {
+    const cle = (((r<<24) | (g<<16) | (b<<8) | a) >>> 0);
+    const vu = cache.get(cle);
+    if(vu !== undefined) return vu;
+    const tol = Math.max(2, Math.ceil(128 / Math.max(1,a)));
+    let retenue = null, meilleure = Infinity;
+    for(const t of refs){
+      const dr = Math.abs(t.r-r), dg = Math.abs(t.g-g), db = Math.abs(t.b-b);
+      if(dr<=tol && dg<=tol && db<=tol){
+        const d2 = dr*dr + dg*dg + db*db;
+        if(d2 < meilleure){ meilleure = d2; retenue = t.h; }
+      }
+    }
+    cache.set(cle, retenue);
+    return retenue;
+  };
+}
+
 function usedColors(){
   if(!S.W) return [];
   const d = oCtx.getImageData(0,0,S.W,S.H).data;
@@ -1115,11 +1168,15 @@ function usedColors(){
   // l'exclut que si un tableau a effectivement été dessiné, pour ne pas priver
   // l'utilisateur du bleu nuit s'il en colorie une parcelle.
   (S.couleursAnnot || []).forEach((h) => connues.delete(String(h).toLowerCase()));
+  // Appariement par proximité, et non par égalité : voir apparieurTeintes.
+  // Le comptage se fait sous la teinte CANONIQUE — celle qui a été posée —, de
+  // sorte que la légende, le registre et les désignations partagent une clé.
+  const apparier = apparieurTeintes([...connues]);
   const compte = new Map();
   for(let i=0;i<d.length;i+=4){
     if(d[i+3]>0){
-      const h = rgbToHex(d[i],d[i+1],d[i+2]).toLowerCase();
-      if(connues.has(h)) compte.set(h, (compte.get(h)||0)+1);
+      const h = apparier(d[i],d[i+1],d[i+2],d[i+3]);
+      if(h) compte.set(h, (compte.get(h)||0)+1);
     }
   }
   /* DEUX SEUILS (16/09/2026). Le seuil d'origine — un pixel sur dix mille, soit
@@ -2064,22 +2121,24 @@ function floodFill(sx,sy){
      Le calque sert donc de second jeu de bordures, en complément des traits du
      plan. EXCEPTION : la teinte qui se trouve SOUS LE CLIC ne fait pas barrage,
      faute de quoi on ne pourrait plus recolorier une parcelle déjà coloriée. */
-  /* ⚠ TOUT EN ENTIERS DANS LES BOUCLES CHAUDES. Une première version comparait
-     les teintes sous forme de chaînes « #rrggbb » : sur un calque de quatre
-     millions de pixels, cela portait le remplissage à près d'une demi-seconde.
-     Les teintes du registre sont donc empaquetées en un entier r<<16|g<<8|b, et
-     le barrage est précalculé UNE FOIS dans un tableau d'octets. Ne pas
-     réintroduire rgbToHex dans ces boucles. */
+  /* ⚠ APPARIEMENT PAR PROXIMITÉ, ET NON PAR ÉGALITÉ (16/09/2026). Une première
+     version empaquetait les teintes en entiers r<<16|g<<8|b et les comparait
+     exactement, pour tenir la boucle sur quatre millions de pixels. Mais le
+     canvas rend ses pixels en alpha prémultiplié, donc DÉCALÉS D'UNE UNITÉ sur
+     certaines teintes (voir apparieurTeintes) : une parcelle verte ne faisait
+     alors PAS barrage, et le remplissage voisin la repeignait — exactement ce
+     que ce barrage devait empêcher. L'apparieur garde le coût linéaire grâce à
+     son cache : ne pas revenir à une comparaison exacte. */
   const ov0 = oCtx.getImageData(0,0,W,H).data;
-  const paquet = new Set();
-  (S.couleursPosees||[]).forEach(h=>{ const [r,g,b]=hexToRgb(h); paquet.add((r<<16)|(g<<8)|b); });
+  const apparier = apparieurTeintes(S.couleursPosees||[]);
   const pStart = start*4;
-  const clic = ov0[pStart+3]===0 ? -1 : (ov0[pStart]<<16)|(ov0[pStart+1]<<8)|ov0[pStart+2];
+  const clic = ov0[pStart+3]===0 ? null
+             : apparier(ov0[pStart],ov0[pStart+1],ov0[pStart+2],ov0[pStart+3]);
   const barr = new Uint8Array(N);
   for(let i=0,p2=0;i<N;i++,p2+=4){
     if(ov0[p2+3]===0) continue;
-    const v=(ov0[p2]<<16)|(ov0[p2+1]<<8)|ov0[p2+2];
-    if(v!==clic && paquet.has(v)) barr[i]=1;
+    const h = apparier(ov0[p2],ov0[p2+1],ov0[p2+2],ov0[p2+3]);
+    if(h && h!==clic) barr[i]=1;
   }
   const barrage = idx => barr[idx]===1;
   /* ⚠ FERMETURE DES TRAITS INTERROMPUS (16/09/2026) — c'est LA correction qui
