@@ -151,13 +151,26 @@
   .note.sel{outline:2px dashed var(--teal-deep);outline-offset:2px}
 
   /* Accueil (drop zone) */
+  /* ⚠ LE PANNEAU DOIT POUVOIR DÉFILER (correction du 16/09/2026).
+     Il était en « justify-content:center » sans défilement : dès que la carte
+     dépassait la hauteur de la scène — écran court, fenêtre réduite, ou zoom
+     navigateur élevé — le débordement du HAUT devenait INATTEIGNABLE. Les
+     champs Commune et Adresse de la méthode ① passaient au-dessus du bord et
+     l'outil paraissait ne pas les proposer du tout.
+     Le centrage est donc obtenu par « margin auto » sur la carte et non par
+     justify-content : ainsi la carte reste centrée quand elle tient, et le
+     panneau défile normalement depuis le haut quand elle ne tient pas. */
   #drop{
-    position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    position:absolute;inset:0;display:flex;align-items:center;justify-content:flex-start;
     flex-direction:column;gap:16px;color:var(--grey);text-align:center;padding:30px;
+    overflow-y:auto;overscroll-behavior:contain;
   }
+  #drop > *{flex-shrink:0}
+  #drop > :first-child{margin-top:auto}
+  #drop > :last-child{margin-bottom:auto}
   #drop.hide{display:none}
   .dropcard{
-    border:2.5px dashed var(--line);border-radius:18px;padding:48px 60px;background:#fff;
+    border:2.5px dashed var(--line);border-radius:18px;padding:32px 40px;background:#fff;
     transition:border-color .15s, background .15s;width:520px;max-width:calc(100vw - 60px);
   }
   #drop.over .dropcard{border-color:var(--teal-deep);background:#eafafb}
@@ -286,7 +299,7 @@
     <!-- Marqueur de build. Sert à savoir d'un coup d'œil si le navigateur sert
          la dernière version ou une page en cache. Ctrl+Shift+R si la date
          affichée n'est pas celle du dernier dépôt. -->
-    <span id="build" title="Version déployée">2026-09-16b</span>
+    <span id="build" title="Version déployée">2026-09-16c</span>
   </div>
   <div class="hbar">
     <div class="pagenav" id="pagenav" style="display:none">
