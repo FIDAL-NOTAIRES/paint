@@ -529,6 +529,7 @@ const S = {
   pdf:null, page:1, pageCount:1, ocrCache:null, anchorCache:null, recentrage:null,
   ortho:null,                  // vue aérienne : { epsg, zz, bbox, cadre, mParPx }
   couleursAnnot:null,          // teintes du tableau d'annotation, hors légende
+  couleursPerso:[],            // teintes hors palette RÉELLEMENT posées sur le calque
   tool:"fill", color:"#A01040", opacity:.45, threshold:100, brush:14, fontSize:36,
   zoom:1, rotation:0, drawing:false, lastPt:null,
   undoStack:[], redoStack:[],
@@ -566,6 +567,21 @@ document.getElementById("picker").oninput = e=>{
   document.querySelectorAll(".sw").forEach(s=>s.classList.remove("active"));
 };
 
+/* Mémorise la teinte courante si elle est hors palette. Appelée à CHAQUE
+   application de couleur, jamais à la simple sélection : une teinte choisie
+   puis non posée n'a rien à faire en légende.
+   ⚠ RAISON D'ÊTRE : usedColors() ne recensait que la palette PLUS la valeur
+   COURANTE du sélecteur. Une deuxième teinte personnalisée chassait donc la
+   première de la légende, alors qu'elle restait bien peinte sur le plan, et
+   sa désignation déjà saisie devenait orpheline. Constaté le 16/09/2026. */
+function memoriserTeinte(){
+  const h = String(S.color||"").toLowerCase();
+  if(!/^#[0-9a-f]{6}$/.test(h)) return;
+  if(PALETTE.some(c=>c.toLowerCase()===h)) return;   // déjà connue
+  if(!S.couleursPerso.includes(h)) S.couleursPerso.push(h);
+  if(!S.legendLabels[S.color]) S.legendLabels[S.color] = "";
+}
+
 function rebuildLegend(){
   // teintes réellement utilisées dans l'overlay + palette nommée
   const used = usedColors();
@@ -599,6 +615,10 @@ function usedColors(){
   const connues = new Set(PALETTE.map((h) => h.toLowerCase()));
   const perso = document.getElementById("picker");
   if(perso && perso.value) connues.add(String(perso.value).toLowerCase());
+  // Toutes les teintes hors palette DÉJÀ POSÉES, et pas seulement celle qui est
+  // sélectionnée à l'instant : sans cela une seule teinte personnalisée pouvait
+  // figurer en légende à la fois (voir memoriserTeinte).
+  (S.couleursPerso || []).forEach(h => connues.add(h));
   // Le tableau d'annotation écrit son texte en bleu nuit, qui appartient à la
   // palette : sans cette exclusion il produirait une entrée de légende. On ne
   // l'exclut que si un tableau a effectivement été dessiné, pour ne pas priver
@@ -1034,6 +1054,7 @@ async function loadPDFData(buf){
     }).promise;
     S.pageCount = S.pdf.numPages; S.page=1;
     S.notes=[]; anno.innerHTML=""; S.legendLabels={}; S.couleursAnnot=null;
+    S.couleursPerso=[];
     await renderPage();
     fitToScreen();
     drop.classList.add("hide");
@@ -1176,6 +1197,7 @@ function paintAt(a,b){
     oCtx.globalCompositeOperation="destination-out"; oCtx.strokeStyle="rgba(0,0,0,1)";
   }else{
     oCtx.globalCompositeOperation="source-over";
+    memoriserTeinte();
     const [r,g,bl]=hexToRgb(S.color);
     oCtx.strokeStyle=`rgba(${r},${g},${bl},${S.opacity})`;
   }
@@ -1186,6 +1208,7 @@ function paintAt(a,b){
 /* ---------- Remplissage par zone (scanline + remplissage des îlots) ---------- */
 function floodFill(sx,sy){
   if(sx<0||sy<0||sx>=S.W||sy>=S.H) return;
+  memoriserTeinte();
   const base = baseCtx.getImageData(0,0,S.W,S.H).data;
   const W=S.W,H=S.H, thr=S.threshold, N=W*H;
   const isWall = idx=>{
@@ -3621,6 +3644,7 @@ async function chargerOrtho(p){
     S.pdf = null; S.pageCount = 1; S.page = 1; S.rotation = 0;
     S.ocrCache = null; S.anchorCache = null;
     S.notes = []; anno.innerHTML = ""; S.legendLabels = {}; S.couleursAnnot = null;
+    S.couleursPerso = [];
     S.ortho = { epsg: z.epsg, zz: z.zz, bbox: [x0, y0, x1, y1], trace,
                 cadre: cadreRetenu, motifRepli, url,
                 mParPx: largeur / S.W,
@@ -3892,7 +3916,7 @@ async function contourOrtho(p, rangs, total){
   }
   oCtx.restore();
   pushUndo();
-  if(!S.legendLabels[S.color]) S.legendLabels[S.color] = "";
+  memoriserTeinte();
   rebuildLegend();
   const nb = tableauOrtho(rangs, total);
   cartoucheOrtho();
@@ -4739,7 +4763,7 @@ function preremplirDepuisURL(){
                 oCtx.fill();
                 oCtx.restore();
                 pushUndo();
-                if(!S.legendLabels[S.color]) S.legendLabels[S.color] = "";
+                memoriserTeinte();
                 rebuildLegend();
                 const nbAnnot = await dessinerTableau(rangsAnnot, totalAnnot);
                 const xs = sommets.map((q) => q[0]), ys = sommets.map((q) => q[1]);
@@ -4795,7 +4819,8 @@ function preremplirDepuisURL(){
                   + ". Point projeté (" + Math.round(X) + ", " + Math.round(Y)
                   + ") → pixel (" + ax + ", " + ay + ")." + avertissement;
                 if(part0 > 0.30){
-                  oCtx.clearRect(0, 0, W, H); S.legendLabels = {}; rebuildLegend();
+                  oCtx.clearRect(0, 0, W, H); S.legendLabels = {}; S.couleursPerso = [];
+                  rebuildLegend();
                   S.tool = "fill";
                   setStatus("Colorisation écartée : la zone atteinte couvrait "
                     + Math.round(part0 * 100) + " % du plan alors que le point projeté était "
@@ -5007,6 +5032,7 @@ function preremplirDepuisURL(){
       if(part > 0.30){
         oCtx.clearRect(0, 0, W, H);
         S.legendLabels = {};
+        S.couleursPerso = [];
         rebuildLegend();
         aLaMain("Colorisation automatique écartée : la zone atteinte couvrait "
           + Math.round(part * 100) + " % du plan — c'est la voirie, pas la parcelle.");
