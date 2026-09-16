@@ -477,7 +477,7 @@
     <!-- Marqueur de build. Sert à savoir d'un coup d'œil si le navigateur sert
          la dernière version ou une page en cache. Ctrl+Shift+R si la date
          affichée n'est pas celle du dernier dépôt. -->
-    <span id="build" title="Version déployée">2026-09-16m</span>
+    <span id="build" title="Version déployée">2026-09-16n</span>
   </div>
   <div class="hbar">
     <div class="pagenav" id="pagenav" style="display:none">
@@ -528,7 +528,7 @@
         <input type="checkbox" id="inclegend" style="accent-color:var(--teal-deep)"> Inclure la légende à l'export
       </label>
       <select id="legendpos" style="width:100%;margin-top:9px;border:1.5px solid var(--line);border-radius:8px;padding:7px 8px;font-size:12px;font-family:inherit;color:var(--ink);background:#fff">
-        <option value="auto">Au centre du plan (par défaut)</option>
+        <option value="auto">Dans le cartouche, au centre (par défaut)</option>
         <option value="tl">Coin haut gauche</option>
         <option value="tr">Coin haut droit</option>
         <option value="bl">Coin bas gauche</option>
@@ -1688,10 +1688,20 @@ overlay.addEventListener("pointerdown",()=>{ if(S.tool!=="text"){selectNote(null
 // Localise la mention « cadastre.gouv.fr » sur le plan (OCR plein texte) pour
 // y ancrer la légende. Repli silencieux si absente ou OCR indisponible.
 let anchorWorker=null;
+/* Repères du cartouche de l'extrait DGFiP. On en cherche DEUX :
+   « cadastre.gouv.fr », qui borne le pavé de DROITE, et « Section », qui ouvre
+   le second pavé de GAUCHE. Entre les deux s'étend l'espace blanc central du
+   cartouche, sous le titre « EXTRAIT DU PLAN CADASTRAL » : c'est là que va la
+   légende (décision du 16/09/2026).
+   Une seule passe d'OCR sert aux deux, et le résultat est mis en cache par page. */
 async function findCadastreAnchor(){
+  const a=await findCartoucheAnchors();
+  return a ? a.cadastre : null;
+}
+async function findCartoucheAnchors(){
   const key=S.page+"|"+S.rotation;
-  if(S.anchorCache && S.anchorCache.key===key) return S.anchorCache.box;
-  let box=null;
+  if(S.anchorCache && S.anchorCache.key===key) return S.anchorCache.a;
+  let a={cadastre:null, section:null};
   try{
     if(typeof Tesseract==="undefined") throw new Error("ocr");
     if(!anchorWorker){
@@ -1703,14 +1713,55 @@ async function findCadastreAnchor(){
     (data.tsv||"").split("\n").forEach(l=>{
       const c=l.split("\t");
       if(c.length<12||c[0]!=="5") return;
-      if((c[11]||"").toLowerCase().includes("cadastre")){
-        const left=+c[6],top=+c[7],w=+c[8],h=+c[9];
-        box={x0:left,y0:top,x1:left+w,y1:top+h};
-      }
+      const mot=(c[11]||"").toLowerCase();
+      const left=+c[6],top=+c[7],w=+c[8],h=+c[9];
+      const b={x0:left,y0:top,x1:left+w,y1:top+h};
+      if(mot.includes("cadastre") && !a.cadastre) a.cadastre=b;
+      // « Section » figure aussi dans le corps du plan ; on ne retient que la
+      // première occurrence, celle du cartouche, qui est la plus haute.
+      if(/^section/.test(mot) && !a.section) a.section=b;
     });
-  }catch(e){ box=null; }
-  S.anchorCache={key,box};
-  return box;
+    // Le pavé de droite : « cadastre.gouv.fr » y est centré, mais la mention
+    // « Cet extrait de plan vous est délivré par » ouvre le même pavé plus haut.
+    // On retient la plus BASSE des deux occurrences de « cadastre » si l'OCR en
+    // a lu plusieurs — d'où le balayage complet ci-dessus, sans interruption.
+  }catch(e){ a={cadastre:null, section:null}; }
+  S.anchorCache={key,a};
+  return a;
+}
+
+/* Depuis un mot repéré par l'OCR, retrouve le TRAIT du cadre qui le contient.
+   Le cartouche est tracé en noir sur blanc : on balaie pixel par pixel depuis le
+   mot jusqu'à rencontrer une ligne sombre continue. C'est un balayage LOCAL de
+   quelques dizaines de pixels, sans commune mesure avec une passe d'OCR.
+   sens : "haut" | "droite" | "gauche". Renvoie la coordonnée, ou null. */
+function traitDuCadre(boite, sens, portee){
+  try{
+    const W=S.W, H=S.H;
+    const cx=Math.round((boite.x0+boite.x1)/2), cy=Math.round((boite.y0+boite.y1)/2);
+    const sombre=(d,i)=>(0.299*d[i]+0.587*d[i+1]+0.114*d[i+2])<120;
+    if(sens==="haut"){
+      const y1=Math.max(0, Math.round(boite.y0)-portee), y0=Math.round(boite.y0)-2;
+      const bande=baseCtx.getImageData(Math.max(0,cx-90), Math.max(0,y1), Math.min(180,W), Math.max(1,y0-y1)).data;
+      const larg=Math.min(180,W);
+      for(let y=(y0-y1)-1; y>=0; y--){          // du plus proche au plus lointain
+        let n=0;
+        for(let x=0;x<larg;x++) if(sombre(bande,(y*larg+x)*4)) n++;
+        if(n>larg*0.75) return y1+y;             // trait horizontal continu
+      }
+    }else{
+      const pas = (sens==="droite") ? 1 : -1;
+      const bande=baseCtx.getImageData(0, Math.max(0,cy-14), W, 28).data;
+      for(let k=1;k<portee;k++){
+        const x=cx+pas*k;
+        if(x<1||x>=W-1) break;
+        let n=0;
+        for(let y=0;y<28;y++) if(sombre(bande,(y*W+x)*4)) n++;
+        if(n>22) return x;                       // trait vertical continu
+      }
+    }
+  }catch(e){}
+  return null;
 }
 
 // Localise la LIGNE contenant un mot donné, et renvoie son étendue réelle.
@@ -1877,9 +1928,10 @@ function filetHorizontalSous(yDepart, portee, xa, xb){
   return null;
 }
 
-/* ⚠ Le paramètre « anchor » n'est plus utilisé depuis le 16/09/2026 : la légende
-   se place au centre du plan, qui se calcule. Il est conservé pour ne pas
-   toucher aux cinq appels, et tous passent désormais null. */
+/* « anchor » porte désormais les DEUX repères du cartouche, {cadastre, section},
+   tels que findCartoucheAnchors les rend — et non plus la seule boîte de
+   « cadastre.gouv.fr ». Les appels qui n'en ont pas passent null : la légende
+   se replie alors au centre du plan. */
 function buildExportCanvas(anchor){
   const c=document.createElement("canvas"); c.width=S.W; c.height=S.H;
   const x=c.getContext("2d");
@@ -1901,14 +1953,30 @@ function buildExportCanvas(anchor){
       const M=22;
       let bx, by;
       if(pos==="auto"){
-        /* Position par défaut : AU CENTRE DU PLAN (décision du 16/09/2026).
-           L'encart se plaçait jusqu'ici sous la mention « cadastre.gouv.fr »,
-           ce qui supposait de la localiser par OCR — plusieurs secondes d'attente
-           à chaque export, pour un emplacement en pied de page qu'on ne voulait
-           pas. Le centre se calcule, il ne se cherche pas : l'OCR n'est plus
-           appelé pour la légende (voir doExport). */
-        bx=Math.round((S.W-boxW)/2);
-        by=Math.round((S.H-boxH)/2);
+        /* Position par défaut : DANS L'ESPACE BLANC CENTRAL DU CARTOUCHE, entre
+           le pavé « Section / Feuille » à gauche et le pavé « cadastre.gouv.fr »
+           à droite, le HAUT DE L'ENCART ALIGNÉ SUR LE HAUT DU PAVÉ SECTION
+           (décision du 16/09/2026).
+           L'encart se posait jusqu'ici SOUS la mention « cadastre.gouv.fr », donc
+           par-dessus le pavé de droite. Repli au centre du plan si le cartouche
+           n'a pas été reconnu — cas d'une photographie ou d'un plan non DGFiP. */
+        const A = anchor && anchor.section ? anchor : null;
+        let pose = null;
+        if(A){
+          const bordDroitGauche = traitDuCadre(A.section, "droite", Math.round(S.W*0.45));
+          const bordGaucheDroit = A.cadastre ? traitDuCadre(A.cadastre, "gauche", Math.round(S.W*0.45)) : null;
+          const hautPave = traitDuCadre(A.section, "haut", 90);
+          const g = (bordDroitGauche!==null) ? bordDroitGauche : A.section.x1 + 20;
+          const d = (bordGaucheDroit!==null) ? bordGaucheDroit : (A.cadastre ? A.cadastre.x0 - 20 : S.W-20);
+          if(d - g > boxW + 16){
+            pose = {
+              x: Math.round(g + (d - g - boxW)/2),
+              y: (hautPave!==null) ? hautPave : Math.round(A.section.y0 - 8)
+            };
+          }
+        }
+        if(pose){ bx=pose.x; by=pose.y; }
+        else{ bx=Math.round((S.W-boxW)/2); by=Math.round((S.H-boxH)/2); }
         bx=Math.min(Math.max(8,bx), S.W-boxW-8);
         by=Math.min(Math.max(8,by), S.H-boxH-8);
       }else{                                   // coin choisi
@@ -1951,10 +2019,13 @@ function jpegUnderSize(canvas,maxBytes){
 }
 
 async function doExport(kind){
-  /* Plus aucune passe d'OCR pour la légende : sa position par défaut est le
-     centre du plan, qui se calcule. findCadastreAnchor reste utilisée ailleurs
-     et n'est pas supprimée. */
-  const c=buildExportCanvas(null);
+  let ancres=null;
+  if(document.getElementById("inclegend").checked && document.getElementById("legendpos").value==="auto"){
+    spin.classList.add("show"); spinmsg.textContent="Localisation du cartouche…";
+    ancres=await findCartoucheAnchors();
+    spin.classList.remove("show");
+  }
+  const c=buildExportCanvas(ancres);
   if(kind==="png"){
     const a=document.createElement("a");
     a.download=`cadastre-colorise-p${S.page}.png`; a.href=c.toDataURL("image/png"); a.click();
@@ -3056,10 +3127,15 @@ async function doExportDocument(){
     // ---- plan de l'écran : REPLI SEULEMENT, quand aucun poly n'est transmis.
     // En mode sections, ni ancre de légende (un passage d'OCR économisé), ni
     // capture de l'écran : les plans viennent des iframes.
-    // Plus d'OCR ici non plus : la position par défaut de la légende se calcule.
-    let c1 = null;
+    let ancres = null, c1 = null;
     if(!aPoly && S.pdf){
-      c1 = buildExportCanvas(null);
+      if(document.getElementById("inclegend").checked
+         && document.getElementById("legendpos").value === "auto"){
+        spin.classList.add("show"); spinmsg.textContent = "Localisation du cartouche…";
+        ancres = await findCartoucheAnchors();
+        spin.classList.remove("show");
+      }
+      c1 = buildExportCanvas(ancres);
     }
     const rangs = (p.get("tab") || "").split(";")
       .map((r) => r.split(",").map((c) => c.trim()))
