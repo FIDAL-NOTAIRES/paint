@@ -78,13 +78,27 @@
   .tool:hover{border-color:var(--teal-deep)}
   .tool.active{border-color:var(--teal-deep);background:#eafafb;box-shadow:inset 0 0 0 1.5px var(--teal-deep)}
 
-  .swatches{display:grid;grid-template-columns:repeat(6,1fr);gap:6px}
+  .swatches{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
+  /* Le tiroir reste DANS LE DOM même replié : le préremplissage par URL
+     (paramètre « couleur ») cherche sa pastille parmi les .sw. */
+  .swatches-plus{display:none;grid-template-columns:repeat(5,1fr);gap:6px;margin-top:6px}
+  .swatches-plus.ouvert{display:grid}
+  .sw-plus{
+    aspect-ratio:1;border-radius:7px;cursor:pointer;border:2px dashed var(--line);
+    background:#fff;color:var(--grey);font-size:17px;line-height:1;font-family:inherit;
+    display:flex;align-items:center;justify-content:center;transition:.12s;padding:0;
+  }
+  .sw-plus:hover{border-color:var(--teal-deep);color:var(--teal-deep)}
+  .sw-plus.ouvert{border-style:solid;border-color:var(--teal-deep);color:var(--teal-deep)}
   .sw{
     aspect-ratio:1;border-radius:7px;cursor:pointer;border:2px solid #fff;
     box-shadow:0 0 0 1px var(--line);transition:.12s;
   }
   .sw:hover{transform:scale(1.08)}
   .sw.active{box-shadow:0 0 0 2px var(--ink);transform:scale(1.08)}
+  #build{font-size:10px;letter-spacing:.5px;color:var(--grey);opacity:.55;
+    align-self:flex-end;margin-left:8px;font-variant-numeric:tabular-nums}
+
   .colorrow{display:flex;align-items:center;gap:10px;margin-top:10px}
   .colorrow input[type=color]{width:38px;height:34px;border:none;border-radius:7px;background:none;cursor:pointer;padding:0}
   .colorrow label{font-size:12px;color:var(--grey)}
@@ -269,6 +283,10 @@
       <circle cx="39" cy="44" r="4" fill="#E3CC7A"/>
     </svg>
     <div>PAINT <small>Vos plans en couleurs</small></div>
+    <!-- Marqueur de build. Sert à savoir d'un coup d'œil si le navigateur sert
+         la dernière version ou une page en cache. Ctrl+Shift+R si la date
+         affichée n'est pas celle du dernier dépôt. -->
+    <span id="build" title="Version déployée">2026-09-16</span>
   </div>
   <div class="hbar">
     <div class="pagenav" id="pagenav" style="display:none">
@@ -315,6 +333,7 @@
     <div class="grp">
       <h3>Couleur</h3>
       <div class="swatches" id="swatches"></div>
+      <div class="swatches-plus" id="swatches-plus"></div>
       <div class="colorrow">
         <input type="color" id="picker" value="#FF982D">
         <label for="picker">Personnalisée</label>
@@ -487,8 +506,7 @@
    ⚠ SEUIL COMMUN À TOUTE LA SUITE : REDPAR, RISQUES, MARTEAU appliquent la
    même valeur. Ne pas la faire dériver outil par outil.
    ⚠ POUR LES ESSAIS : descendre à 0 pour forcer l'ouverture immédiate, puis
-   REMONTER À 3000. C'est la seule valeur à toucher : tout le reste est dans
-   attente.js. */
+   REMONTER À 3000. */
 const ATTENTE_SEUIL_MS = 3000;
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
@@ -529,7 +547,7 @@ const S = {
   pdf:null, page:1, pageCount:1, ocrCache:null, anchorCache:null, recentrage:null,
   ortho:null,                  // vue aérienne : { epsg, zz, bbox, cadre, mParPx }
   couleursAnnot:null,          // teintes du tableau d'annotation, hors légende
-  couleursPerso:[],            // teintes hors palette RÉELLEMENT posées sur le calque
+  couleursPosees:[],           // registre des teintes posées sur le calque (minuscules)
   tool:"fill", color:"#A01040", opacity:.45, threshold:100, brush:14, fontSize:36,
   zoom:1, rotation:0, drawing:false, lastPt:null,
   undoStack:[], redoStack:[],
@@ -549,14 +567,44 @@ const hintbar = document.getElementById("hintbar");
 const spin = document.getElementById("spin");
 
 /* ---------- Palette & légende UI ---------- */
+/* Quatre teintes en vue, les huit autres dans un tiroir replié sous le « + ».
+   Douze pastilles alignées d'emblée se lisaient comme un nuancier alors que
+   l'usage courant n'en emploie que trois ou quatre (décision du 16/09/2026).
+   ⚠ Les huit autres restent TOUJOURS dans le DOM, simplement masquées : le
+   préremplissage par URL les cherche parmi les .sw. Ne pas les retirer. */
+const VISIBLES = 4;
 const swatchEl = document.getElementById("swatches");
-PALETTE.forEach((c,i)=>{
+const plusEl   = document.getElementById("swatches-plus");
+
+function pastille(c,i){
   const d = document.createElement("div");
   d.className = "sw"+(i===0?" active":""); d.style.background=c; d.dataset.color=c;
   d.title = c;
   d.onclick = ()=>setColor(c,d);
-  swatchEl.appendChild(d);
-});
+  return d;
+}
+PALETTE.slice(0,VISIBLES).forEach((c,i)=> swatchEl.appendChild(pastille(c,i)));
+PALETTE.slice(VISIBLES).forEach((c,i)=> plusEl.appendChild(pastille(c,i+VISIBLES)));
+
+const btnPlus = document.createElement("button");
+btnPlus.type="button"; btnPlus.className="sw-plus"; btnPlus.textContent="+";
+btnPlus.title="Afficher les autres teintes";
+btnPlus.onclick = ()=>{
+  const ouvert = plusEl.classList.toggle("ouvert");
+  btnPlus.classList.toggle("ouvert", ouvert);
+  btnPlus.textContent = ouvert ? "−" : "+";
+  btnPlus.title = ouvert ? "Replier les autres teintes" : "Afficher les autres teintes";
+};
+swatchEl.appendChild(btnPlus);
+
+/* Une teinte prise dans le tiroir puis POSÉE monte au premier rang : sans cela
+   il faudrait rouvrir le tiroir à chaque parcelle. */
+function promouvoirTeinte(hex){
+  const h = String(hex||"").toLowerCase();
+  const el = [...plusEl.querySelectorAll(".sw")]
+    .find(x => (x.dataset.color||"").toLowerCase() === h);
+  if(el) swatchEl.insertBefore(el, btnPlus);
+}
 function setColor(c,el){
   S.color=c;
   document.querySelectorAll(".sw").forEach(s=>s.classList.toggle("active",s===el));
@@ -567,19 +615,25 @@ document.getElementById("picker").oninput = e=>{
   document.querySelectorAll(".sw").forEach(s=>s.classList.remove("active"));
 };
 
-/* Mémorise la teinte courante si elle est hors palette. Appelée à CHAQUE
-   application de couleur, jamais à la simple sélection : une teinte choisie
-   puis non posée n'a rien à faire en légende.
-   ⚠ RAISON D'ÊTRE : usedColors() ne recensait que la palette PLUS la valeur
-   COURANTE du sélecteur. Une deuxième teinte personnalisée chassait donc la
-   première de la légende, alors qu'elle restait bien peinte sur le plan, et
-   sa désignation déjà saisie devenait orpheline. Constaté le 16/09/2026. */
+/* Registre des teintes RÉELLEMENT POSÉES sur le calque, toutes origines
+   confondues : palette, tiroir, sélecteur personnalisé. Appelé à chaque
+   application de couleur, jamais à la simple sélection — une teinte choisie
+   puis abandonnée n'a rien à faire en légende.
+
+   ⚠ DEUX DÉFAUTS CORRIGÉS ICI (16/09/2026), le second masquant le premier :
+   1. usedColors() ne recensait que la palette PLUS la valeur COURANTE du
+      sélecteur. Une deuxième teinte personnalisée chassait donc la première de
+      la légende, alors qu'elle restait peinte sur le plan.
+   2. La casse. usedColors() rend des hex MINUSCULES (rgbToHex) tandis que
+      PALETTE est en MAJUSCULES : legendLabels["#A01040"] et ["#a01040"] étaient
+      deux entrées distinctes, et la désignation saisie disparaissait au
+      rafraîchissement suivant. Tout passe désormais en minuscules. */
 function memoriserTeinte(){
   const h = String(S.color||"").toLowerCase();
   if(!/^#[0-9a-f]{6}$/.test(h)) return;
-  if(PALETTE.some(c=>c.toLowerCase()===h)) return;   // déjà connue
-  if(!S.couleursPerso.includes(h)) S.couleursPerso.push(h);
-  if(!S.legendLabels[S.color]) S.legendLabels[S.color] = "";
+  if(!S.couleursPosees.includes(h)) S.couleursPosees.push(h);
+  if(S.legendLabels[h] === undefined) S.legendLabels[h] = "";
+  promouvoirTeinte(h);
 }
 
 function rebuildLegend(){
@@ -596,6 +650,8 @@ function rebuildLegend(){
     const dot=document.createElement("div"); dot.className="dot"; dot.style.background=hex;
     const inp=document.createElement("input");
     inp.placeholder="Désignation…"; inp.value=S.legendLabels[hex]||"";
+    // hex vient de usedColors(), donc toujours en minuscules, et memoriserTeinte
+    // écrit sous la même casse. Ne pas réintroduire S.color comme clé ici.
     inp.oninput=()=>S.legendLabels[hex]=inp.value;
     row.append(dot,inp); lg.appendChild(row);
   });
@@ -612,13 +668,11 @@ function usedColors(){
   // quinzaine de champs « Désignation… » au lieu d'un.
   // Le seuil d'un pixel sur dix mille écarte les traces résiduelles d'une gomme
   // ou d'un coup de pinceau effacé, sans jamais écarter une parcelle coloriée.
+  // Le REGISTRE fait foi, non la palette : toute teinte posée y figure, d'où
+  // qu'elle vienne. La palette reste admise pour un calque restauré avant que
+  // le registre n'ait été alimenté (retour arrière, changement de page).
   const connues = new Set(PALETTE.map((h) => h.toLowerCase()));
-  const perso = document.getElementById("picker");
-  if(perso && perso.value) connues.add(String(perso.value).toLowerCase());
-  // Toutes les teintes hors palette DÉJÀ POSÉES, et pas seulement celle qui est
-  // sélectionnée à l'instant : sans cela une seule teinte personnalisée pouvait
-  // figurer en légende à la fois (voir memoriserTeinte).
-  (S.couleursPerso || []).forEach(h => connues.add(h));
+  (S.couleursPosees || []).forEach((h) => connues.add(h));
   // Le tableau d'annotation écrit son texte en bleu nuit, qui appartient à la
   // palette : sans cette exclusion il produirait une entrée de légende. On ne
   // l'exclut que si un tableau a effectivement été dessiné, pour ne pas priver
@@ -1054,7 +1108,7 @@ async function loadPDFData(buf){
     }).promise;
     S.pageCount = S.pdf.numPages; S.page=1;
     S.notes=[]; anno.innerHTML=""; S.legendLabels={}; S.couleursAnnot=null;
-    S.couleursPerso=[];
+    S.couleursPosees=[];
     await renderPage();
     fitToScreen();
     drop.classList.add("hide");
@@ -3644,7 +3698,7 @@ async function chargerOrtho(p){
     S.pdf = null; S.pageCount = 1; S.page = 1; S.rotation = 0;
     S.ocrCache = null; S.anchorCache = null;
     S.notes = []; anno.innerHTML = ""; S.legendLabels = {}; S.couleursAnnot = null;
-    S.couleursPerso = [];
+    S.couleursPosees = [];
     S.ortho = { epsg: z.epsg, zz: z.zz, bbox: [x0, y0, x1, y1], trace,
                 cadre: cadreRetenu, motifRepli, url,
                 mParPx: largeur / S.W,
@@ -4819,7 +4873,7 @@ function preremplirDepuisURL(){
                   + ". Point projeté (" + Math.round(X) + ", " + Math.round(Y)
                   + ") → pixel (" + ax + ", " + ay + ")." + avertissement;
                 if(part0 > 0.30){
-                  oCtx.clearRect(0, 0, W, H); S.legendLabels = {}; S.couleursPerso = [];
+                  oCtx.clearRect(0, 0, W, H); S.legendLabels = {}; S.couleursPosees = [];
                   rebuildLegend();
                   S.tool = "fill";
                   setStatus("Colorisation écartée : la zone atteinte couvrait "
@@ -5032,7 +5086,7 @@ function preremplirDepuisURL(){
       if(part > 0.30){
         oCtx.clearRect(0, 0, W, H);
         S.legendLabels = {};
-        S.couleursPerso = [];
+        S.couleursPosees = [];
         rebuildLegend();
         aLaMain("Colorisation automatique écartée : la zone atteinte couvrait "
           + Math.round(part * 100) + " % du plan — c'est la voirie, pas la parcelle.");
