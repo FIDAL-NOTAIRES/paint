@@ -237,7 +237,8 @@
    entier (radio, canards, feuilles, viseur, score) vit dans le module ATTENTE.
    Ne reste ici que le témoin des premières secondes — NON BLOQUANT
    (pointer-events:none), il dit que l'onglet travaille sans rien couvrir. Au
-   delà de ATTENTE_SEUIL_MS, ATTENTE prend le relais et le témoin s'efface. */
+   delà de ATTENTE_SEUIL_MS (3 000 ms depuis le 16/09/2026), ATTENTE prend le
+   relais et le témoin s'efface. */
 #attbadge{position:fixed;right:18px;bottom:18px;z-index:9998;display:none;
   align-items:center;gap:9px;max-width:min(420px,80vw);
   padding:10px 15px;border-radius:99px;pointer-events:none;
@@ -480,10 +481,15 @@
 /* ---- ATTENTE : SEUIL DE DÉCLENCHEMENT ------------------------------------
    Durée pendant laquelle un traitement long reste discret — témoin #attbadge
    et sablier de PAINT — avant que l'écran d'attente ATTENTE ne prenne le
-   relais. 30 000 ms en production (décision du 02/09/2026).
-   ⚠ POUR LES ESSAIS : descendre à 2000, vérifier à l'écran, PUIS REMONTER À
-   30000. C'est la seule valeur à toucher : tout le reste est dans attente.js. */
-const ATTENTE_SEUIL_MS = 30000;
+   relais. 3 000 ms en production (décision du 16/09/2026, qui abaisse le seuil
+   de 30 000 ms retenu le 02/09 : au-delà de deux à trois secondes sans retour
+   l'utilisateur doute, en deçà on lèverait un grand écran pour rien).
+   ⚠ SEUIL COMMUN À TOUTE LA SUITE : REDPAR, RISQUES, MARTEAU appliquent la
+   même valeur. Ne pas la faire dériver outil par outil.
+   ⚠ POUR LES ESSAIS : descendre à 0 pour forcer l'ouverture immédiate, puis
+   REMONTER À 3000. C'est la seule valeur à toucher : tout le reste est dans
+   attente.js. */
+const ATTENTE_SEUIL_MS = 3000;
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 
