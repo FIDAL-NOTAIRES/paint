@@ -477,7 +477,7 @@
     <!-- Marqueur de build. Sert à savoir d'un coup d'œil si le navigateur sert
          la dernière version ou une page en cache. Ctrl+Shift+R si la date
          affichée n'est pas celle du dernier dépôt. -->
-    <span id="build" title="Version déployée">2026-09-16l</span>
+    <span id="build" title="Version déployée">2026-09-16m</span>
   </div>
   <div class="hbar">
     <div class="pagenav" id="pagenav" style="display:none">
@@ -528,7 +528,7 @@
         <input type="checkbox" id="inclegend" style="accent-color:var(--teal-deep)"> Inclure la légende à l'export
       </label>
       <select id="legendpos" style="width:100%;margin-top:9px;border:1.5px solid var(--line);border-radius:8px;padding:7px 8px;font-size:12px;font-family:inherit;color:var(--ink);background:#fff">
-        <option value="auto">Sous « cadastre.gouv.fr » (auto)</option>
+        <option value="auto">Au centre du plan (par défaut)</option>
         <option value="tl">Coin haut gauche</option>
         <option value="tr">Coin haut droit</option>
         <option value="bl">Coin bas gauche</option>
@@ -1877,6 +1877,9 @@ function filetHorizontalSous(yDepart, portee, xa, xb){
   return null;
 }
 
+/* ⚠ Le paramètre « anchor » n'est plus utilisé depuis le 16/09/2026 : la légende
+   se place au centre du plan, qui se calcule. Il est conservé pour ne pas
+   toucher aux cinq appels, et tous passent désormais null. */
 function buildExportCanvas(anchor){
   const c=document.createElement("canvas"); c.width=S.W; c.height=S.H;
   const x=c.getContext("2d");
@@ -1897,10 +1900,18 @@ function buildExportCanvas(anchor){
       const pos=document.getElementById("legendpos").value;
       const M=22;
       let bx, by;
-      if(pos==="auto" && anchor){              // centrée sous « cadastre.gouv.fr »
-        bx=Math.min(Math.max(8, (anchor.x0+anchor.x1)/2 - boxW/2), S.W-boxW-8);
-        by=Math.min(Math.max(8, anchor.y1+12), S.H-boxH-8);
-      }else{                                   // coin choisi (ou repli si ancre absente)
+      if(pos==="auto"){
+        /* Position par défaut : AU CENTRE DU PLAN (décision du 16/09/2026).
+           L'encart se plaçait jusqu'ici sous la mention « cadastre.gouv.fr »,
+           ce qui supposait de la localiser par OCR — plusieurs secondes d'attente
+           à chaque export, pour un emplacement en pied de page qu'on ne voulait
+           pas. Le centre se calcule, il ne se cherche pas : l'OCR n'est plus
+           appelé pour la légende (voir doExport). */
+        bx=Math.round((S.W-boxW)/2);
+        by=Math.round((S.H-boxH)/2);
+        bx=Math.min(Math.max(8,bx), S.W-boxW-8);
+        by=Math.min(Math.max(8,by), S.H-boxH-8);
+      }else{                                   // coin choisi
         const p=(pos==="auto")?"tr":pos;
         bx=(p==="tl"||p==="bl") ? M : S.W-boxW-M;
         by=(p==="tl"||p==="tr") ? M : S.H-boxH-M;
@@ -1940,13 +1951,10 @@ function jpegUnderSize(canvas,maxBytes){
 }
 
 async function doExport(kind){
-  let anchor=null;
-  if(document.getElementById("inclegend").checked && document.getElementById("legendpos").value==="auto"){
-    spin.classList.add("show"); spinmsg.textContent="Localisation de la légende…";
-    anchor=await findCadastreAnchor();
-    spin.classList.remove("show");
-  }
-  const c=buildExportCanvas(anchor);
+  /* Plus aucune passe d'OCR pour la légende : sa position par défaut est le
+     centre du plan, qui se calcule. findCadastreAnchor reste utilisée ailleurs
+     et n'est pas supprimée. */
+  const c=buildExportCanvas(null);
   if(kind==="png"){
     const a=document.createElement("a");
     a.download=`cadastre-colorise-p${S.page}.png`; a.href=c.toDataURL("image/png"); a.click();
@@ -3048,15 +3056,10 @@ async function doExportDocument(){
     // ---- plan de l'écran : REPLI SEULEMENT, quand aucun poly n'est transmis.
     // En mode sections, ni ancre de légende (un passage d'OCR économisé), ni
     // capture de l'écran : les plans viennent des iframes.
-    let anchor = null, c1 = null;
+    // Plus d'OCR ici non plus : la position par défaut de la légende se calcule.
+    let c1 = null;
     if(!aPoly && S.pdf){
-      if(document.getElementById("inclegend").checked
-         && document.getElementById("legendpos").value === "auto"){
-        spin.classList.add("show"); spinmsg.textContent = "Localisation de la légende…";
-        anchor = await findCadastreAnchor();
-        spin.classList.remove("show");
-      }
-      c1 = buildExportCanvas(anchor);
+      c1 = buildExportCanvas(null);
     }
     const rangs = (p.get("tab") || "").split(";")
       .map((r) => r.split(",").map((c) => c.trim()))
