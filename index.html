@@ -72,8 +72,19 @@
   /* Pastille « i » : l'explication ne s'affiche qu'à la demande, au survol ou au
      clavier. Elle tenait auparavant quatre lignes en permanence sous la légende,
      pour un rappel qu'on ne lit qu'une fois (16/09/2026).
-     L'infobulle est construite en CSS et non par l'attribut « title », qui met
+
+     ⚠ L'INFOBULLE EST PORTÉE PAR LE TITRE, NON PAR LA PASTILLE. Accrochée à la
+     pastille et centrée sur elle, elle débordait de la colonne : la pastille se
+     trouve à quelques dizaines de pixels du bord gauche, et une bulle de 218 px
+     centrée dessus sortait du panneau — d'autant plus que sa position dépendait
+     de la longueur du titre, « Légende » et « Parcelles par numéro » ne la
+     plaçant pas au même endroit. Portée par le titre, elle occupe exactement la
+     largeur de la colonne, quel que soit le titre. Ne pas la remettre sur la
+     pastille.
+
+     Construite en CSS plutôt qu'avec l'attribut « title » du navigateur, qui met
      une seconde à paraître et ne se déclenche pas au clavier. */
+  .grp h3{position:relative}
   .info{
     width:15px;height:15px;flex-shrink:0;border-radius:50%;border:1px solid var(--line);
     background:#fff;color:var(--grey);font-family:Georgia,serif;font-style:italic;
@@ -82,24 +93,25 @@
     text-transform:none;transition:.12s;
   }
   .info:hover,.info:focus-visible{border-color:var(--teal-deep);color:var(--teal-deep);outline:none}
+  /* Flèche, sur la pastille : elle doit désigner la pastille elle-même. */
   .info::after{
-    content:attr(data-info);position:absolute;left:50%;bottom:calc(100% + 8px);
-    transform:translateX(-50%);width:218px;padding:9px 11px;border-radius:9px;
+    content:"";position:absolute;left:50%;top:calc(100% + 3px);transform:translateX(-50%);
+    border:5px solid transparent;border-bottom-color:var(--ink);z-index:41;
+    opacity:0;visibility:hidden;transition:opacity .14s;
+  }
+  /* Bulle, sur le titre : toute la largeur de la colonne, sous le titre. */
+  .grp h3::after{
+    content:attr(data-info);position:absolute;left:0;right:0;top:calc(100% + 8px);
+    padding:9px 11px;border-radius:9px;
     background:var(--ink);color:#fff;font-family:inherit;font-style:normal;font-weight:400;
     font-size:11.5px;line-height:1.45;letter-spacing:0;text-align:left;text-transform:none;
     box-shadow:0 8px 22px rgba(9,21,37,.28);z-index:40;
     opacity:0;visibility:hidden;transition:opacity .14s;pointer-events:none;
   }
-  .info::before{
-    content:"";position:absolute;left:50%;bottom:calc(100% + 3px);transform:translateX(-50%);
-    border:5px solid transparent;border-top-color:var(--ink);z-index:41;
-    opacity:0;visibility:hidden;transition:opacity .14s;
-  }
-  .info:hover::after,.info:hover::before,
-  .info:focus-visible::after,.info:focus-visible::before{opacity:1;visibility:visible}
-  /* Premier groupe de la colonne : l'infobulle sortirait par le haut. */
-  .grp:first-child .info::after{bottom:auto;top:calc(100% + 8px)}
-  .grp:first-child .info::before{bottom:auto;top:calc(100% + 3px);border-top-color:transparent;border-bottom-color:var(--ink)}
+  .grp h3:has(.info:hover)::after,
+  .grp h3:has(.info:focus-visible)::after,
+  .grp h3:has(.info:hover) .info::after,
+  .grp h3:has(.info:focus-visible) .info::after{opacity:1;visibility:visible}
   .tools{display:grid;grid-template-columns:1fr 1fr;gap:7px}
   .tool{
     background:#fff;border:1.5px solid var(--line);border-radius:9px;padding:9px 6px;
@@ -193,7 +205,10 @@
   .note{touch-action:none}
   #anno{position:absolute;top:0;left:0;right:0;bottom:0;pointer-events:none}
   .note{
-    position:absolute;pointer-events:auto;font-family:"Segoe UI",sans-serif;font-weight:600;
+    /* Même police que le cartouche DGFiP, pour que l'écran montre ce que
+       l'export produira (voir POLICE_DGFIP). */
+    position:absolute;pointer-events:auto;font-weight:600;
+    font-family:"Helvetica Neue",Helvetica,Arial,"Liberation Sans",sans-serif;
     white-space:nowrap;cursor:move;padding:1px 3px;user-select:none;transform:translate(-50%,-50%);
   }
   .note.sel{outline:2px dashed var(--teal-deep);outline-offset:2px}
@@ -477,7 +492,7 @@
     <!-- Marqueur de build. Sert à savoir d'un coup d'œil si le navigateur sert
          la dernière version ou une page en cache. Ctrl+Shift+R si la date
          affichée n'est pas celle du dernier dépôt. -->
-    <span id="build" title="Version déployée">2026-09-16o</span>
+    <span id="build" title="Version déployée">2026-09-16r</span>
   </div>
   <div class="hbar">
     <div class="pagenav" id="pagenav" style="display:none">
@@ -521,8 +536,8 @@
          L'explication passe sous un « i » au survol : elle tenait quatre lignes
          pour un rappel qu'on ne lit qu'une fois (16/09/2026). -->
     <div class="grp">
-      <h3>Légende<button type="button" class="info" aria-label="À quoi sert la légende"
-        data-info="Nommez une teinte (par exemple « Vendeur » ou « Acquéreur »). Seules les teintes nommées figurent dans l'encart de légende ajouté au plan à l'export.">i</button></h3>
+      <h3 data-info="Nommez une teinte (par exemple « Vendeur » ou « Acquéreur »). Seules les teintes nommées figurent dans l'encart de légende ajouté au plan à l'export.">Légende<button
+        type="button" class="info" aria-label="À quoi sert la légende">i</button></h3>
       <div id="legend"></div>
       <label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink);margin-top:8px;cursor:pointer">
         <input type="checkbox" id="inclegend" style="accent-color:var(--teal-deep)"> Inclure la légende à l'export
@@ -563,8 +578,8 @@
     </div>
 
     <div class="grp">
-      <h3>Parcelles par numéro<button type="button" class="info" aria-label="Comment saisir les numéros"
-        data-info="Séparez les numéros par une virgule. La teinte choisie ci-dessus est appliquée. Le premier appel charge l'OCR, ce qui prend quelques secondes.">i</button></h3>
+      <h3 data-info="Séparez les numéros par une virgule. La teinte choisie ci-dessus est appliquée. Le premier appel charge l'OCR, ce qui prend quelques secondes.">Parcelles par numéro<button
+        type="button" class="info" aria-label="Comment saisir les numéros">i</button></h3>
       <div class="numrow">
         <input id="numinput" type="text" placeholder="Ex. 123, 124, 45" autocomplete="off">
       </div>
@@ -752,6 +767,22 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs
 //     carmin #A01040 ....... 76  -> distinct   ← retenu
 // Ne pas « simplifier » en reprenant le rouge doux de l'ancienne palette : il est
 // justement dans la zone de confusion.
+// ── Tête de palette revue le 16/09/2026 ──────────────────────────────────
+// Depuis que seules QUATRE teintes sont visibles et les huit autres rangées
+// derrière le « + », la tête ne joue plus le même rôle : ce sont les quatre
+// teintes qu'on emploiera sans réfléchir, elles doivent donc se distinguer ENTRE
+// ELLES autant que du plan. Or carmin et framboise ne s'écartaient que de 20
+// (même mesure que ci-dessus, composées à 45 % sur blanc) : indiscernables sur
+// une pièce remise.
+// Nouvelle tête : CARMIN, VIOLET, VERT, ARDOISE — écart minimal 27, contre 20.
+//     carmin/violet ... 97   violet/vert ..... 52
+//     carmin/vert ..... 62   violet/ardoise .. 36
+//     carmin/ardoise .. 55   vert/ardoise .... 27   ← le plus serré
+// Le meilleur quatuor mesuré était carmin, violet, vert, CYAN (écart 47), mais
+// le cyan est nommément exclu de la tête par la convention ci-dessus, l'eau
+// étant déjà bleue sur le plan. La mesure ne prime pas sur la convention.
+// #0F2238 est également exclu de la tête : c'est la teinte du tableau
+// d'annotation, écartée de la légende dès qu'un tableau est dessiné.
 // Toutes les teintes demeurent disponibles — seul l'ordre change.
 // PISTE NON EXPLOITÉE, notée pour plus tard : puisque le plan porte de l'orange et
 // du bleu alors que l'en-tête et le cartouche sont en noir sur blanc, on peut
@@ -759,8 +790,8 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs
 // repère plus robuste que la projection des pixels sombres, déjà mise en échec.
 // Limite : un plan rural sans bâti ni eau n'offre aucun pixel saturé, il faudrait
 // donc conserver un repli.
-const PALETTE = ["#A01040","#C2185B","#7a6fd3","#cf6fb0",
-                 "#33838B","#2F6FB0","#5fb37a","#6DD5DC","#657D96","#0F2238",
+const PALETTE = ["#A01040","#7a6fd3","#5fb37a","#657D96",
+                 "#C2185B","#cf6fb0","#33838B","#2F6FB0","#6DD5DC","#0F2238",
                  "#FF982D","#9C6B3F"];
 const S = {
   pdf:null, page:1, pageCount:1, ocrCache:null, anchorCache:null, recentrage:null,
@@ -906,8 +937,21 @@ function usedColors(){
       if(connues.has(h)) compte.set(h, (compte.get(h)||0)+1);
     }
   }
+  /* DEUX SEUILS (16/09/2026). Le seuil d'origine — un pixel sur dix mille, soit
+     un carré d'environ 20 × 20 — écarte les résidus de gomme, mais il écartait
+     aussi les PETITES PARCELLES : à l'échelle du 1/1000 il correspond à une
+     parcelle de 2,5 m de côté, si bien qu'un garage ou une venelle pouvait être
+     colorié sans jamais figurer en légende, et sans un mot.
+     Le registre des teintes posées permet désormais de distinguer une teinte
+     DÉLIBÉRÉMENT APPLIQUÉE d'un résidu : on lui applique un seuil quatre fois
+     plus bas. Les teintes de palette non enregistrées — calque restauré, retour
+     arrière — gardent le seuil prudent. */
   const seuil = Math.max(50, Math.round(S.W*S.H/10000));
-  return [...compte.entries()].filter(([,n])=>n>=seuil).map(([h])=>h);
+  const seuilPose = Math.max(30, Math.round(seuil/4));
+  const registre = new Set(S.couleursPosees || []);
+  return [...compte.entries()]
+    .filter(([h,n]) => n >= (registre.has(h) ? seuilPose : seuil))
+    .map(([h])=>h);
 }
 
 /* ---------- Outils ---------- */
@@ -1930,13 +1974,24 @@ function filetHorizontalSous(yDepart, portee, xa, xb){
    tels que findCartoucheAnchors les rend — et non plus la seule boîte de
    « cadastre.gouv.fr ». Les appels qui n'en ont pas passent null : la légende
    se replie alors au centre du plan. */
+/* Police du cartouche DGFiP. Les extraits du plan cadastral sont composés en
+   Helvetica / Arial : c'est ce que porte le PDF servi par cadastre.gouv.fr.
+   L'encart de légende s'aligne dessus, plutôt que sur le Segoe UI de
+   l'interface, pour que l'ajout ne se distingue pas du document officiel
+   (décision du 16/09/2026).
+   ⚠ L'ordre compte : Helvetica d'abord pour macOS, Arial ensuite pour Windows,
+   « Liberation Sans » pour les postes Linux, où c'est la métrique identique à
+   Arial. Ne pas y remettre Segoe UI, qui est la police de l'interface et non
+   celle de l'administration. */
+const POLICE_DGFIP = '"Helvetica Neue",Helvetica,Arial,"Liberation Sans",sans-serif';
+
 function buildExportCanvas(anchor){
   const c=document.createElement("canvas"); c.width=S.W; c.height=S.H;
   const x=c.getContext("2d");
   x.drawImage(base,0,0); x.drawImage(overlay,0,0);
   // annotations
   S.notes.forEach(n=>{
-    x.font=`600 ${n.size}px "Segoe UI",sans-serif`;
+    x.font=`600 ${n.size}px ${POLICE_DGFIP}`;   // même police que le cartouche
     x.textAlign="center"; x.textBaseline="middle";
     x.lineWidth=4; x.strokeStyle="#fff"; x.strokeText(n.text,n.x*S.W,n.y*S.H);
     x.fillStyle=n.color; x.fillText(n.text,n.x*S.W,n.y*S.H);
@@ -1995,9 +2050,17 @@ function buildExportCanvas(anchor){
       x.fillStyle="rgba(255,255,255,.95)"; x.strokeStyle="#16314f"; x.lineWidth=2;
       x.fillRect(bx,by,boxW,boxH); x.strokeRect(bx,by,boxW,boxH);
       x.fillStyle="#0F2238"; x.textAlign="left"; x.textBaseline="middle";
-      x.font=`700 ${Math.max(15,S.fontSize-2)}px "Segoe UI",sans-serif`;
+      // Le cartouche officiel ne compose rien en gras : le titre se distingue
+      // par sa taille et son soulignement, non par la graisse.
+      x.font=`${Math.max(15,S.fontSize-2)}px ${POLICE_DGFIP}`;
       x.fillText("Légende",bx+pad,by+pad+line/2);
-      x.font=`500 ${Math.max(14,S.fontSize-3)}px "Segoe UI",sans-serif`;
+      // Filet sous le titre, à la manière des séparateurs du cartouche officiel.
+      x.strokeStyle="#657D96"; x.lineWidth=1;
+      x.beginPath();
+      x.moveTo(bx+pad, Math.round(by+pad+line)-0.5);
+      x.lineTo(bx+boxW-pad, Math.round(by+pad+line)-0.5);
+      x.stroke();
+      x.font=`${Math.max(14,S.fontSize-3)}px ${POLICE_DGFIP}`;
       items.forEach((it,i)=>{
         const ly=by+pad+line*(i+1)+line/2;
         x.fillStyle=it.c; x.fillRect(bx+pad,ly-9,18,18);
