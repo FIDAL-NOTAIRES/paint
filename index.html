@@ -340,6 +340,25 @@
       </div>
     </div>
 
+    <!-- La légende suit immédiatement le pavé Couleur : on nomme une teinte
+         dans la foulée du choix de cette teinte, et non en bas de colonne
+         (décision du 16/09/2026). -->
+    <div class="grp">
+      <h3>Légende</h3>
+      <div id="legend"></div>
+      <p class="legend-hint">Nommez une teinte (ex. « Vendeur », « Acquéreur »). Cochez « Inclure » à l'export pour ajouter l'encart de légende sur le plan.</p>
+      <label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink);margin-top:8px;cursor:pointer">
+        <input type="checkbox" id="inclegend" style="accent-color:var(--teal-deep)"> Inclure la légende à l'export
+      </label>
+      <select id="legendpos" style="width:100%;margin-top:9px;border:1.5px solid var(--line);border-radius:8px;padding:7px 8px;font-size:12px;font-family:inherit;color:var(--ink);background:#fff">
+        <option value="auto">Sous « cadastre.gouv.fr » (auto)</option>
+        <option value="tl">Coin haut gauche</option>
+        <option value="tr">Coin haut droit</option>
+        <option value="bl">Coin bas gauche</option>
+        <option value="br">Coin bas droit</option>
+      </select>
+    </div>
+
     <div class="grp">
       <h3>Parcelles par numéro</h3>
       <div class="numrow">
@@ -381,21 +400,6 @@
       </div>
     </div>
 
-    <div class="grp">
-      <h3>Légende</h3>
-      <div id="legend"></div>
-      <p class="legend-hint">Nommez une teinte (ex. « Vendeur », « Acquéreur »). Cochez « Inclure » à l'export pour ajouter l'encart de légende sur le plan.</p>
-      <label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink);margin-top:8px;cursor:pointer">
-        <input type="checkbox" id="inclegend" style="accent-color:var(--teal-deep)"> Inclure la légende à l'export
-      </label>
-      <select id="legendpos" style="width:100%;margin-top:9px;border:1.5px solid var(--line);border-radius:8px;padding:7px 8px;font-size:12px;font-family:inherit;color:var(--ink);background:#fff">
-        <option value="auto">Sous « cadastre.gouv.fr » (auto)</option>
-        <option value="tl">Coin haut gauche</option>
-        <option value="tr">Coin haut droit</option>
-        <option value="bl">Coin bas gauche</option>
-        <option value="br">Coin bas droit</option>
-      </select>
-    </div>
   </aside>
 
   <div class="stage" id="stage">
