@@ -1658,6 +1658,17 @@ if(surTelephone()){
     document.getElementById("sizewrap").style.display="none";
     document.getElementById("fontwrap").style.display="none";
   }
+  /* TAILLE DU PINCEAU AU DOIGT (17/09/2026). Le défaut de 14 px est calibré
+     pour la souris : au doigt, la trace est entièrement masquée par le doigt
+     lui-même et l'on peint sans voir où. On ouvre donc à 24 px sur téléphone.
+     La plage du curseur (3–60) ne change pas — seule la valeur d'ouverture. */
+  {
+    S.brush = 24;
+    const cur = document.getElementById("brushsize");
+    const eti = document.getElementById("szval");
+    if(cur) cur.value = 24;
+    if(eti) eti.textContent = "24 px";
+  }
 }
 majPoignee();
 
