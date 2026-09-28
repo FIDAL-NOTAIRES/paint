@@ -3586,8 +3586,15 @@ function composerLocaux(pdf, y, p, M, L){
   // ⚠ AUCUNE SUPERFICIE : le volet bâti IDENTIFIE les locaux (bâtiment, entrée,
   // niveau, porte), il ne les MESURE pas. Cette donnée n'existe pas dans la
   // source, ne pas la chercher.
-  pdf.text(pl(nbBat, "bâtiment") + ", " + pl(nbLots, "lot")
+  // ⚠ « LOCAUX » ET NON « LOTS » — décision JFD du 28/09/2026 : le fichier
+  // fiscal recense des locaux (unités d'imposition), pas des lots de
+  // copropriété ; il ne porte ni numéro de lot ni tantièmes.
+  pdf.text(pl(nbBat, "bâtiment") + ", " + nbLots + (nbLots > 1 ? " locaux" : " local")
     + " recensés au fichier des locaux.", M, y);
+  y += 14;
+  pdf.setFontSize(9); pdf.setTextColor(90, 90, 90);
+  pdf.text("Un local est une unité fiscale (appartement, commerce, garage) ; il ne vaut pas lot de copropriété.", M, y);
+  pdf.setTextColor(0, 0, 0); pdf.setFontSize(10.5);
   y += 18;
 
   // ⚠ DEUX FORMATS ACCEPTÉS, et ce n'est pas de la complaisance : PAINT se déploie
