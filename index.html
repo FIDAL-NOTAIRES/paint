@@ -4429,8 +4429,13 @@ async function doExportDocument(){
         .concat(doubles.length ? ["extraits cadastraux identiques entre plusieurs parcelles — NE PAS verser au dossier"] : [])
         .concat(sansExtrait.length ? [sansExtrait.length + " parcelle(s) sans extrait : " + sansExtrait.join(", ")] : [])
         .concat(sectionsSansPlan.length ? ["plan(s) de section non produit(s) : " + sectionsSansPlan.join(" ; ")] : [])
-        .concat(sectionsAvecReserve.length ? ["plan(s) de section non colorié(s) : " + sectionsAvecReserve.join(" ; ")] : [])
-        .concat(parcellesAvecReserve.length ? ["extrait(s) non colorié(s) : " + parcellesAvecReserve.join(" ; ")] : [])
+        // Le sommaire de l'archive ne porte que les RÉFÉRENCES : le diagnostic
+        // complet de la colorisation reste au statut de PAINT (29/09/2026, le
+        // premier essai l'avait rendu illisible).
+        .concat(sectionsAvecReserve.length ? ["plan(s) de section non colorié(s) : "
+          + sectionsAvecReserve.map((x) => String(x).split(" — ")[0]).join(", ")] : [])
+        .concat(parcellesAvecReserve.length ? ["extrait(s) non colorié(s) : "
+          + parcellesAvecReserve.map((x) => String(x).split(" — ")[0]).join(", ")] : [])
         .concat(alerteCarte ? ["carte de situation cadrée par " + alerteCarte] : []);
       const octets = await blob.arrayBuffer();
       lotEnvoyer({ type: "paint-document", nom: a.download, pdf: octets,
@@ -5541,10 +5546,21 @@ async function georeferencer(attendus){
 
 function preremplirDepuisURL(){
   const p = new URLSearchParams(location.search);
+  // ⚠ MODE ARCHIVE LU EN TÊTE — correctif du 29/09/2026, constaté au premier
+  // essai réel (Baisieux) : S.lot n'était posé que plus bas, APRÈS le départ
+  // direct des communes dont l'ensemble déborde du cadre (poly, sans auto).
+  // Sur ce chemin, PAINT se croyait en Dossier complet unitaire : il
+  // téléchargeait le document puis FERMAIT l'onglet — et REDPAR, voyant
+  // l'onglet fermé, clôturait l'archive. Le drapeau doit être connu avant
+  // TOUT chemin de lancement.
+  S.lot = (p.get("doc") || "") === "1" && (p.get("docauto") || "") === "1" && (p.get("lot") || "") === "1";
   const commune  = (p.get("commune")  || "").trim();
   const section  = (p.get("section")  || "").trim().toUpperCase();
   const parcelle = (p.get("parcelle") || "").trim();
-  if(!commune || !section || !parcelle) return;
+  if(!commune || !section || !parcelle){
+    lotEchec("paramètres incomplets reçus de REDPAR (commune, section ou parcelle manquante)");
+    return;
+  }
 
   const setVal = (id, v) => { const el = document.getElementById(id); if(el && v) el.value = v; };
 
