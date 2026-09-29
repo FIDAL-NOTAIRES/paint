@@ -3765,7 +3765,12 @@ async function chargerPolicesDoc(pdf){
 // peut plus le lui demander.
 const EMPRISES_1000 = { "A4|portrait": [195.5, 211.0], "A4|paysage": [210.7, 197.0],
                         "A3|portrait": [281.5, 301.0], "A3|paysage": [316.0, 283.0] };
-const ECHELLES_DOC = [200, 500, 650, 1000, 1250, 1500, 2000, 2500, 4000, 5000];
+// ⚠ PLANCHER À 1/1000 — décision JFD du 29/09/2026 : « à 1/200 ça ne sert à
+// rien, on n'a pas assez de recul pour visualiser la parcelle dans son
+// environnement ». C'est aussi le plancher de REDPAR (ECHELLES de App.jsx). Au
+// passage, c'est à 1/200 que le calage des marges était le plus fragile (AH 30).
+// Ne pas rétablir 200, 500 ni 650.
+const ECHELLES_DOC = [1000, 1250, 1500, 2000, 2500, 4000, 5000];
 function choisirEchelleDoc(w, h){
   const marge = 1.10;
   for(const e of ECHELLES_DOC)
@@ -5734,17 +5739,18 @@ function preremplirDepuisURL(){
                                 "A3|portrait": 0.297, "A3|paysage": 0.420 };
       const fmt = p.get("format") || "A4|portrait";
       const ech = parseFloat(p.get("echelle") || "1000");
-      // ---- NOUVELLE TENTATIVE À 1/500 — 29/09/2026 -------------------------
-      // Les très petites parcelles tombent à 1/200, où les marges portent peu
-      // d'étiquettes de coordonnées et où le calage est le plus fragile. En
-      // chemin automatique (auto=1) et UNE SEULE FOIS (repli=1), un refus à
-      // 1/200 ne s'affiche pas : on redemande l'extrait à 1/500 et l'on refait
-      // toute la chaîne sur une page vierge (voir le finally). Si le 1/500
-      // échoue aussi, c'est ce second refus qui s'affiche.
+      // ---- NOUVELLE TENTATIVE À 1/1000 — 29/09/2026 ------------------------
+      // Écrite d'abord comme un repli de 1/200 vers 1/500 ; le plancher des
+      // pages étant passé à 1/1000 le même jour (voir ECHELLES_DOC), elle ne
+      // sert plus qu'aux liens qui arriveraient encore sous 1/1000 (anciens
+      // Excel, appel manuel) : en chemin automatique (auto=1) et UNE SEULE
+      // FOIS (repli=1), un refus sous 1/1000 ne s'affiche pas — on redemande
+      // l'extrait à 1/1000 et l'on refait toute la chaîne sur une page vierge
+      // (voir le finally). Si le 1/1000 échoue aussi, c'est ce refus qui reste.
       const refuser = (msg) => {
-        if(ech === 200 && !modeOrtho && p.get("auto") === "1" && (p.get("repli") || "") !== "1"){
+        if(ech < 1000 && !modeOrtho && p.get("auto") === "1" && (p.get("repli") || "") !== "1"){
           S.relance500 = msg;
-          setStatus("Colorisation non prouvée à 1/200 — nouvelle tentative à 1/500…", "warn");
+          setStatus("Colorisation non prouvée à 1/" + ech + " — nouvelle tentative à 1/1000…", "warn");
           return;
         }
         aLaMain(msg);
@@ -6698,7 +6704,7 @@ function preremplirDepuisURL(){
         + ". Le plan reste prêt : cliquez dans la parcelle avec l'outil « Remplir », "
         + "déjà sélectionné. Détail technique dans la console du navigateur (F12).", "err");
     }finally{
-      // ---- RELANCE À 1/500 (voir refuser) : on NE lève PAS capturePret et l'on
+      // ---- RELANCE À 1/1000 (voir refuser) : on NE lève PAS capturePret et l'on
       // ne déclenche PAS docauto — la chaîne repart à neuf, c'est la seconde
       // passe qui les lèvera. Les caches de lecture sont vidés : ils portent la
       // clé page|rotation, identique d'un plan à l'autre, et serviraient sinon
@@ -6707,9 +6713,9 @@ function preremplirDepuisURL(){
         S.relance500 = null;
         S.ocrCache = null; S.calage = null;
         const q = new URLSearchParams(location.search);
-        q.set("echelle", "500"); q.set("repli", "1");
+        q.set("echelle", "1000"); q.set("repli", "1");
         history.replaceState(null, "", location.pathname + "?" + q.toString());
-        showHint("Nouvelle tentative à 1/500…");
+        showHint("Nouvelle tentative à 1/1000…");
         setTimeout(() => { preremplirDepuisURL(); }, 60);
         return;
       }
