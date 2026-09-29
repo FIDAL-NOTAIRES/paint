@@ -4020,6 +4020,36 @@ async function capturerPlanSection(p, g, blocs, rangs, pps){
     return null;
   }finally{ ifr.remove(); if(window.chargesIframe) delete window.chargesIframe[cle]; }
 }
+/* ================== DOSSIER COMPLET EN ARCHIVE — 29/09/2026 ==================
+   Décision JFD : REDPAR enchaîne toutes les communes dans UN SEUL onglet PAINT
+   et range les documents dans une archive ZIP. En mode lot (lot=1, toujours
+   par le canal postMessage) :
+   — le document n'est PAS téléchargé : il repart vers REDPAR (paint-document),
+     avec son nom de fichier, son nombre de pages et ses réserves ;
+   — un échec repart aussi (paint-echec) : la série ne s'arrête jamais ;
+   — puis l'onglet se RECHARGE à neuf (charge=message&lot=1) et redemande la
+     commune suivante par « paint-pret ». Chaque commune part d'une page vierge,
+     exactement comme un onglet neuf du Dossier complet unitaire ;
+   — REDPAR répond « paint-fin » quand il n'y a plus rien : l'onglet se ferme.
+   Les réserves ne retiennent plus l'onglet ouvert : elles sont portées au
+   sommaire général de l'archive, commune par commune. */
+function lotEnvoyer(msg, transfert){
+  try{
+    if(window.opener) window.opener.postMessage(msg, S.origineLot || "*", transfert || []);
+  }catch(e){ console.error("lot : envoi vers REDPAR impossible", e); }
+}
+function lotSuivant(delai){
+  setTimeout(() => {
+    location.replace(location.pathname + "?charge=message&lot=1&cb=" + Date.now());
+  }, delai == null ? 1500 : delai);
+}
+function lotEchec(message){
+  if(!S.lot || S.lotRendu) return;
+  S.lotRendu = true;
+  lotEnvoyer({ type: "paint-echec", message: String(message || "échec non décrit") });
+  showHint("Dossier complet (archive) : échec signalé à REDPAR — commune suivante…");
+  lotSuivant(3000);
+}
 async function doExportDocument(){
   const btn = document.getElementById("docbtn");
   if(btn.disabled) return;                       // garde contre le double clic
@@ -4031,6 +4061,7 @@ async function doExportDocument(){
   if(!S.pdf && !aPoly){
     setStatus("Document impossible : aucun plan cadastral chargé. Ce bouton "
       + "assemble le plan colorié ET la vue aérienne ; il lui faut le premier.", "err");
+    lotEchec("aucun plan cadastral chargé");
     return;
   }
   btn.disabled = true;
@@ -4340,9 +4371,11 @@ async function doExportDocument(){
       + " (" + (p.get("commune") || "") + ")"
       + (vol ? " — volume " + vol.replace("/", " de ") : "")
       + ".pdf").replace(/[\\/:*?"<>|]/g, "-");
-    a.href = URL.createObjectURL(blob); a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
-    showHint("Document 2 pages : " + (blob.size / 1e6).toFixed(1) + " Mo.");
+    if(!S.lot){
+      a.href = URL.createObjectURL(blob); a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+      showHint("Document 2 pages : " + (blob.size / 1e6).toFixed(1) + " Mo.");
+    }
     // Réserves calculées AVANT le statut : elles servent aussi à décider de la
     // fermeture automatique de l'onglet (§ docauto ci-dessous).
     const sigs = journal.map((l) => l.split(" → ").pop());
@@ -4389,7 +4422,23 @@ async function doExportDocument(){
     // QUE si aucune réserve — doublons, extraits manquants, carte approximative.
     // La moindre réserve laisse l'onglet ouvert, statut visible : l'exception du
     // Dossier complet livre le document, elle ne cache pas les alertes.
-    if(S.docAutoLance){
+    if(S.lot){
+      S.docAutoLance = false;
+      S.lotRendu = true;
+      const reserves = []
+        .concat(doubles.length ? ["extraits cadastraux identiques entre plusieurs parcelles — NE PAS verser au dossier"] : [])
+        .concat(sansExtrait.length ? [sansExtrait.length + " parcelle(s) sans extrait : " + sansExtrait.join(", ")] : [])
+        .concat(sectionsSansPlan.length ? ["plan(s) de section non produit(s) : " + sectionsSansPlan.join(" ; ")] : [])
+        .concat(sectionsAvecReserve.length ? ["plan(s) de section non colorié(s) : " + sectionsAvecReserve.join(" ; ")] : [])
+        .concat(parcellesAvecReserve.length ? ["extrait(s) non colorié(s) : " + parcellesAvecReserve.join(" ; ")] : [])
+        .concat(alerteCarte ? ["carte de situation cadrée par " + alerteCarte] : []);
+      const octets = await blob.arrayBuffer();
+      lotEnvoyer({ type: "paint-document", nom: a.download, pdf: octets,
+        pages: pdf.internal.getNumberOfPages(), reserves }, [octets]);
+      voileFinal("Document transmis à REDPAR ✓ — commune suivante…");
+      showHint("Document transmis à REDPAR — commune suivante…");
+      lotSuivant(1500);
+    }else if(S.docAutoLance){
       S.docAutoLance = false;
       if(doubles.length || sansExtrait.length || sectionsSansPlan.length
          || sectionsAvecReserve.length || alerteCarte){
@@ -4411,6 +4460,7 @@ async function doExportDocument(){
     // NE JAMAIS RETIRER CE BLOC.
     masquerVoile();   // l'erreur doit se lire, le voile ne cache jamais un échec
     console.error("doExportDocument", err);
+    lotEchec(err && err.message ? err.message : err);
     setStatus("Document — ÉCHEC : " + (err && err.message ? err.message : err)
       + ". Le détail complet est dans la console du navigateur (F12, onglet "
       + "Console). Si le message cite un nom de fonction, c'est une erreur de "
@@ -5584,6 +5634,8 @@ function preremplirDepuisURL(){
         // FIN du chemin automatique, quel que soit le return emprunté.
         // Sans doc=1, docauto est ignoré.
         S.docAuto = ((p.get("doc") || "") === "1") && ((p.get("docauto") || "") === "1");
+        // Archive ZIP du Dossier complet (29/09/2026) : voir lotEnvoyer.
+        S.lot = S.docAuto && (p.get("lot") || "") === "1";
       }
 
       // ================== COLORISATION AUTOMATIQUE ==========================
@@ -6457,6 +6509,10 @@ function preremplirDepuisURL(){
       // erreur — c'est ce que veut l'exception du Dossier complet (voir le
       // commentaire de S.docAuto). Garde S.pdf : sans plan chargé il n'y a pas
       // de page 1, doExportDocument le dirait mais autant ne pas le lancer.
+      if(S.docAuto && !S.pdf && S.lot && !((new URLSearchParams(location.search)).get("poly") || "").trim()){
+        S.docAuto = false;
+        lotEchec("plan cadastral non chargé — chemin automatique interrompu");
+      }
       if(S.docAuto && S.pdf){
         S.docAuto = false;   // un seul déclenchement par chargement
         S.docAutoLance = true;   // autorise la fermeture de l'onglet en fin d'export
@@ -6509,8 +6565,16 @@ function preremplirDepuisURL(){
       // d'autorité qu'une URL : c'est le même niveau de confiance, déplacé.
       if(recu || !e.data || e.data.type !== "paint-params" || typeof e.data.qs !== "string") return;
       recu = true;
+      S.origineLot = e.origin;   // les documents repartiront vers cette seule origine
       history.replaceState(null, "", location.pathname + "?" + e.data.qs);
       preremplirDepuisURL();
+    });
+    window.addEventListener("message", (e) => {
+      if(!e.data || e.data.type !== "paint-fin" || e.source !== window.opener) return;
+      recu = true;
+      setGenStatus("Dossier complet terminé : l'archive se télécharge dans REDPAR. "
+        + "Cet onglet se referme.", "ok");
+      setTimeout(() => window.close(), 2000);
     });
     if(window.opener){ try{ window.opener.postMessage({ type: "paint-pret" }, "*"); }catch(e){} }
     setGenStatus("En attente des données de REDPAR — lien trop long pour une URL, "
