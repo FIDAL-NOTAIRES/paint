@@ -3996,7 +3996,9 @@ async function capturerPlanSection(p, g, blocs, rangs, pps){
   document.body.appendChild(ifr);
   try{
     const debut = Date.now();
-    while(Date.now() - debut < 120000){
+    // 180 s et non plus 120 (29/09/2026) : la nouvelle tentative à 1/500
+    // d'une petite parcelle refait toute la chaîne dans la même iframe.
+    while(Date.now() - debut < 180000){
       await new Promise((r) => setTimeout(r, 400));
       let pret = false;
       try{ pret = !!(ifr.contentWindow && ifr.contentWindow.capturePret); }
@@ -5500,6 +5502,51 @@ async function georeferencer(attendus){
     return { a, b: mv - a * mu, n, r: num / Math.sqrt(du * dv),
              min: Math.min(...v), max: Math.max(...v) };
   };
+  // ---- AJUSTEMENT ROBUSTE — 29/09/2026 ----------------------------------
+  // Constaté sur AH 30 (dossier compilé LOGIS, page 12, extrait à 1/200) :
+  // corrélations 1,000 et -0,984 sur 8 étiquettes. Une SEULE étiquette mal
+  // lue suffisait à faire tomber tout l'axe sous le seuil de 0,99, parce que
+  // la corrélation porte sur toutes les étiquettes à la fois.
+  // On cherche donc le plus grand sous-ensemble d'étiquettes ALIGNÉES entre
+  // elles (droite passant par deux d'entre elles, tolérance de quelques
+  // pixels), et l'on écarte celles qui détonnent. Garde-fous :
+  //   — quand l'échelle attendue est connue (attendus.mpx, fourni par la voie
+  //     projetée), la pente doit la retrouver à 5 % près, dans le bon sens
+  //     (abscisses croissantes vers la droite, ordonnées décroissantes vers le
+  //     bas) : une droite de hasard entre deux parasites ne passe pas ;
+  //   — sans échelle connue, une seule étiquette au plus peut être écartée ;
+  //   — il faut au moins trois étiquettes retenues, et l'on ne remplace le
+  //     calcul d'origine que s'il en sort meilleur.
+  // La preuve reste aussi exigeante (seuil 0,99 inchangé) : elle ne tombe
+  // simplement plus pour une faute de lecture.
+  const mpxAttendu = attendus && attendus.mpx > 0 ? attendus.mpx : null;
+  const robuste = (g, axe) => {
+    const base = stats(g, axe);
+    if(g.length < 3) return base;
+    if(base && Math.abs(base.r) > 0.999) return base;
+    const U = (e) => (axe === "x" ? e.cx : e.cy);
+    let meilleur = null;
+    for(let i = 0; i < g.length; i++) for(let j = i + 1; j < g.length; j++){
+      const du = U(g[j]) - U(g[i]), dv = g[j].v - g[i].v;
+      if(!du || !dv) continue;
+      const a = dv / du;
+      if(mpxAttendu){
+        if(axe === "x" ? a <= 0 : a >= 0) continue;
+        if(Math.abs(Math.abs(a) - mpxAttendu) / mpxAttendu > 0.05) continue;
+      }
+      const b = g[i].v - a * U(g[i]);
+      const tol = Math.max(1.5, 25 * Math.abs(a));   // ~25 px : l'étiquette est centrée sur son texte, pas sur le trait
+      const dedans = g.filter((e) => Math.abs(e.v - (a * U(e) + b)) <= tol);
+      if(!meilleur || dedans.length > meilleur.length) meilleur = dedans;
+    }
+    if(!meilleur || meilleur.length < 3 || meilleur.length === g.length) return base;
+    if(!mpxAttendu && meilleur.length < g.length - 1) return base;
+    const sr = stats(meilleur, axe);
+    if(!sr) return base;
+    if(base && Math.abs(base.r) >= Math.abs(sr.r)) return base;
+    sr.ecartees = g.length - meilleur.length;
+    return sr;
+  };
   // AFFECTATION DES GROUPES AUX AXES.
   // Par corrélation quand le groupe porte au moins deux valeurs distinctes.
   // Sinon — cas fréquent, quand le plan ne traverse qu'une seule ligne de
@@ -5509,7 +5556,7 @@ async function georeferencer(attendus){
   groupes.forEach((g) => {
     const distinctes = new Set(g.map((e) => e.v)).size;
     if(distinctes >= 2){
-      const sx = stats(g, "x"), sy = stats(g, "y");
+      const sx = robuste(g, "x"), sy = robuste(g, "y");
       if(sx && sy && Math.abs(sx.r) >= Math.abs(sy.r)){
         if(!fx || Math.abs(sx.r) > Math.abs(fx.r)) fx = sx;
       }else if(sy){
@@ -5687,6 +5734,21 @@ function preremplirDepuisURL(){
                                 "A3|portrait": 0.297, "A3|paysage": 0.420 };
       const fmt = p.get("format") || "A4|portrait";
       const ech = parseFloat(p.get("echelle") || "1000");
+      // ---- NOUVELLE TENTATIVE À 1/500 — 29/09/2026 -------------------------
+      // Les très petites parcelles tombent à 1/200, où les marges portent peu
+      // d'étiquettes de coordonnées et où le calage est le plus fragile. En
+      // chemin automatique (auto=1) et UNE SEULE FOIS (repli=1), un refus à
+      // 1/200 ne s'affiche pas : on redemande l'extrait à 1/500 et l'on refait
+      // toute la chaîne sur une page vierge (voir le finally). Si le 1/500
+      // échoue aussi, c'est ce second refus qui s'affiche.
+      const refuser = (msg) => {
+        if(ech === 200 && !modeOrtho && p.get("auto") === "1" && (p.get("repli") || "") !== "1"){
+          S.relance500 = msg;
+          setStatus("Colorisation non prouvée à 1/200 — nouvelle tentative à 1/500…", "warn");
+          return;
+        }
+        aLaMain(msg);
+      };
       const mDim = (p.get("dim") || "").trim().match(/^([0-9.]+)x([0-9.]+)$/);
       // ⚠ CE PORTILLON NE CONCERNE PAS LA VUE AÉRIENNE. Il garde la détection
       // par TAILLE ATTENDUE, qui a besoin de dim pour comparer des pixels à des
@@ -6053,7 +6115,8 @@ function preremplirDepuisURL(){
         try{
           spin.classList.add("show"); spinmsg.textContent = "Lecture des coordonnées en marge…";
           const X = parseFloat(mPt[1]), Y = parseFloat(mPt[2]);
-          const g = await georeferencer({ X, Y });
+          // mpx : l'échelle attendue, qui sert de garde-fou à l'ajustement robuste
+          const g = await georeferencer({ X, Y, mpx: largeursFeuille[fmt] * ech / W });
           spin.classList.remove("show");
           // CONTRÔLE DE L'ÉCHELLE RÉELLEMENT DÉLIVRÉE.
           // Constaté le 28/07/2026 : une demande à 1/10000 est SILENCIEUSEMENT
@@ -6105,7 +6168,9 @@ function preremplirDepuisURL(){
             // de kilomètres — et c'est ce désaccord qui le révèle, sans avoir
             // à faire traverser un en-tête HTTP.
             const cal = calageAnalytique(p, baseCtx, W, H);
-            let cfx = g.fx, cfy = g.fy, calageDit = "étiquettes lues (OCR)";
+            const nbEcartees = (g.fx.ecartees || 0) + (g.fy.ecartees || 0);
+            let cfx = g.fx, cfy = g.fy, calageDit = "étiquettes lues (OCR)"
+              + (nbEcartees ? ", " + nbEcartees + " étiquette(s) aberrante(s) écartée(s)" : "");
             if(cal){
               const dxm = Math.abs((X - cal.fx.b) / cal.fx.a - (X - g.fx.b) / g.fx.a)
                           * Math.abs(cal.fx.a);
@@ -6390,7 +6455,7 @@ function preremplirDepuisURL(){
       console.log("PAINT auto :", { attendu, regions: regions.length, retenues, proches });
 
       if(!retenues.length){
-        aLaMain(resume + " Les trois plus proches mesurent "
+        refuser(resume + " Les trois plus proches mesurent "
           + proches.map(dims).join(" px, ") + " px.");
         return;
       }
@@ -6436,7 +6501,114 @@ function preremplirDepuisURL(){
         w.cx >= g.x0 - MARGE && w.cx <= g.x1 + MARGE
         && w.cy >= g.y0 - MARGE && w.cy <= g.y1 + MARGE);
 
-      const confirmees = retenues.filter(contientNumero);
+      let confirmees = retenues.filter(contientNumero);
+
+      // ---- LECTURE CIBLÉE — 29/09/2026 --------------------------------------
+      // Sur AH 30, le « 30 » était imprimé en gros, collé à la croix du centre,
+      // et la lecture de la page entière ne l'a pas trouvé (142 numéros lus).
+      // Avant de refuser, on relit CHAQUE région candidate isolément, agrandie
+      // trois fois : le numéro d'une parcelle est écrit DANS la parcelle, et une
+      // lecture sur un fragment dégagé du reste du plan est bien plus sûre. Le
+      // moteur ne lit que des chiffres (liste blanche) : la croix est ignorée.
+      // Ce qui est trouvé l'est DANS la région par construction.
+      let lectureCiblee = 0;
+      if(!confirmees.length && retenues.length && S.ocrCache && S.ocrCache.base){
+        try{
+          spin.classList.add("show"); spinmsg.textContent = "Relecture ciblée du numéro…";
+          const worker = await getWorker();
+          const base = S.ocrCache.base, f = S.W / base.width, ZOOM = 3, PAD = 6;
+          for(const gC of retenues.slice(0, 4)){
+            const bx0 = Math.max(0, Math.floor(gC.x0 / f) - PAD), by0 = Math.max(0, Math.floor(gC.y0 / f) - PAD);
+            const bx1 = Math.min(base.width, Math.ceil(gC.x1 / f) + PAD), by1 = Math.min(base.height, Math.ceil(gC.y1 / f) + PAD);
+            const cw = bx1 - bx0, ch = by1 - by0;
+            if(cw < 8 || ch < 8) continue;
+            const cc = document.createElement("canvas"); cc.width = cw * ZOOM; cc.height = ch * ZOOM;
+            const cx2 = cc.getContext("2d"); cx2.fillStyle = "#fff"; cx2.fillRect(0, 0, cc.width, cc.height);
+            cx2.imageSmoothingEnabled = true;
+            cx2.drawImage(base, bx0, by0, cw, ch, 0, 0, cc.width, cc.height);
+            const { data } = await worker.recognize(cc, {}, { blocks: true, tsv: true });
+            const mots = extractWords(data);
+            lectureCiblee += mots.length;
+            mots.filter((wd) => wd.text === num).forEach((wd) => {
+              occurrences.push({ text: wd.text, cx: Math.round((bx0 + wd.x / ZOOM) * f),
+                                 cy: Math.round((by0 + wd.y / ZOOM) * f), cible: true });
+            });
+          }
+        }catch(e){
+          console.warn("PAINT : relecture ciblée indisponible", e);
+        }finally{ spin.classList.remove("show"); }
+        confirmees = retenues.filter(contientNumero);
+      }
+
+      // ---- PREUVE PAR LA FORME — 29/09/2026 (décision JFD) -------------------
+      // Dernier recours avant le refus : PAINT connaît le CONTOUR OFFICIEL de la
+      // parcelle (paramètre poly) et l'échelle du rendu. Il superpose ce contour,
+      // à l'échelle, sur chaque région candidate et mesure l'accord :
+      //   — précision : part de la région qui tombe dans le contour (≥ 90 %) ;
+      //   — rappel    : part du contour couverte par la région (≥ 60 %, la
+      //     région perd les traits, les écritures et le bâti) ;
+      //   — la région doit être la PLUS CENTRALE des candidates et tenir dans
+      //     le cinquième central de la largeur (l'extrait est recentré sur la
+      //     parcelle) ;
+      //   — et aucune autre candidate ne doit approcher son score (écart ≥ 0,15).
+      // Une seule parcelle par plan (pas d'unité foncière). C'est une preuve
+      // géométrique complète — la forme, la taille et la position — qui ne
+      // dépend ni de la lecture des marges ni de celle du numéro ; le statut
+      // dit toujours que c'est elle qui a tranché.
+      const preuveParLaForme = () => {
+        const brut = (p.get("poly") || "").trim();
+        if(!brut || brut.includes("|") || !retenues.length) return null;
+        const anneaux = brut.split("~").map((a) => a.split(";").map((c) => c.split(",").map(parseFloat))
+          .filter((q) => Number.isFinite(q[0]) && Number.isFinite(q[1]))).filter((a) => a.length >= 3);
+        if(!anneaux.length) return null;
+        const tous = anneaux.flat();
+        const mx0 = Math.min(...tous.map((q) => q[0])), mx1 = Math.max(...tous.map((q) => q[0]));
+        const my0 = Math.min(...tous.map((q) => q[1])), my1 = Math.max(...tous.map((q) => q[1]));
+        const pw = Math.ceil((mx1 - mx0) * pxParMetre) + 2, ph = Math.ceil((my1 - my0) * pxParMetre) + 2;
+        if(pw < 6 || ph < 6 || pw * ph > 4e6) return null;
+        const mc = document.createElement("canvas"); mc.width = pw; mc.height = ph;
+        const mcx = mc.getContext("2d"); mcx.fillStyle = "#000"; mcx.beginPath();
+        anneaux.forEach((a) => {
+          a.forEach((q, i) => {
+            const X = (q[0] - mx0) * pxParMetre + 1, Y = (my1 - q[1]) * pxParMetre + 1;   // nord en haut
+            if(i) mcx.lineTo(X, Y); else mcx.moveTo(X, Y);
+          });
+          mcx.closePath();
+        });
+        mcx.fill("evenodd");
+        const md = mcx.getImageData(0, 0, pw, ph).data;
+        let nP = 0, sxP = 0, syP = 0;
+        for(let y = 0; y < ph; y++) for(let x = 0; x < pw; x++) if(md[(y * pw + x) * 4 + 3] > 127){ nP++; sxP += x; syP += y; }
+        if(!nP) return null;
+        const pcx = sxP / nP, pcy = syP / nP;
+        const dansP = (x, y) => x >= 0 && y >= 0 && x < pw && y < ph && md[(y * pw + x) * 4 + 3] > 127;
+        const noter = (gC) => {
+          let nR = 0, sx = 0, sy = 0;
+          for(let y = gC.y0; y <= gC.y1; y++) for(let x = gC.x0; x <= gC.x1; x++)
+            if(etiquette[y * W + x] === gC.id){ nR++; sx += x; sy += y; }
+          if(!nR) return { prec: 0, rapp: 0, score: 0 };
+          const rcx = sx / nR, rcy = sy / nR;
+          let mieux = { prec: 0, rapp: 0, score: 0 };
+          for(let dy = -4; dy <= 4; dy += 2) for(let dx = -4; dx <= 4; dx += 2){
+            const ox = Math.round(rcx - pcx) + dx, oy = Math.round(rcy - pcy) + dy;
+            let inter = 0;
+            for(let y = gC.y0; y <= gC.y1; y++) for(let x = gC.x0; x <= gC.x1; x++)
+              if(etiquette[y * W + x] === gC.id && dansP(x - ox, y - oy)) inter++;
+            const prec = inter / nR, rapp = inter / nP, score = Math.min(prec / 0.9, rapp / 0.6);
+            if(score > mieux.score) mieux = { prec, rapp, score };
+          }
+          return mieux;
+        };
+        const notes = retenues.slice(0, 5).map((gC) => ({ gC, ...noter(gC) }))
+          .sort((a, b) => b.score - a.score);
+        const t = notes[0];
+        if(!t || t.prec < 0.9 || t.rapp < 0.6) return { refus: "forme non concordante (précision "
+          + Math.round((t ? t.prec : 0) * 100) + " %, rappel " + Math.round((t ? t.rapp : 0) * 100) + " %)" };
+        if(notes[1] && notes[1].score > t.score - 0.15) return { refus: "forme ambiguë entre deux régions" };
+        const plusCentrale = [...retenues].sort((a, b) => dist(a) - dist(b))[0];
+        if(plusCentrale !== t.gC || Math.abs(t.gC.cx - W / 2) > W * 0.2) return { refus: "la région de bonne forme n'est pas au centre de l'extrait" };
+        return { cible: t.gC, prec: t.prec, rapp: t.rapp };
+      };
       const diag = resume + " Numéros lus : " + numerosLus + ", occurrences de « "
         + num + " » : " + occurrences.length + ".";
 
@@ -6453,7 +6625,7 @@ function preremplirDepuisURL(){
         confiance = " " + confirmees.length + " régions portaient le numéro : la plus "
           + "centrale a été retenue, vérifiez le résultat.";
       }else if(occurrences.length > 0){
-        aLaMain("Colorisation refusée par sécurité : le numéro " + num + " a bien été lu "
+        refuser("Colorisation refusée par sécurité : le numéro " + num + " a bien été lu "
           + "sur le plan, mais hors de la région dont les dimensions correspondaient. "
           + "Les deux indices se contredisent. " + diag);
         return;
@@ -6462,11 +6634,23 @@ function preremplirDepuisURL(){
         confiance = " ⚠ NON CONFIRMÉE : aucun numéro n'a pu être lu sur ce plan, "
           + "la sélection repose sur les seules dimensions. À vérifier.";
       }else{
-        aLaMain("Colorisation refusée par sécurité : le numéro " + num + " n'a pas été "
-          + "retrouvé sur le plan et " + (retenues.length > 1
-            ? retenues.length + " régions avaient des dimensions compatibles"
-            : "aucune confirmation n'est possible") + ". " + diag);
-        return;
+        let forme = null;
+        try{ forme = preuveParLaForme(); }catch(e){ console.warn("PAINT : preuve par la forme indisponible", e); }
+        if(forme && forme.cible){
+          cible = forme.cible;
+          confiance = " Confirmée par la FORME : le contour cadastral officiel, superposé à "
+            + "l'échelle, épouse la région (précision " + Math.round(forme.prec * 100) + " %, "
+            + "couverture " + Math.round(forme.rapp * 100) + " %) — numéro non lu, calage des "
+            + "marges non concluant.";
+        }else{
+          refuser("Colorisation refusée par sécurité : le numéro " + num + " n'a pas été "
+            + "retrouvé sur le plan" + (lectureCiblee ? " (même en relecture ciblée)" : "")
+            + " et " + (retenues.length > 1
+              ? retenues.length + " régions avaient des dimensions compatibles"
+              : "aucune confirmation n'est possible")
+            + (forme && forme.refus ? " ; preuve par la forme : " + forme.refus : "") + ". " + diag);
+          return;
+        }
       }
 
       const amorce = { x: Math.round(cible.cx), y: Math.round(cible.cy),
@@ -6514,6 +6698,21 @@ function preremplirDepuisURL(){
         + ". Le plan reste prêt : cliquez dans la parcelle avec l'outil « Remplir », "
         + "déjà sélectionné. Détail technique dans la console du navigateur (F12).", "err");
     }finally{
+      // ---- RELANCE À 1/500 (voir refuser) : on NE lève PAS capturePret et l'on
+      // ne déclenche PAS docauto — la chaîne repart à neuf, c'est la seconde
+      // passe qui les lèvera. Les caches de lecture sont vidés : ils portent la
+      // clé page|rotation, identique d'un plan à l'autre, et serviraient sinon
+      // les mots du plan à 1/200 au plan à 1/500.
+      if(S.relance500){
+        S.relance500 = null;
+        S.ocrCache = null; S.calage = null;
+        const q = new URLSearchParams(location.search);
+        q.set("echelle", "500"); q.set("repli", "1");
+        history.replaceState(null, "", location.pathname + "?" + q.toString());
+        showHint("Nouvelle tentative à 1/500…");
+        setTimeout(() => { preremplirDepuisURL(); }, 60);
+        return;
+      }
       // Drapeau lu par capturerPlanSection depuis la page MÈRE (iframes de même
       // origine) : le pipeline automatique est terminé — quel que soit son
       // chemin —, le canvas est dans son état final, capturable.
