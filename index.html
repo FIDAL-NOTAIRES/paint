@@ -968,6 +968,78 @@ const drop = document.getElementById("drop");
 const hintbar = document.getElementById("hintbar");
 const spin = document.getElementById("spin");
 
+/* ==================================================================
+   TEINTE HACHURÉE « LOCAUX SEULS » — décision JFD du 29/09/2026
+   ------------------------------------------------------------------
+   Bandes alternées CARMIN et VIOLET à 45°, pour la parcelle sur laquelle la
+   société ne détient que des LOCAUX (sol d'un syndicat ou d'un tiers). Le
+   carmin dit « c'est à la société », le violet mêlé dit « mais pas seule ».
+   Appelée par REDPAR avec motif=locaux ; disponible aussi dans le tiroir.
+
+   ⚠ DEUX HEX PROPRES AUX BANDES, écartés de 10 du carmin et du violet de la
+   palette : un carmin uni et une bande carmine ne se confondent donc jamais à
+   la relecture du calque. Au-delà de la tolérance d'apparieurTeintes (6 au
+   plus, à 10 % d'opacité).
+   ⚠ UNE SEULE TEINTE POUR TOUT LE RESTE DU CODE. La clé est HACH_A ; les pixels
+   HACH_B s'y rattachent dans apparieurTeintes. Légende, registre, barrage du
+   remplissage et double geste d'effacement voient donc UNE teinte, pas deux.
+   ⚠ BANDES AU PIXEL PRÈS, sans lissage : un pixel est A ou B selon
+   floor((x+y)/Q). Des bandes lissées créeraient entre elles des teintes
+   intermédiaires qui couperaient l'effacement en morceaux.
+   ⚠ LARGEUR EN MILLIMÈTRES DE PAPIER (1,5 mm), déduite de la largeur réelle
+   de la page — pas en pixels.
+   ⚠ PETITE PARCELLE : sous une surface de trois bandes sur trois, les bandes
+   ne se liraient plus (une seule, carmine ou violette au hasard). On pose
+   alors un VIOLET UNI, qui reste rattaché à la même entrée de légende.
+   ================================================================== */
+const HACH_A = "#aa1036";          // bande carmine — clé de la teinte
+const HACH_B = "#7066dd";          // bande violette
+const HACH_LIBELLE = "Locaux seuls (sol d'un tiers ou copropriété)";
+const HACH_BANDE_MM = 1.5;
+const estHachure = (h) => String(h||"").toLowerCase() === HACH_A;
+// Période diagonale Q : une bande mesure Q/√2 perpendiculairement, soit 1,5 mm.
+function hachureQ(){
+  const mm = S.pageMmW || 210;
+  return Math.max(3, Math.round((S.W || 1700) * HACH_BANDE_MM * Math.SQRT2 / mm));
+}
+const hachureSeuilPx = (Q) => Math.round(4.5 * Q * Q);   // (3 × Q/√2)²
+const cacheMotifs = new WeakMap();
+function motifHachure(ctx, Q){
+  Q = Q || hachureQ();
+  let parCtx = cacheMotifs.get(ctx);
+  if(!parCtx){ parCtx = new Map(); cacheMotifs.set(ctx, parCtx); }
+  if(parCtx.has(Q)) return parCtx.get(Q);
+  const T = 2*Q, c = document.createElement("canvas"); c.width = T; c.height = T;
+  const g = c.getContext("2d"), im = g.createImageData(T, T), d = im.data;
+  const A = hexToRgb(HACH_A), B = hexToRgb(HACH_B);
+  for(let y=0;y<T;y++) for(let x=0;x<T;x++){
+    const k = (Math.floor((x+y)/Q) & 1) ? B : A, q = (y*T+x)*4;
+    d[q]=k[0]; d[q+1]=k[1]; d[q+2]=k[2]; d[q+3]=255;
+  }
+  g.putImageData(im, 0, 0);
+  const m = ctx.createPattern(c, "repeat");
+  parCtx.set(Q, m);
+  return m;
+}
+// Surface nette, en pixels, d'un jeu d'anneaux (les trous en sens inverse).
+function surfaceAnneaux(anneaux){
+  let t = 0;
+  anneaux.forEach(pts => {
+    for(let i=0, j=pts.length-1; i<pts.length; j=i++) t += (pts[j][0]+pts[i][0])*(pts[j][1]-pts[i][1]);
+  });
+  return Math.abs(t)/2;
+}
+// Remplissage à poser pour la teinte en cours : hex, motif, ou violet de repli.
+function styleRemplissage(ctx, surfacePx){
+  if(!estHachure(S.color)) return S.color;
+  const Q = hachureQ();
+  if(surfacePx !== undefined && surfacePx < hachureSeuilPx(Q)) return HACH_B;
+  return motifHachure(ctx, Q);
+}
+// Fond CSS d'une pastille, d'un point de légende ou de la poignée.
+const fondTeinte = (h) => estHachure(h)
+  ? `repeating-linear-gradient(45deg, ${HACH_A} 0 4px, ${HACH_B} 4px 8px)` : h;
+
 /* ---------- Palette & légende UI ---------- */
 /* Quatre teintes en vue, les huit autres dans un tiroir replié sous le « + ».
    Douze pastilles alignées d'emblée se lisaient comme un nuancier alors que
@@ -1003,8 +1075,9 @@ function nommerTeinte(hex){
 }
 function pastille(c,i){
   const d = document.createElement("div");
-  d.className = "sw"+(i===0?" active":""); d.style.background=c; d.dataset.color=c;
-  d.title = c+" — clic droit ou appui long pour la nommer";
+  d.className = "sw"+(i===0?" active":""); d.style.background=fondTeinte(c); d.dataset.color=c;
+  d.title = (estHachure(c) ? "Hachures carmin et violet (locaux seuls)" : c)
+    + " — clic droit ou appui long pour la nommer";
   d.onclick = ()=>setColor(c,d);
   // Ordinateur : clic droit.
   d.addEventListener("contextmenu", ev=>{ ev.preventDefault(); setColor(c,d); nommerTeinte(c); });
@@ -1025,6 +1098,8 @@ function pastille(c,i){
 }
 PALETTE.slice(0,VISIBLES).forEach((c,i)=> swatchEl.appendChild(pastille(c,i)));
 PALETTE.slice(VISIBLES).forEach((c,i)=> plusEl.appendChild(pastille(c,i+VISIBLES)));
+// La teinte hachurée ferme le tiroir, après les huit teintes de complément.
+plusEl.appendChild(pastille(HACH_A, PALETTE.length));
 
 const btnPlus = document.createElement("button");
 btnPlus.type="button"; btnPlus.className="sw-plus"; btnPlus.textContent="+";
@@ -1078,7 +1153,7 @@ function memoriserTeinte(){
   const h = String(S.color||"").toLowerCase();
   if(!/^#[0-9a-f]{6}$/.test(h)) return;
   if(!S.couleursPosees.includes(h)) S.couleursPosees.push(h);
-  if(S.legendLabels[h] === undefined) S.legendLabels[h] = "";
+  if(S.legendLabels[h] === undefined) S.legendLabels[h] = estHachure(h) ? HACH_LIBELLE : "";
   promouvoirTeinte(h);
 }
 
@@ -1094,7 +1169,7 @@ function rebuildLegend(){
   used.forEach(hex=>{
     const row=document.createElement("div"); row.className="legend-item";
     row.dataset.hex=hex;                       // lu par marquerCadresVides
-    const dot=document.createElement("div"); dot.className="dot"; dot.style.background=hex;
+    const dot=document.createElement("div"); dot.className="dot"; dot.style.background=fondTeinte(hex);
     const inp=document.createElement("input");
     inp.placeholder="Désignation…"; inp.value=S.legendLabels[hex]||"";
     // hex vient de usedColors(), donc toujours en minuscules, et memoriserTeinte
@@ -1141,7 +1216,9 @@ function rebuildLegend(){
    est petit et la boucle reste linéaire. Ne pas le retirer.
    ================================================================== */
 function apparieurTeintes(hexConnus){
-  const refs = [...new Set(hexConnus.map(h => String(h).toLowerCase()))]
+  const liste = hexConnus.map(h => String(h).toLowerCase());
+  if(liste.includes(HACH_A)) liste.push(HACH_B);     // voir TEINTE HACHURÉE
+  const refs = [...new Set(liste)]
     .filter(h => /^#[0-9a-f]{6}$/.test(h))
     .map(h => { const [r,g,b] = hexToRgb(h); return {h,r,g,b}; });
   const cache = new Map();
@@ -1158,6 +1235,7 @@ function apparieurTeintes(hexConnus){
         if(d2 < meilleure){ meilleure = d2; retenue = t.h; }
       }
     }
+    if(retenue === HACH_B) retenue = HACH_A;          // une teinte, deux bandes
     cache.set(cle, retenue);
     return retenue;
   };
@@ -1180,6 +1258,7 @@ function usedColors(){
   // le registre n'ait été alimenté (retour arrière, changement de page).
   const connues = new Set(PALETTE.map((h) => h.toLowerCase()));
   (S.couleursPosees || []).forEach((h) => connues.add(h));
+  connues.add(HACH_A);        // calque restauré avant le registre : voir ci-dessus
   // Le tableau d'annotation écrit son texte en bleu nuit, qui appartient à la
   // palette : sans cette exclusion il produirait une entrée de légende. On ne
   // l'exclut que si un tableau a effectivement été dessiné, pour ne pas priver
@@ -1615,7 +1694,7 @@ function majPoignee(){
   const o=document.getElementById("tiroir-outil");
   const t=document.getElementById("tiroir-teinte");
   if(o) o.textContent = NOM_OUTIL[S.tool] || S.tool;
-  if(t) t.style.background = (S.tool==="erase") ? "transparent" : S.color;
+  if(t) t.style.background = (S.tool==="erase") ? "transparent" : fondTeinte(S.color);
 }
 function tiroirOuvrir(ouvert){
   tiroir.classList.toggle("ouvert", ouvert);
@@ -1716,7 +1795,7 @@ function majEcranLegende(){
   }
   used.forEach(hex=>{
     const row=document.createElement("div"); row.className="legend-item"; row.dataset.hex=hex;
-    const dot=document.createElement("div"); dot.className="dot"; dot.style.background=hex;
+    const dot=document.createElement("div"); dot.className="dot"; dot.style.background=fondTeinte(hex);
     const inp=document.createElement("input");
     inp.placeholder="Désignation…"; inp.value=S.legendLabels[hex]||"";
     inp.setAttribute("enterkeyhint","done");
@@ -1901,6 +1980,9 @@ async function renderBase(){
   const scale = target / vp1.width;
   const vp = page.getViewport({scale, rotation:S.rotation});
   S.W = Math.round(vp.width); S.H = Math.round(vp.height);
+  // Largeur de la page en millimètres (points PDF → mm) : les hachures se
+  // règlent en millimètres de papier.
+  S.pageMmW = vp1.width / 72 * 25.4;
   [base,overlay].forEach(c=>{c.width=S.W;c.height=S.H;});
   cwrap.style.width=S.W+"px"; cwrap.style.height=S.H+"px";
   anno.style.width=S.W+"px"; anno.style.height=S.H+"px";
@@ -2154,7 +2236,7 @@ async function contourAuPixel(px, py){
 function peindreContour(anneaux){
   oCtx.save();
   oCtx.globalAlpha = S.opacity;
-  oCtx.fillStyle = S.color;
+  oCtx.fillStyle = styleRemplissage(oCtx, surfaceAnneaux(anneaux));
   oCtx.beginPath();
   anneaux.forEach(pts => {
     oCtx.moveTo(pts[0][0], pts[0][1]);
@@ -2229,8 +2311,14 @@ function effacerZone(sx,sy){
   if(d[p0+3]===0) return false;                 // rien de posé ici
   const r0=d[p0], g0=d[p0+1], b0=d[p0+2];
   const TOL=10;
+  // Teinte hachurée (29/09/2026) : ses deux bandes n'ont pas la même couleur.
+  // On compare donc aussi la teinte CANONIQUE rendue par l'apparieur, qui
+  // rattache la bande violette à la carmine ; la tolérance brute reste en repli.
+  const apparier = apparieurTeintes([...(S.couleursPosees||[]), ...PALETTE]);
+  const cle0 = apparier(r0,g0,b0,d[p0+3]);
   const memeTeinte=(p)=> d[p+3]>0
-    && Math.abs(d[p]-r0)<=TOL && Math.abs(d[p+1]-g0)<=TOL && Math.abs(d[p+2]-b0)<=TOL;
+    && ((cle0 && apparier(d[p],d[p+1],d[p+2],d[p+3])===cle0)
+        || (Math.abs(d[p]-r0)<=TOL && Math.abs(d[p+1]-g0)<=TOL && Math.abs(d[p+2]-b0)<=TOL));
   const vu=new Uint8Array(N);
   const pile=[sy*W+sx]; vu[sy*W+sx]=1;
   let n=0;
@@ -2316,11 +2404,17 @@ function paintAt(a,b){
   }else{
     oCtx.globalCompositeOperation="source-over";
     memoriserTeinte();
-    const [r,g,bl]=hexToRgb(S.color);
-    oCtx.strokeStyle=`rgba(${r},${g},${bl},${S.opacity})`;
+    if(estHachure(S.color)){
+      oCtx.strokeStyle = motifHachure(oCtx);
+      oCtx.globalAlpha = S.opacity;
+    }else{
+      const [r,g,bl]=hexToRgb(S.color);
+      oCtx.strokeStyle=`rgba(${r},${g},${bl},${S.opacity})`;
+    }
   }
   oCtx.beginPath(); oCtx.moveTo(a.x,a.y); oCtx.lineTo(b.x,b.y); oCtx.stroke();
   oCtx.globalCompositeOperation="source-over";
+  oCtx.globalAlpha = 1;
 }
 
 /* ---------- Remplissage par zone (scanline + remplissage des îlots) ---------- */
@@ -2467,6 +2561,19 @@ function floodFill(sx,sy){
   // (boucles des chiffres : 6, 0, 8, 9…). Tout sauf l'extérieur.
   const img=oCtx.getImageData(0,0,W,H), od=img.data;
   const [fr,fg,fb]=hexToRgb(S.color); const fa=Math.round(S.opacity*255);
+  if(estHachure(S.color)){
+    // Bandes au pixel près, même règle que motifHachure ; violet uni sous le seuil.
+    const Q = hachureQ(), A = hexToRgb(HACH_A), B = hexToRgb(HACH_B);
+    let n = 0;
+    for(let i=0;i<N;i++) if(!outside[i] && !barr[i]) n++;
+    const uni = n < hachureSeuilPx(Q);
+    for(let i=0;i<N;i++){
+      if(outside[i] || barr[i]) continue;
+      const x=i%W, y=(i-x)/W;
+      const k = (uni || (Math.floor((x+y)/Q) & 1)) ? B : A, p=i*4;
+      od[p]=k[0]; od[p+1]=k[1]; od[p+2]=k[2]; od[p+3]=fa;
+    }
+  }else
   for(let i=0;i<N;i++){
     // Les îlots enfermés peuvent contenir une parcelle d'une autre teinte :
     // on la protège ici aussi, la passe 1 ne l'ayant pas vue.
@@ -2901,7 +3008,8 @@ function buildExportCanvas(anchor){
       x.font=`${corps}px ${POLICE_DGFIP}`;
       items.forEach((it,i)=>{
         const ly=by+pad+line*(i+1)+line/2;
-        x.fillStyle=it.c; x.fillRect(bx+pad,ly-carre/2,carre,carre);
+        x.fillStyle = estHachure(it.c) ? motifHachure(x, Math.max(3, Math.round(carre/3))) : it.c;
+        x.fillRect(bx+pad,ly-carre/2,carre,carre);
         x.strokeStyle="#657D96"; x.lineWidth=1; x.strokeRect(bx+pad,ly-carre/2,carre,carre);
         x.fillStyle="#0F2238"; x.fillText(it.t,bx+pad+carre+gout,ly);
       });
@@ -5642,6 +5750,14 @@ function preremplirDepuisURL(){
       .find(el => (el.dataset.color || "").toLowerCase() === couleur.toLowerCase());
     setColor(couleur, sw || null);
   }
+  // Teinte HACHURÉE carmin et violet pour une parcelle à LOCAUX SEULS (REDPAR,
+  // 29/09/2026). Prime sur « couleur », que REDPAR laisse au carmin pour qu'un
+  // PAINT antérieur retombe sur l'ancien comportement.
+  if((p.get("motif") || "").trim().toLowerCase() === "locaux"){
+    const sw = [...document.querySelectorAll(".sw")]
+      .find(el => (el.dataset.color || "").toLowerCase() === HACH_A);
+    setColor(HACH_A, sw || null);
+  }
 
   // Recentrage éventuel, transmis à l'endpoint par generateExtrait.
   const rx = parseFloat(p.get("x") || ""), ry = parseFloat(p.get("y") || "");
@@ -6284,7 +6400,7 @@ function preremplirDepuisURL(){
               if(polygones.length){
                 oCtx.save();
                 oCtx.globalAlpha = S.opacity;
-                oCtx.fillStyle = S.color;
+                oCtx.fillStyle = styleRemplissage(oCtx, surfaceAnneaux(polygones));
                 // Un seul tracé pour tous les polygones : les recouvrements
                 // éventuels ne se cumulent donc pas en surbrillance, ce qui
                 // arriverait avec un remplissage par polygone.
