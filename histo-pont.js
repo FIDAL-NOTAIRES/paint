@@ -95,24 +95,35 @@
   envoyer({ type: "paint-pret" });
 
   /* 3. fin de la chaîne automatique */
+  /* ⚠ DÉLAIS (corrigés le 04/10/2026 après le premier essai réel sur Croix) :
+     dans un cadre, la lecture des coordonnées de marge par reconnaissance de
+     caractères peut dépasser quatre minutes ; la passerelle avait alors basculé
+     en reprise manuelle ALORS QUE la colorisation s'achevait juste après.
+     Désormais : on attend DOUZE minutes avant de proposer la reprise manuelle,
+     et même après l'avoir proposée on CONTINUE DE SURVEILLER — si la chaîne
+     automatique aboutit sans réserve, l'image part d'elle-même. */
+  const DELAI_AVANT_REPRISE_MS = 12 * 60 * 1000;
+  let repriseProposee = false;
   function surveiller(){
     const debut = Date.now();
     const t = setInterval(() => {
+      if(dejaTransmis){ clearInterval(t); return; }
       if(window.capturePret){
         clearInterval(t);
         if(window.captureReserve){
           // Colorisation non prouvée : on laisse la main au collaborateur.
           montrerBouton();
-          envoyer({ type: "paint-attente-manuelle", reserve: String(window.captureReserve) });
+          if(!repriseProposee){ repriseProposee = true;
+            envoyer({ type: "paint-attente-manuelle", reserve: String(window.captureReserve) }); }
         }else{
           transmettre(false);
         }
         return;
       }
-      if(Date.now() - debut > 240000){                      // 4 min : le service ou le calage n'aboutit pas
-        clearInterval(t);
+      if(!repriseProposee && Date.now() - debut > DELAI_AVANT_REPRISE_MS){
+        repriseProposee = true;
         montrerBouton();
-        envoyer({ type: "paint-attente-manuelle", reserve: "délai dépassé : colorisez à la main puis transmettez" });
+        envoyer({ type: "paint-attente-manuelle", reserve: "délai dépassé : colorisez à la main puis transmettez (si la colorisation automatique aboutit entre-temps, l'image partira d'elle-même)" });
       }
     }, 500);
   }
