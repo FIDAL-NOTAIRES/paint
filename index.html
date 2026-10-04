@@ -582,7 +582,7 @@
     <!-- Marqueur de build. Sert à savoir d'un coup d'œil si le navigateur sert
          la dernière version ou une page en cache. Ctrl+Shift+R si la date
          affichée n'est pas celle du dernier dépôt. -->
-    <span id="build" title="Version déployée">2026-09-16y</span>
+    <span id="build" title="Version déployée">2026-10-04</span>
   </div>
   <div class="hbar">
     <div class="pagenav" id="pagenav" style="display:none">
@@ -6925,5 +6925,10 @@ function preremplirDepuisURL(){
 })();
 
 </script>
+<!-- HISTO-PONT (04/10/2026) : passerelle vers HISTO, qui ouvre PAINT dans un
+     cadre pour obtenir le plan colorisé d'une section. INERTE hors appel
+     HISTO (?charge=histo) : rien ne change pour REDPAR ni pour l'usage courant.
+     Chargé APRÈS le script principal, dont il utilise les fonctions globales. -->
+<script defer src="histo-pont.js?v=1"></script>
 </body>
 </html>
