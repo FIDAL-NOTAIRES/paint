@@ -115,6 +115,19 @@
     };
     new MutationObserver(signaler).observe(msg, { childList: true, characterData: true, subtree: true });
     new MutationObserver(signaler).observe(rond, { attributes: true, attributeFilter: ["class"] });
+    // LA BARRE D'ÉTAT DE PAINT (05/10/2026) : c'est là que PAINT écrit POURQUOI il colorie
+    // par projection du contour, ou pourquoi il y renonce (zone de projection discordante,
+    // point hors du rendu, calage écarté, numéro non lu…). Transmise telle quelle à HISTO.
+    const etat = document.getElementById("status");
+    if(etat){
+      let dernierEtat = "";
+      new MutationObserver(() => {
+        const texte = (etat.textContent || "").trim();
+        if(!texte || texte === dernierEtat) return;
+        dernierEtat = texte;
+        envoyer({ type: "paint-statut", texte: texte.slice(0, 1200), t: Date.now() });
+      }).observe(etat, { childList: true, characterData: true, subtree: true });
+    }
   })();
 
   /* 3. fin de la chaîne automatique */
