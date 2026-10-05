@@ -126,7 +126,7 @@
       if(!repriseProposee && Date.now() - debut > DELAI_AVANT_REPRISE_MS){
         repriseProposee = true;
         montrerBouton();
-        envoyer({ type: "paint-attente-manuelle", reserve: "délai dépassé : colorisez à la main puis transmettez (si la colorisation automatique aboutit entre-temps, l'image partira d'elle-même)" });
+        envoyer({ type: "paint-attente-manuelle", reserve: "délai dépassé — colorisez à la main puis transmettez ; si la colorisation automatique aboutit entre-temps, l'image partira d'elle-même" });
       }
     }, 500);
   }
