@@ -4145,6 +4145,81 @@ function temoinTraits(cal, brutPoly, ctx, W, H){
   return { n, part: n ? ok / n : 0, horsCadre: false };
 }
 
+// ======================================================================
+// AFFINAGE DU CALAGE PAR GLISSEMENT — 05/10/2026 (Attiches, section B)
+// ======================================================================
+// Le témoin a dit 50 % (seuil 80 %) sur 3 978 échantillons : cadre trouvé,
+// calage presque juste, mais décalé de quelques mètres ou d'un peu d'échelle
+// (l'extrait réellement servi ne se centre pas toujours exactement sur x, y).
+// Avec plusieurs contours et des milliers d'échantillons, le décalage se
+// MESURE sur l'image : on glisse les contours projetés de quelques pixels
+// (puis d'un peu d'échelle autour du centre du cadre) et l'on retient la
+// position qui pose le mieux le bord sur les traits. Si elle atteint le seuil,
+// le calage est confirmé AVEC LA MÊME EXIGENCE qu'avant ; sinon on retombe sur
+// l'OCR des marges comme aujourd'hui. Un alignement à 80 % de dizaines de
+// contours ne peut pas être une coïncidence ; pour un contour seul et petit,
+// la garde ECHANT_TEMOIN_MIN et le rayon de recherche limité (≤ 6 m) s'appliquent.
+const GLISSEMENT_MAX_PX = 24;                 // ± pixels de translation explorés (≈ 9 m à 0,37 m/px)
+const ECHELLES_AFFINAGE = [1, 0.995, 1.005, 0.99, 1.01, 0.985, 1.015, 0.98, 1.02];
+function affinerCalage(cal, brutPoly, ctx, W, H){
+  if(!cal || !brutPoly) return null;
+  const enPixels = (anneau) => anneau.split(";").map((c) => {
+    const [a, b] = c.split(",").map(parseFloat);
+    return [(a - cal.fx.b) / cal.fx.a, (b - cal.fy.b) / cal.fy.a];
+  }).filter((q) => Number.isFinite(q[0]) && Number.isFinite(q[1]));
+  const polygones = brutPoly.split("|").flatMap((bloc) => bloc.split("~")).map(enPixels).filter((a) => a.length >= 3);
+  if(!polygones.length) return null;
+  // échantillons du bord, tous les trois pixels, en coordonnées du calage initial
+  const ech = [];
+  for(const pts of polygones) for(let i = 0; i < pts.length; i++){
+    const [x0, y0] = pts[i], [x1, y1] = pts[(i + 1) % pts.length];
+    const L = Math.hypot(x1 - x0, y1 - y0), pas = Math.max(1, Math.floor(L / 3));
+    for(let k = 0; k < pas; k++){ const t = k / pas; ech.push([x0 + t * (x1 - x0), y0 + t * (y1 - y0)]); }
+  }
+  if(ech.length < ECHANT_TEMOIN_MIN) return null;
+  // carte des pixels « à moins de RAYON_TEMOIN_PX d'un trait », calculée une fois
+  const d = ctx.getImageData(0, 0, W, H).data, sombre = new Uint8Array(W * H), proche = new Uint8Array(W * H);
+  for(let i = 0; i < W * H; i++) sombre[i] = (0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2]) < SEUIL_SOMBRE_TEMOIN ? 1 : 0;
+  const R = RAYON_TEMOIN_PX;
+  for(let y = 0; y < H; y++) for(let x = 0; x < W; x++){
+    if(!sombre[y * W + x]) continue;
+    for(let dy = -R; dy <= R; dy++){ const yy = y + dy; if(yy < 0 || yy >= H) continue;
+      for(let dx = -R; dx <= R; dx++){ const xx = x + dx; if(xx >= 0 && xx < W) proche[yy * W + xx] = 1; } }
+  }
+  const cx = (cal.cadre.x0 + cal.cadre.x1) / 2, cy = (cal.cadre.y0 + cal.cadre.y1) / 2;
+  const part = (s, dx, dy) => {
+    let ok = 0;
+    for(const [x, y] of ech){
+      const px = Math.round(cx + (x - cx) * s + dx), py = Math.round(cy + (y - cy) * s + dy);
+      if(px >= 0 && py >= 0 && px < W && py < H && proche[py * W + px]) ok++;
+    }
+    return ok / ech.length;
+  };
+  let meilleur = { s: 1, dx: 0, dy: 0, part: part(1, 0, 0) };
+  for(const s of ECHELLES_AFFINAGE){
+    // grossier (pas de 2 px) puis fin (pas de 1 px) autour du meilleur
+    let loc = { dx: 0, dy: 0, part: part(s, 0, 0) };
+    for(let dy = -GLISSEMENT_MAX_PX; dy <= GLISSEMENT_MAX_PX; dy += 2) for(let dx = -GLISSEMENT_MAX_PX; dx <= GLISSEMENT_MAX_PX; dx += 2){
+      const p = part(s, dx, dy); if(p > loc.part) loc = { dx, dy, part: p };
+    }
+    for(let dy = loc.dy - 2; dy <= loc.dy + 2; dy++) for(let dx = loc.dx - 2; dx <= loc.dx + 2; dx++){
+      const p = part(s, dx, dy); if(p > loc.part) loc = { dx, dy, part: p };
+    }
+    if(loc.part > meilleur.part) meilleur = { s, ...loc };
+    if(meilleur.part >= 0.95) break;          // inutile d'aller plus loin
+  }
+  // calage corrigé : px' = cx + (px - cx)·s + dx  ⇒  a' = a/s ; b' = b - (cx·(1-s) + dx)·a/s
+  const sx = meilleur.s, ax = cal.fx.a / sx, ay = cal.fy.a / sx;
+  const corrige = {
+    ...cal,
+    fx: { a: ax, b: cal.fx.b - (cx * (1 - sx) + meilleur.dx) * ax },
+    fy: { a: ay, b: cal.fy.b - (cy * (1 - sx) + meilleur.dy) * ay },
+    affinage: { dx: meilleur.dx, dy: meilleur.dy, s: sx, part: meilleur.part, n: ech.length,
+                metres: Math.hypot(meilleur.dx, meilleur.dy) * Math.abs(cal.fx.a) }
+  };
+  return corrige;
+}
+
 // ⚠⚠ SUR WINDOW, PAS SUR S — même leçon que window.chargesIframe du 01/08 au
 // soir : « const S » ne crée AUCUNE propriété window, donc le parent ne peut
 // pas lire S dans le contentWindow de son iframe. La réserve de colorisation
@@ -6337,8 +6412,20 @@ function preremplirDepuisURL(){
           let g = null, temoinDit = "";
           if(p.get("rapide") === "1"){
             spinmsg.textContent = "Calage analytique, vérification sur les traits du plan…";
-            const cal0 = calageAnalytique(p, baseCtx, W, H);
-            const tem = cal0 ? temoinTraits(cal0, (p.get("poly") || "").trim(), baseCtx, W, H) : null;
+            let cal0 = calageAnalytique(p, baseCtx, W, H);
+            let tem = cal0 ? temoinTraits(cal0, (p.get("poly") || "").trim(), baseCtx, W, H) : null;
+            let affineDit = "";
+            if(cal0 && tem && !tem.horsCadre && tem.n >= ECHANT_TEMOIN_MIN && tem.part < PART_TEMOIN_MIN){
+              spinmsg.textContent = "Témoin à " + Math.round(tem.part * 100) + " % — affinage du calage par glissement…";
+              const cal1 = affinerCalage(cal0, (p.get("poly") || "").trim(), baseCtx, W, H);
+              if(cal1 && cal1.affinage.part > tem.part){
+                const tem1 = temoinTraits(cal1, (p.get("poly") || "").trim(), baseCtx, W, H);
+                affineDit = " ; après affinage (glissement " + cal1.affinage.dx + "/" + cal1.affinage.dy + " px ≈ "
+                  + cal1.affinage.metres.toFixed(1) + " m, échelle ×" + cal1.affinage.s.toFixed(3) + ") : "
+                  + Math.round((tem1 ? tem1.part : 0) * 100) + " %";
+                if(tem1 && !tem1.horsCadre && tem1.part >= PART_TEMOIN_MIN){ cal0 = cal1; tem = tem1; }
+              }
+            }
             // 05/10/2026 : le verdict chiffré du témoin est repris dans le message de refus,
             // sans quoi « témoin insuffisant » ne dit pas si l'on est à 79 % ou à 20 %
             temoinDit = !cal0 ? "calage analytique non calculable (cadre du plan non trouvé)"
@@ -6348,7 +6435,7 @@ function preremplirDepuisURL(){
                   + cal0.fmt + " au 1/" + cal0.ech + ", " + Math.abs(cal0.fx.a).toFixed(3) + " m/px)"
               : "témoin des traits : " + Math.round(tem.part * 100) + " % du bord sur un trait (seuil "
                   + Math.round(PART_TEMOIN_MIN * 100) + " %), " + tem.n + " échantillons, "
-                  + cal0.fmt + " au 1/" + cal0.ech + ", " + Math.abs(cal0.fx.a).toFixed(3) + " m/px";
+                  + cal0.fmt + " au 1/" + cal0.ech + ", " + Math.abs(cal0.fx.a).toFixed(3) + " m/px" + affineDit;
             if(cal0 && tem && !tem.horsCadre && tem.n >= ECHANT_TEMOIN_MIN && tem.part >= PART_TEMOIN_MIN){
               g = {
                 fx: { a: cal0.fx.a, b: cal0.fx.b, r: 1, cale: false, n: 0, ecartees: 0,
@@ -6356,7 +6443,7 @@ function preremplirDepuisURL(){
                 fy: { a: cal0.fy.a, b: cal0.fy.b, r: -1, cale: false, n: 0, ecartees: 0,
                       min: cal0.fy.b + cal0.cadre.y1 * cal0.fy.a, max: cal0.fy.b + cal0.cadre.y0 * cal0.fy.a },
                 echelle: Math.abs(cal0.fx.a), etiquettes: [], parasites: [],
-                rapide: { part: tem.part, n: tem.n }
+                rapide: { part: tem.part, n: tem.n, affinage: cal0.affinage || null }
               };
               console.log("PAINT : voie rapide retenue", g.rapide);
             }else{
@@ -6433,7 +6520,8 @@ function preremplirDepuisURL(){
                   + (g.rapide
                       ? "VOIE RAPIDE sans OCR des marges — témoin des traits : "
                         + Math.round(g.rapide.part * 100) + " % du bord du contour sur un trait du plan, "
-                        + g.rapide.n + " échantillons"
+                        + g.rapide.n + " échantillons" + (g.rapide.affinage ? ", calage affiné par glissement de "
+                        + g.rapide.affinage.metres.toFixed(1) + " m, échelle ×" + g.rapide.affinage.s.toFixed(3) : "")
                       : "écart à l'OCR " + dxm.toFixed(1) + " / " + dym.toFixed(1) + " m")
                   + ")";
               }else{
