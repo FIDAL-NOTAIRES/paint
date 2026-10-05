@@ -6319,11 +6319,21 @@ function preremplirDepuisURL(){
           // Calage analytique vérifié par le témoin des traits : pas d'OCR des
           // marges. g prend la forme rendue par georeferencer() pour que la
           // suite soit identique ; les bornes min/max sont celles du cadre.
-          let g = null;
+          let g = null, temoinDit = "";
           if(p.get("rapide") === "1"){
             spinmsg.textContent = "Calage analytique, vérification sur les traits du plan…";
             const cal0 = calageAnalytique(p, baseCtx, W, H);
             const tem = cal0 ? temoinTraits(cal0, (p.get("poly") || "").trim(), baseCtx, W, H) : null;
+            // 05/10/2026 : le verdict chiffré du témoin est repris dans le message de refus,
+            // sans quoi « témoin insuffisant » ne dit pas si l'on est à 79 % ou à 20 %
+            temoinDit = !cal0 ? "calage analytique non calculable (cadre du plan non trouvé)"
+              : !tem ? "témoin des traits sans contour à vérifier"
+              : tem.horsCadre ? "témoin des traits : un contour projeté SORT DU CADRE du plan (cadre "
+                  + (cal0.cadre.x1 - cal0.cadre.x0) + "×" + (cal0.cadre.y1 - cal0.cadre.y0) + " px, "
+                  + cal0.fmt + " au 1/" + cal0.ech + ", " + Math.abs(cal0.fx.a).toFixed(3) + " m/px)"
+              : "témoin des traits : " + Math.round(tem.part * 100) + " % du bord sur un trait (seuil "
+                  + Math.round(PART_TEMOIN_MIN * 100) + " %), " + tem.n + " échantillons, "
+                  + cal0.fmt + " au 1/" + cal0.ech + ", " + Math.abs(cal0.fx.a).toFixed(3) + " m/px";
             if(cal0 && tem && !tem.horsCadre && tem.n >= ECHANT_TEMOIN_MIN && tem.part >= PART_TEMOIN_MIN){
               g = {
                 fx: { a: cal0.fx.a, b: cal0.fx.b, r: 1, cale: false, n: 0, ecartees: 0,
@@ -6599,7 +6609,8 @@ function preremplirDepuisURL(){
                 ? g.groupes.length + " groupe(s) d'étiquettes cohérent(s) au lieu de 2 attendus"
                 : "corrélations " + (g.fx ? g.fx.r.toFixed(3) : "—") + " et "
                   + (g.fy ? g.fy.r.toFixed(3) : "—") + ", seuil 0,99")
-              + " sur " + g.etiquettes.length + " étiquette(s) lue(s)";
+              + " sur " + g.etiquettes.length + " étiquette(s) lue(s)"
+              + (temoinDit ? " ; auparavant, " + temoinDit : "");
             console.warn("PAINT : géoréférencement non concluant", g);
           }
         }catch(e){
