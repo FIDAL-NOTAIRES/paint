@@ -97,6 +97,26 @@
   });
   envoyer({ type: "paint-pret" });
 
+  /* 2 bis. RELEVÉ DES ÉTAPES (05/10/2026, JFD : « c'est toujours aussi long ») —
+     on ne devine plus : chaque changement du message d'attente de PAINT (cercle
+     central) est transmis à HISTO avec son heure ; HISTO en tire la durée de chaque
+     étape. Observation seule : aucun comportement de PAINT n'est modifié. */
+  (function releverEtapes(){
+    const msg = document.getElementById("spinmsg"), rond = document.getElementById("spin");
+    if(!msg || !rond) return;
+    let dernier = "";
+    const signaler = () => {
+      const visible = rond.classList.contains("show");
+      // les pourcentages de lecture (« Lecture des numéros… 42 % ») ne font pas une étape nouvelle
+      const texte = visible ? (msg.textContent || "").replace(/\s*\d+\s*%\s*$/, "").trim() : "(entre deux étapes)";
+      if(texte === dernier) return;
+      dernier = texte;
+      envoyer({ type: "paint-etape", texte, t: Date.now() });
+    };
+    new MutationObserver(signaler).observe(msg, { childList: true, characterData: true, subtree: true });
+    new MutationObserver(signaler).observe(rond, { attributes: true, attributeFilter: ["class"] });
+  })();
+
   /* 3. fin de la chaîne automatique */
   /* ⚠ DÉLAIS (corrigés le 04/10/2026 après le premier essai réel sur Croix) :
      dans un cadre, la lecture des coordonnées de marge par reconnaissance de
