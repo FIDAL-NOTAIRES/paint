@@ -10,7 +10,7 @@
    window.captureReserve, les canvas #base et #overlay).
 
    Chargé par une seule ligne dans index.html de PAINT, après le script
-   principal :  <script defer src="histo-pont.js?v=1"></script>
+   principal :  <script defer src="histo-pont.js?v=3"></script>
 
    PROTOCOLE (le « destinataire » est window.parent, ou window.opener si
    PAINT a été ouvert dans un onglet) :
@@ -86,7 +86,10 @@
     const d = e.data || {};
     if(d.type === "paint-params" && typeof d.qs === "string"){
       origineHisto = e.origin;
-      history.replaceState(null, "", location.pathname + "?" + d.qs + "&charge=histo");
+      // rapide=1 (04/10/2026) : PAINT vérifie le calage analytique sur les traits
+      // du plan au lieu de lire les marges par OCR — plusieurs minutes gagnées.
+      const qs = /(^|&)rapide=/.test(d.qs) ? d.qs : d.qs + "&rapide=1";
+      history.replaceState(null, "", location.pathname + "?" + qs + "&charge=histo");
       try{ preremplirDepuisURL(); }
       catch(err){ envoyer({ type: "paint-echec", message: "démarrage impossible : " + (err && err.message || err) }); return; }
       surveiller();
