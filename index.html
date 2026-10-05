@@ -3981,6 +3981,16 @@ const SEUIL_CALAGE_M = 25;
  * s'en sert que pour VALIDER le rectangle trouvé. Le format vient de l'URL.
  */
 function detecterCadre(ctx, W, H, rapportAttendu){
+  // ⚠⚠ MISE EN PAGE PAYSAGE — 05/10/2026 (Attiches, section B, A3 paysage, appel HISTO).
+  // En paysage, la DGFiP place le CARTOUCHE À GAUCHE du plan, sur toute la hauteur.
+  // Les deux colonnes sombres les plus hautes de la page étaient alors le bord gauche
+  // du cartouche et le bord droit du plan : le rectangle englobait les deux, son rapport
+  // d'aspect ne correspondait plus au format, et l'on renonçait (« cadre du plan non
+  // trouvé »), sans jamais calculer le calage ni jouer le témoin. On examine désormais
+  // TOUTES LES PAIRES de bords verticaux et l'on retient le rectangle dont le rapport
+  // d'aspect s'accorde au format demandé — toujours à 4 % près, et sur des lignes
+  // horizontales couvrant 90 % de sa largeur. Le cartouche, étroit et haut, ne peut pas
+  // passer pour un plan ; en portrait, le résultat est inchangé.
   let d;
   try{ d = ctx.getImageData(0, 0, W, H).data; }catch(e){ return null; }
   const sombre = (x, y) => {
@@ -3996,45 +4006,50 @@ function detecterCadre(ctx, W, H, rapportAttendu){
     hauteurs[x] = n * 2;
   }
   const seuilV = H * 0.30;
-  const colonnes = [];
-  for(let x = 0; x < W; x++) if(hauteurs[x] > seuilV) colonnes.push(x);
-  if(colonnes.length < 2) return null;
-  const x0 = colonnes[0], x1 = colonnes[colonnes.length - 1];
-  const larg = x1 - x0;
-  if(larg < W * 0.5) return null;                 // pas le cadre du plan
-
-  // Lignes couvrant presque toute la largeur du cadre.
-  const candidates = [];
-  for(let y = 0; y < H; y++){
-    let n = 0;
-    for(let x = x0; x <= x1; x += 2) if(sombre(x, y)) n++;
-    if(n * 2 > larg * 0.90) candidates.push(y);
+  // bords verticaux : colonnes hautes regroupées (un trait fait un à trois pixels)
+  const bords = [];
+  for(let x = 0; x < W; x++) if(hauteurs[x] > seuilV){
+    const b = bords[bords.length - 1];
+    if(b && x - b[b.length - 1] <= 3) b.push(x); else bords.push([x]);
   }
-  if(candidates.length < 2) return null;
-  // Regroupement des traits épais : un bord fait un à trois pixels.
-  const groupes = [];
-  for(const y of candidates){
-    const g = groupes[groupes.length - 1];
-    if(g && y - g[g.length - 1] <= 3) g.push(y); else groupes.push([y]);
-  }
-  const rangs = groupes.map((g) => Math.round((g[0] + g[g.length - 1]) / 2));
-  if(rangs.length < 2) return null;
-
-  // ⚠ LE CARTOUCHE EST AUSSI LARGE QUE LE CADRE : prendre la première et la
-  // dernière ligne donnerait la page entière. On retient donc la PAIRE dont le
-  // rapport d'aspect s'approche le plus de celui du format demandé, et l'on
-  // exige 4 % d'accord — faute de quoi on renonce.
+  if(bords.length < 2) return null;
+  const xs = bords.map((b) => Math.round((b[0] + b[b.length - 1]) / 2));
+  // lignes sombres par rangée, mémorisées une fois pour toutes les paires
+  const rangeesSombres = new Array(H);
+  for(let y = 0; y < H; y++){ const r = new Uint8Array(W); for(let x = 0; x < W; x++) r[x] = sombre(x, y) ? 1 : 0; rangeesSombres[y] = r; }
   let meilleur = null;
-  for(let i = 0; i < rangs.length - 1; i++)
-    for(let j = i + 1; j < rangs.length; j++){
-      const h = rangs[j] - rangs[i];
-      if(h < H * 0.35) continue;
-      const ecart = Math.abs(larg / h - rapportAttendu) / rapportAttendu;
-      if(ecart < 0.04 && (!meilleur || ecart < meilleur.ecart))
-        meilleur = { y0: rangs[i], y1: rangs[j], ecart };
+  for(let a = 0; a < xs.length - 1; a++) for(let b = a + 1; b < xs.length; b++){
+    const x0 = xs[a], x1 = xs[b], larg = x1 - x0;
+    if(larg < W * 0.35) continue;                 // trop étroit pour être le cadre du plan
+    // Lignes couvrant presque toute la largeur de ce rectangle candidat.
+    const candidates = [];
+    for(let y = 0; y < H; y++){
+      let n = 0; const r = rangeesSombres[y];
+      for(let x = x0; x <= x1; x += 2) n += r[x];
+      if(n * 2 > larg * 0.90) candidates.push(y);
     }
+    if(candidates.length < 2) continue;
+    const groupes = [];
+    for(const y of candidates){
+      const g = groupes[groupes.length - 1];
+      if(g && y - g[g.length - 1] <= 3) g.push(y); else groupes.push([y]);
+    }
+    const rangs = groupes.map((g) => Math.round((g[0] + g[g.length - 1]) / 2));
+    // ⚠ LE CARTOUCHE PEUT ÊTRE AUSSI LARGE QUE LE CADRE (portrait) : prendre la première
+    // et la dernière ligne donnerait la page entière. On retient la PAIRE dont le rapport
+    // d'aspect s'approche le plus de celui du format demandé, à 4 % près.
+    for(let i = 0; i < rangs.length - 1; i++)
+      for(let j = i + 1; j < rangs.length; j++){
+        const h = rangs[j] - rangs[i];
+        if(h < H * 0.35) continue;
+        const ecart = Math.abs(larg / h - rapportAttendu) / rapportAttendu;
+        if(ecart < 0.04 && (!meilleur || ecart < meilleur.ecart - 0.005
+            || (Math.abs(ecart - meilleur.ecart) <= 0.005 && larg * h > (meilleur.x1 - meilleur.x0) * (meilleur.y1 - meilleur.y0))))
+          meilleur = { x0, x1, y0: rangs[i], y1: rangs[j], ecart };
+      }
+  }
   if(!meilleur) return null;
-  return { x0, x1, y0: meilleur.y0, y1: meilleur.y1, ecartAspect: meilleur.ecart };
+  return { x0: meilleur.x0, x1: meilleur.x1, y0: meilleur.y0, y1: meilleur.y1, ecartAspect: meilleur.ecart };
 }
 
 /**
