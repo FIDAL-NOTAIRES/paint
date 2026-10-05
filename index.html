@@ -1972,6 +1972,21 @@ async function loadPDFData(buf){
   }finally{ spin.classList.remove("show"); }
 }
 
+/* ⚠⚠ DESSIN DU PLAN DANS UN CADRE — 05/10/2026 (cause des minutes d'attente dans HISTO).
+   pdf.js cadence un dessin « écran » sur le rafraîchissement d'image du navigateur
+   (requestAnimationFrame). Or Chrome SUSPEND ce rafraîchissement dans un cadre MASQUÉ
+   venant d'un autre site — exactement PAINT dans HISTO (cadre caché tant qu'aucune
+   reprise manuelle n'est demandée). Le dessin ne progressait donc pas : il ne s'achevait
+   qu'au moment où le cadre devenait visible, à la bascule en reprise manuelle au bout de
+   douze minutes (d'où la note du 04/10 : « la colorisation s'achevait juste après »).
+   Mesuré au banc avec pdf.js 3.11.174 : cadre visible 1,6 s ; cadre masqué JAMAIS
+   TERMINÉ ; cadre masqué en intention « impression » 1,5 s. Le dessin « impression » ne
+   dépend pas de ce rafraîchissement. Appliqué seulement quand PAINT tourne dans un cadre
+   (HISTO, pages du dossier compilé de REDPAR) ; PAINT ouvert seul est inchangé. Sans effet
+   sur le rendu d'un plan cadastral, qui ne porte ni formulaire ni calque d'affichage. */
+const DANS_UN_CADRE = (() => { try{ return window.self !== window.top; }catch(e){ return true; } })();
+const INTENTION_DESSIN = DANS_UN_CADRE ? "print" : "display";
+
 async function renderBase(){
   const page = await S.pdf.getPage(S.page);
   // résolution interne haute pour une colorisation nette
@@ -1987,7 +2002,7 @@ async function renderBase(){
   cwrap.style.width=S.W+"px"; cwrap.style.height=S.H+"px";
   anno.style.width=S.W+"px"; anno.style.height=S.H+"px";
   baseCtx.fillStyle="#fff"; baseCtx.fillRect(0,0,S.W,S.H);
-  await page.render({canvasContext:baseCtx,viewport:vp}).promise;
+  await page.render({canvasContext:baseCtx,viewport:vp,intent:INTENTION_DESSIN}).promise;
 }
 
 async function renderPage(){
@@ -4731,7 +4746,7 @@ async function renderOcrBase(){
   const vp=page.getViewport({scale:sc,rotation:S.rotation});
   const oc=document.createElement("canvas"); oc.width=Math.round(vp.width); oc.height=Math.round(vp.height);
   const ox=oc.getContext("2d"); ox.fillStyle="#fff"; ox.fillRect(0,0,oc.width,oc.height);
-  await page.render({canvasContext:ox,viewport:vp}).promise;
+  await page.render({canvasContext:ox,viewport:vp,intent:INTENTION_DESSIN}).promise;
   return oc;
 }
 
