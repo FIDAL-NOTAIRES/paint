@@ -4043,8 +4043,18 @@ function detecterCadre(ctx, W, H, rapportAttendu){
         const h = rangs[j] - rangs[i];
         if(h < H * 0.35) continue;
         const ecart = Math.abs(larg / h - rapportAttendu) / rapportAttendu;
-        if(ecart < 0.04 && (!meilleur || ecart < meilleur.ecart - 0.005
-            || (Math.abs(ecart - meilleur.ecart) <= 0.005 && larg * h > (meilleur.x1 - meilleur.x0) * (meilleur.y1 - meilleur.y0))))
+        // ⚠ DÉPARTAGE RESSERRÉ — 12/10/2026 (Croix AH 646). La règle était : à moins de
+        // 0,5 % d'écart de forme, le PLUS GRAND rectangle l'emporte. Or le filet bas du
+        // cartouche court à ~9 px au-dessus du bord haut du plan : le rectangle qui part de
+        // ce filet (1583 × 1717, écart 0,49 %) battait le vrai cadre (1583 × 1708, écart
+        // ~0) — centre du plan faux de 5 px, couleur posée 0,6 m trop haut, sur TOUS les
+        // plans en portrait (mesuré par le recalage fin : 11 % du bord exactement sur un
+        // trait avant, 99 % après un glissement de 0/5 px).
+        // L'échelle est la même sur les deux axes : la forme attendue est donc le critère.
+        // On retient le rectangle le plus fidèle à cette forme ; la taille ne départage plus
+        // que des quasi-égalités, à 0,1 % près (moins de 2 px sur 1 700).
+        if(ecart < 0.04 && (!meilleur || ecart < meilleur.ecart - 0.001
+            || (Math.abs(ecart - meilleur.ecart) <= 0.001 && larg * h > (meilleur.x1 - meilleur.x0) * (meilleur.y1 - meilleur.y0))))
           meilleur = { x0, x1, y0: rangs[i], y1: rangs[j], ecart };
       }
   }
