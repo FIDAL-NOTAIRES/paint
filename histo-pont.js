@@ -22,7 +22,7 @@
           déroule — extrait, calage, polygone peint, tableau ;
      3. fin de la chaîne : window.capturePret passe à vrai
         — sans réserve : le pont renvoie { type:"paint-image", png, largeur,
-          hauteur } et c'est fini ;
+          hauteur, emprise } et c'est fini ;
         — avec réserve (window.captureReserve renseigné : colorisation non
           prouvée, refusée, repliée) : le pont renvoie
           { type:"paint-attente-manuelle", reserve } et affiche le bouton
@@ -34,6 +34,15 @@
 
    ⚠ L'IMAGE EST LE PLAN ET SON CALQUE, rien d'autre : ni légende ni notes
    (décision du 01/10/2026 : simple repère de situation, couleur de PAINT).
+
+   v4 (12/10/2026) — EMPRISE DE LA PARCELLE COLORIÉE : « paint-image » porte
+   aussi emprise = { x0, y0, x1, y1 }, le rectangle, en pixels de l'image, des
+   pixels de la TEINTE POSÉE sur le calque. HISTO s'en sert pour découper la
+   vignette de son écran de détail. Le tableau d'annotation, dessiné lui aussi
+   sur le calque (fond blanc, texte bleu nuit), n'est pas compté : seuls les
+   pixels reconnus comme une teinte posée par apparieurTeintes le sont.
+   Absente (calque vide, fonction indisponible), l'emprise vaut null et HISTO
+   montre le plan entier.
    ====================================================================== */
 (function(){
   "use strict";
@@ -58,6 +67,26 @@
     if(o && o.width) g.drawImage(o, 0, 0);
     return { png: cv.toDataURL("image/png"), largeur: cv.width, hauteur: cv.height };
   }
+
+  /* v4 — rectangle des pixels de la teinte posée sur le calque (voir l'en-tête). */
+  function empriseColoriee(){
+    try{
+      const o = document.getElementById("overlay");
+      if(!o || !o.width || typeof apparieurTeintes !== "function" || typeof S === "undefined") return null;
+      const teintes = (S.couleursPosees || []).filter((h) => !(S.couleursAnnot || []).map(String).map((x) => x.toLowerCase()).includes(h));
+      if(!teintes.length) return null;
+      const apparier = apparieurTeintes(teintes);
+      const W = o.width, H = o.height, d = o.getContext("2d").getImageData(0, 0, W, H).data;
+      let x0 = W, y0 = H, x1 = -1, y1 = -1;
+      for(let y = 0; y < H; y++) for(let x = 0; x < W; x++){
+        const i = (y * W + x) * 4, a = d[i + 3];
+        if(!a || !apparier(d[i], d[i + 1], d[i + 2], a)) continue;
+        if(x < x0) x0 = x; if(x > x1) x1 = x; if(y < y0) y0 = y; if(y > y1) y1 = y;
+      }
+      return x1 < 0 ? null : { x0, y0, x1, y1 };
+    }catch(e){ console.warn("histo-pont : emprise indisponible", e); return null; }
+  }
+
   let dejaTransmis = false;
   function transmettre(manuel){
     if(dejaTransmis) return;
@@ -65,6 +94,7 @@
     if(!img){ envoyer({ type: "paint-echec", message: "aucun plan chargé" }); return; }
     dejaTransmis = true;
     envoyer({ type: "paint-image", png: img.png, largeur: img.largeur, hauteur: img.hauteur,
+              emprise: empriseColoriee(),
               reserve: window.captureReserve || null, manuel: !!manuel });
   }
 
