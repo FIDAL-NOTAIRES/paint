@@ -582,7 +582,7 @@
     <!-- Marqueur de build. Sert à savoir d'un coup d'œil si le navigateur sert
          la dernière version ou une page en cache. Ctrl+Shift+R si la date
          affichée n'est pas celle du dernier dépôt. -->
-    <span id="build" title="Version déployée">2026-10-04</span>
+    <span id="build" title="Version déployée">2026-10-12</span>
   </div>
   <div class="hbar">
     <div class="pagenav" id="pagenav" style="display:none">
@@ -4161,7 +4161,44 @@ function temoinTraits(cal, brutPoly, ctx, W, H){
 // la garde ECHANT_TEMOIN_MIN et le rayon de recherche limité (≤ 6 m) s'appliquent.
 const GLISSEMENT_MAX_PX = 24;                 // ± pixels de translation explorés (≈ 9 m à 0,37 m/px)
 const ECHELLES_AFFINAGE = [1, 0.995, 1.005, 0.99, 1.01, 0.985, 1.015, 0.98, 1.02];
-function affinerCalage(cal, brutPoly, ctx, W, H){
+// RECALAGE FIN — 12/10/2026 (Croix AH 646, JFD : « le colorié rouge est un peu décalé vers
+// le haut »). Le témoin accepte un bord posé à 3 px d'un trait (RAYON_TEMOIN_PX) : un calage
+// faux de 2 ou 3 px passait donc à 96 % et n'était jamais corrigé — d'où une couleur décalée
+// d'un demi-mètre. Une fois le calage CONFIRMÉ par le témoin, on le recale au pixel près :
+// tolérance d'un pixel, glissement de ±8 px, échelle à ±0,6 %, et à score égal le plus petit
+// glissement l'emporte. La correction n'est retenue que si le gain est net (GAIN_FIN_MIN) et
+// si le témoin reste satisfait après coup : elle ne peut que rapprocher le bord des traits.
+const AFFINAGE_FIN = { rayon: 1, glissement: 8, pasGrossier: 1, echelles: [1, 0.997, 1.003, 0.994, 1.006], arret: 1.01, departage: true };
+const GAIN_FIN_MIN = 0.03;
+// seconde passe, à tolérance NULLE : à un pixel de tolérance, la position décalée d'un pixel
+// vaut autant que la bonne et le départage s'arrêtait un pixel trop tôt (constaté à l'essai)
+const CENTRAGE_FIN = { rayon: 0, glissement: 2, pasGrossier: 1, echelles: [1], arret: 1.01, departage: true };
+// part du bord posée EXACTEMENT sur un trait (tolérance nulle), pour le compte rendu
+const partExacte = (cal, brutPoly, ctx, W, H) => {
+  const r = affinerCalage(cal, brutPoly, ctx, W, H, { rayon: 0, glissement: 0, pasGrossier: 1, echelles: [1], arret: 2 });
+  return r ? r.affinage.part0 : null;
+};
+// Recalage fin complet : rend le calage corrigé (avec son bilan dans affinageFin), ou null.
+function recalerFin(cal, brutPoly, ctx, W, H){
+  const net = (a) => a && (a.dx || a.dy || a.s !== 1) && a.part >= a.part0 + GAIN_FIN_MIN;
+  let r = cal;
+  const c1 = affinerCalage(r, brutPoly, ctx, W, H, AFFINAGE_FIN);
+  if(c1 && net(c1.affinage)) r = c1;
+  const c2 = affinerCalage(r, brutPoly, ctx, W, H, CENTRAGE_FIN);
+  if(c2 && net(c2.affinage)) r = c2;
+  if(r === cal) return null;
+  // glissement total mesuré au centre du cadre, dans le repère du calage d'origine
+  const cx = (cal.cadre.x0 + cal.cadre.x1) / 2, cy = (cal.cadre.y0 + cal.cadre.y1) / 2;
+  const Xc = cal.fx.a * cx + cal.fx.b, Yc = cal.fy.a * cy + cal.fy.b;
+  const dx = Math.round((Xc - r.fx.b) / r.fx.a - cx), dy = Math.round((Yc - r.fy.b) / r.fy.a - cy);
+  r.affinageFin = { dx, dy, s: cal.fx.a / r.fx.a, metres: Math.hypot(dx, dy) * Math.abs(cal.fx.a),
+                    part0: partExacte(cal, brutPoly, ctx, W, H), part: partExacte(r, brutPoly, ctx, W, H) };
+  r.affinage = cal.affinage || null;
+  return r;
+}
+function affinerCalage(cal, brutPoly, ctx, W, H, opts){
+  const o = Object.assign({ rayon: RAYON_TEMOIN_PX, glissement: GLISSEMENT_MAX_PX, pasGrossier: 2,
+                            echelles: ECHELLES_AFFINAGE, arret: 0.95, departage: false }, opts || {});
   if(!cal || !brutPoly) return null;
   const enPixels = (anneau) => anneau.split(";").map((c) => {
     const [a, b] = c.split(",").map(parseFloat);
@@ -4180,7 +4217,7 @@ function affinerCalage(cal, brutPoly, ctx, W, H){
   // carte des pixels « à moins de RAYON_TEMOIN_PX d'un trait », calculée une fois
   const d = ctx.getImageData(0, 0, W, H).data, sombre = new Uint8Array(W * H), proche = new Uint8Array(W * H);
   for(let i = 0; i < W * H; i++) sombre[i] = (0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2]) < SEUIL_SOMBRE_TEMOIN ? 1 : 0;
-  const R = RAYON_TEMOIN_PX;
+  const R = o.rayon;
   for(let y = 0; y < H; y++) for(let x = 0; x < W; x++){
     if(!sombre[y * W + x]) continue;
     for(let dy = -R; dy <= R; dy++){ const yy = y + dy; if(yy < 0 || yy >= H) continue;
@@ -4196,17 +4233,21 @@ function affinerCalage(cal, brutPoly, ctx, W, H){
     return ok / ech.length;
   };
   let meilleur = { s: 1, dx: 0, dy: 0, part: part(1, 0, 0) };
-  for(const s of ECHELLES_AFFINAGE){
-    // grossier (pas de 2 px) puis fin (pas de 1 px) autour du meilleur
+  const part0 = meilleur.part;
+  // à score égal, le plus petit glissement l'emporte (recalage fin) : on ne déplace pas sans raison
+  const mieux = (q, loc, dx, dy) => q > loc.part + 1e-9
+    || (o.departage && Math.abs(q - loc.part) <= 1e-9 && Math.hypot(dx, dy) < Math.hypot(loc.dx, loc.dy));
+  for(const s of o.echelles){
+    // grossier puis fin (pas de 1 px) autour du meilleur
     let loc = { dx: 0, dy: 0, part: part(s, 0, 0) };
-    for(let dy = -GLISSEMENT_MAX_PX; dy <= GLISSEMENT_MAX_PX; dy += 2) for(let dx = -GLISSEMENT_MAX_PX; dx <= GLISSEMENT_MAX_PX; dx += 2){
-      const p = part(s, dx, dy); if(p > loc.part) loc = { dx, dy, part: p };
+    for(let dy = -o.glissement; dy <= o.glissement; dy += o.pasGrossier) for(let dx = -o.glissement; dx <= o.glissement; dx += o.pasGrossier){
+      const q = part(s, dx, dy); if(mieux(q, loc, dx, dy)) loc = { dx, dy, part: q };
     }
     for(let dy = loc.dy - 2; dy <= loc.dy + 2; dy++) for(let dx = loc.dx - 2; dx <= loc.dx + 2; dx++){
-      const p = part(s, dx, dy); if(p > loc.part) loc = { dx, dy, part: p };
+      const q = part(s, dx, dy); if(mieux(q, loc, dx, dy)) loc = { dx, dy, part: q };
     }
-    if(loc.part > meilleur.part) meilleur = { s, ...loc };
-    if(meilleur.part >= 0.95) break;          // inutile d'aller plus loin
+    if(loc.part > meilleur.part + 1e-9) meilleur = { s, ...loc };
+    if(meilleur.part >= o.arret) break;       // inutile d'aller plus loin
   }
   // calage corrigé : px' = cx + (px - cx)·s + dx  ⇒  a' = a/s ; b' = b - (cx·(1-s) + dx)·a/s
   const sx = meilleur.s, ax = cal.fx.a / sx, ay = cal.fy.a / sx;
@@ -4214,7 +4255,7 @@ function affinerCalage(cal, brutPoly, ctx, W, H){
     ...cal,
     fx: { a: ax, b: cal.fx.b - (cx * (1 - sx) + meilleur.dx) * ax },
     fy: { a: ay, b: cal.fy.b - (cy * (1 - sx) + meilleur.dy) * ay },
-    affinage: { dx: meilleur.dx, dy: meilleur.dy, s: sx, part: meilleur.part, n: ech.length,
+    affinage: { dx: meilleur.dx, dy: meilleur.dy, s: sx, part: meilleur.part, part0, n: ech.length,
                 metres: Math.hypot(meilleur.dx, meilleur.dy) * Math.abs(cal.fx.a) }
   };
   return corrige;
@@ -6426,6 +6467,15 @@ function preremplirDepuisURL(){
                 if(tem1 && !tem1.horsCadre && tem1.part >= PART_TEMOIN_MIN){ cal0 = cal1; tem = tem1; }
               }
             }
+            // RECALAGE FIN (12/10/2026) : voir AFFINAGE_FIN
+            if(cal0 && tem && !tem.horsCadre && tem.n >= ECHANT_TEMOIN_MIN && tem.part >= PART_TEMOIN_MIN){
+              spinmsg.textContent = "Calage confirmé — recalage fin sur les traits du plan…";
+              const calF = recalerFin(cal0, (p.get("poly") || "").trim(), baseCtx, W, H);
+              if(calF){
+                const temF = temoinTraits(calF, (p.get("poly") || "").trim(), baseCtx, W, H);
+                if(temF && !temF.horsCadre && temF.part >= PART_TEMOIN_MIN){ cal0 = calF; tem = temF; }
+              }
+            }
             // 05/10/2026 : le verdict chiffré du témoin est repris dans le message de refus,
             // sans quoi « témoin insuffisant » ne dit pas si l'on est à 79 % ou à 20 %
             temoinDit = !cal0 ? "calage analytique non calculable (cadre du plan non trouvé)"
@@ -6443,7 +6493,8 @@ function preremplirDepuisURL(){
                 fy: { a: cal0.fy.a, b: cal0.fy.b, r: -1, cale: false, n: 0, ecartees: 0,
                       min: cal0.fy.b + cal0.cadre.y1 * cal0.fy.a, max: cal0.fy.b + cal0.cadre.y0 * cal0.fy.a },
                 echelle: Math.abs(cal0.fx.a), etiquettes: [], parasites: [],
-                rapide: { part: tem.part, n: tem.n, affinage: cal0.affinage || null }
+                rapide: { part: tem.part, n: tem.n, affinage: cal0.affinage || null,
+                          fin: cal0.affinageFin || null, cal: cal0 }
               };
               console.log("PAINT : voie rapide retenue", g.rapide);
             }else{
@@ -6503,7 +6554,10 @@ function preremplirDepuisURL(){
             // d'api/extrait rendrait l'origine analytique fausse de centaines
             // de kilomètres — et c'est ce désaccord qui le révèle, sans avoir
             // à faire traverser un en-tête HTTP.
-            const cal = calageAnalytique(p, baseCtx, W, H);
+            // ⚠ VOIE RAPIDE : ON REPREND LE CALAGE VÉRIFIÉ (12/10/2026). Il était recalculé ici
+            // à neuf, ce qui JETAIT le glissement trouvé par affinerCalage (et désormais le
+            // recalage fin) : le statut annonçait un calage affiné, la couleur était posée sans.
+            const cal = (g.rapide && g.rapide.cal) ? g.rapide.cal : calageAnalytique(p, baseCtx, W, H);
             const nbEcartees = (g.fx.ecartees || 0) + (g.fy.ecartees || 0);
             let cfx = g.fx, cfy = g.fy, calageDit = "étiquettes lues (OCR)"
               + (nbEcartees ? ", " + nbEcartees + " étiquette(s) aberrante(s) écartée(s)" : "");
@@ -6522,6 +6576,9 @@ function preremplirDepuisURL(){
                         + Math.round(g.rapide.part * 100) + " % du bord du contour sur un trait du plan, "
                         + g.rapide.n + " échantillons" + (g.rapide.affinage ? ", calage affiné par glissement de "
                         + g.rapide.affinage.metres.toFixed(1) + " m, échelle ×" + g.rapide.affinage.s.toFixed(3) : "")
+                        + (g.rapide.fin ? ", RECALAGE FIN de " + g.rapide.fin.dx + "/" + g.rapide.fin.dy + " px ≈ "
+                          + g.rapide.fin.metres.toFixed(2) + " m (échelle ×" + g.rapide.fin.s.toFixed(3) + "), bord posé exactement sur un trait : "
+                          + Math.round(g.rapide.fin.part0 * 100) + " % → " + Math.round(g.rapide.fin.part * 100) + " %" : "")
                       : "écart à l'OCR " + dxm.toFixed(1) + " / " + dym.toFixed(1) + " m")
                   + ")";
               }else{
